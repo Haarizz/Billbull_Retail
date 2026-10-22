@@ -16,6 +16,8 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class DocumentWhatsAppSenderTest {
 
+    private static final byte[] PDF = "%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+
     @Mock private WhatsAppConfigService configService;
     @Mock private WhatsAppCloudApiClient client;
     @Mock private WhatsAppMessageLogRepository logRepository;
@@ -32,7 +34,7 @@ class DocumentWhatsAppSenderTest {
     void rendersUploadsSendsTemplateAndLogsAccepted() {
         WhatsAppConfig cfg = readyConfig();
         when(configService.requireReady(WhatsAppDocumentType.QUOTATION)).thenReturn(cfg);
-        when(pdfService.render("<html/>")).thenReturn(new byte[]{1, 2, 3});
+        when(pdfService.render("<html/>")).thenReturn(PDF);
         when(client.uploadMedia(eq(cfg), any(), eq("QTN-2026-0016.pdf"), eq("application/pdf"))).thenReturn("media-1");
         when(client.sendDocumentTemplate(eq(cfg), eq("971501234567"), eq("quotation_document"), eq("media-1"),
                 eq("QTN-2026-0016.pdf"), anyList())).thenReturn("wamid.ABC");
@@ -50,7 +52,7 @@ class DocumentWhatsAppSenderTest {
     void eachDocumentTypeUsesItsOwnTemplate() {
         WhatsAppConfig cfg = readyConfig();
         when(configService.requireReady(any())).thenReturn(cfg);
-        when(pdfService.render(anyString())).thenReturn(new byte[]{1});
+        when(pdfService.render(anyString())).thenReturn(PDF);
         when(client.uploadMedia(any(), any(), anyString(), anyString())).thenReturn("media-1");
         when(client.sendDocumentTemplate(any(), anyString(), anyString(), anyString(), anyString(), anyList())).thenReturn("wamid.X");
         when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -67,7 +69,7 @@ class DocumentWhatsAppSenderTest {
     @Test
     void metaRejectionIsLoggedAsFailedAndRethrown() {
         when(configService.requireReady(WhatsAppDocumentType.QUOTATION)).thenReturn(readyConfig());
-        when(pdfService.render(anyString())).thenReturn(new byte[]{1});
+        when(pdfService.render(anyString())).thenReturn(PDF);
         when(client.uploadMedia(any(), any(), anyString(), anyString())).thenReturn("media-1");
         when(client.sendDocumentTemplate(any(), anyString(), anyString(), anyString(), anyString(), anyList()))
                 .thenThrow(new WhatsAppApiException("WhatsApp error 132001: Template name does not exist", 132001));
@@ -96,6 +98,86 @@ class DocumentWhatsAppSenderTest {
         verifyNoInteractions(configService, pdfService, client, logRepository);
     }
 
+    // ---------------- W4: the PDF is checked before anything is uploaded ----------------
+
+    @Test
+    void aRenderFailureUploadsAndLogsNothing() {
+        when(configService.requireReady(WhatsAppDocumentType.QUOTATION)).thenReturn(readyConfig());
+        when(pdfService.render(anyString())).thenThrow(new RuntimeException("Timeout 30000ms exceeded"));
+
+        com.billbull.backend.document.DocumentPdfGuard.PdfRejectedException e = assertThrows(
+                com.billbull.backend.document.DocumentPdfGuard.PdfRejectedException.class,
+                () -> sender.send(request(WhatsAppDocumentType.QUOTATION, "QTN-1", "0501234567")));
+
+        assertEquals(com.billbull.backend.document.DocumentPdfGuard.Reason.RENDER_FAILED, e.reason());
+        assertEquals("Could not generate the PDF, so nothing was sent on WhatsApp.", e.getMessage());
+        assertFalse(e.getMessage().contains("Timeout"), "renderer internals stay in the log");
+        verifyNoInteractions(client, logRepository);
+    }
+
+    @Test
+    void contentThatIsNotACompletePdfIsNeverUploaded() {
+        when(configService.requireReady(WhatsAppDocumentType.QUOTATION)).thenReturn(readyConfig());
+        byte[][] bad = {
+                new byte[0],
+                "<html>error page</html>".getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+                "%PDF-1.7\n1 0 obj\n<<>>".getBytes(java.nio.charset.StandardCharsets.US_ASCII), // truncated: no %%EOF
+                null};
+        for (byte[] bytes : bad) {
+            when(pdfService.render(anyString())).thenReturn(bytes);
+            com.billbull.backend.document.DocumentPdfGuard.PdfRejectedException e = assertThrows(
+                    com.billbull.backend.document.DocumentPdfGuard.PdfRejectedException.class,
+                    () -> sender.send(request(WhatsAppDocumentType.QUOTATION, "QTN-1", "0501234567")));
+            assertEquals(com.billbull.backend.document.DocumentPdfGuard.Reason.NOT_A_PDF, e.reason());
+        }
+        verifyNoInteractions(client, logRepository);
+    }
+
+    @Test
+    void aPdfOverMetasDocumentLimitIsNeverUploaded() {
+        when(configService.requireReady(WhatsAppDocumentType.QUOTATION)).thenReturn(readyConfig());
+        byte[] huge = new byte[DocumentWhatsAppSender.MAX_PDF_BYTES + 1];
+        System.arraycopy(PDF, 0, huge, 0, PDF.length);
+        when(pdfService.render(anyString())).thenReturn(huge);
+
+        com.billbull.backend.document.DocumentPdfGuard.PdfRejectedException e = assertThrows(
+                com.billbull.backend.document.DocumentPdfGuard.PdfRejectedException.class,
+                () -> sender.send(request(WhatsAppDocumentType.QUOTATION, "QTN-1", "0501234567")));
+        assertEquals(com.billbull.backend.document.DocumentPdfGuard.Reason.TOO_LARGE, e.reason());
+        assertEquals("The PDF is larger than 100 MB, so nothing was sent on WhatsApp.", e.getMessage());
+        verifyNoInteractions(client, logRepository);
+    }
+
+    @Test
+    void oversizedHtmlIsRefusedBeforeConfigOrRendering() {
+        DocumentWhatsAppSender.SendRequest tooBig = new DocumentWhatsAppSender.SendRequest(
+                WhatsAppDocumentType.QUOTATION, 1L, "QTN-1", 1L, "0501234567",
+                "x".repeat(com.billbull.backend.document.DocumentPdfGuard.MAX_HTML_CHARS + 1), "QTN-1", List.of());
+        assertThrows(IllegalArgumentException.class, () -> sender.send(tooBig));
+        verifyNoInteractions(configService, pdfService, client, logRepository);
+    }
+
+    @Test
+    void theUploadedBytesAreExactlyTheValidatedPdf() {
+        WhatsAppConfig cfg = readyConfig();
+        when(configService.requireReady(WhatsAppDocumentType.QUOTATION)).thenReturn(cfg);
+        when(pdfService.render(anyString())).thenReturn(PDF);
+        when(client.uploadMedia(any(), any(), anyString(), anyString())).thenReturn("media-1");
+        when(client.sendDocumentTemplate(any(), anyString(), anyString(), anyString(), anyString(), anyList())).thenReturn("wamid.X");
+        when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        sender.send(request(WhatsAppDocumentType.QUOTATION, "QTN-1", "0501234567"));
+
+        verify(client).uploadMedia(eq(cfg), eq(PDF), eq("QTN-1.pdf"), eq("application/pdf"));
+    }
+
+    @Test
+    void phoneNumbersAreMaskedForLogs() {
+        assertEquals("********4567", DocumentWhatsAppSender.maskPhone("971501234567"));
+        assertEquals("****", DocumentWhatsAppSender.maskPhone("12"));
+        assertEquals("****", DocumentWhatsAppSender.maskPhone(null));
+    }
+
     @Test
     void filenameIsSanitisedAndGetsPdfExtension() {
         assertEquals("QTN_2026_1.pdf", DocumentWhatsAppSender.safeFilename("QTN/2026/1", null));
@@ -110,6 +192,9 @@ class DocumentWhatsAppSenderTest {
         c.setPhoneNumberId("123");
         c.setAccessToken("token");
         c.setDefaultCountryCode("971");
+        c.setQuotationTemplateName("quotation_document");
+        c.setSalesOrderTemplateName("sales_order_document");
+        c.setSalesInvoiceTemplateName("sales_invoice_document");
         return c;
     }
 

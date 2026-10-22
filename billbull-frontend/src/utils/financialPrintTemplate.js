@@ -9,7 +9,7 @@
 // drives the actual printout.
 
 import { defaultVoucherSettings } from '../pages/Financials/FinancialVoucherDesigner';
-import { resolveCurrencyDisplayConfig, UAE_DIRHAM_SYMBOL_IMAGE } from './countryCurrencyOptions';
+import { resolveCurrencyDisplayConfig, UAE_DIRHAM_SYMBOL_IMAGE } from '@billbull/shared/utils/countryCurrencyOptions';
 
 const escapeHtml = (str = '') =>
     String(str)

@@ -48,13 +48,13 @@ import {
   Cell,
 } from "recharts";
 import { getPurchaseReportData, getPurchaseReportFilterSuggestions } from "../../../api/purchaseReportsApi";
-import { exportToExcel } from "../../../utils/exportUtils";
-import { generateReportA4Html, printHtml, downloadPdf } from "../../../utils/printGenerator";
-import { getCompanyProfile } from "../../../api/companyProfileApi";
+import { exportToExcel } from "@billbull/shared/utils/exportUtils";
+import { generateReportA4Html, printHtml, downloadPdf } from "@billbull/shared/utils/printGenerator";
+import { getCompanyProfile } from "@billbull/shared/api/companyProfileApi";
 import { getVendors } from "../../../api/vendorsApi";
 import ExportDropdown from "../../../components/common/ExportDropdown";
-import { useBranch } from "../../../context/BranchContext";
-import { CurrencySymbol } from "../../../components/CurrencyAmount";
+import { useBranch } from "@billbull/shared/context/BranchContext";
+import { CurrencySymbol } from "@billbull/shared/components/CurrencyAmount";
 
 // ---------------------------------------------------------------------------
 // Types

@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import { ArrowLeft, Save, Printer, Upload, X, Image } from "lucide-react";
+import { defaultPickListSettings } from "@billbull/shared/utils/pickListDefaults";
 const MOCK = {
   company: {
     name: "Al Noor Trading & Contracting LLC",
@@ -39,57 +40,6 @@ const MOCK = {
   ],
   pickRoute: ["A01", "A04", "B02", "Packing Area"]
 };
-function defaultPickListSettings(name = "Default Pick List") {
-  return {
-    templateName: name,
-    accentColor: "#F5C742",
-    fontFamily: "Inter, sans-serif",
-    fontSize: 9,
-    paperSize: "A4",
-    showLogo: true,
-    logoUrl: "",
-    showCompanyName: true,
-    showCompanyAddress: true,
-    showCompanyPhone: true,
-    showCompanyEmail: false,
-    showTRN: true,
-    showPickNumber: true,
-    showPrintDate: true,
-    showPageNumber: true,
-    showDeliveryNoteRef: true,
-    showSalesOrderRef: true,
-    showWarehouse: true,
-    showBranchOutlet: true,
-    showCustomerName: true,
-    showCustomerCode: true,
-    showCustomerPhone: true,
-    showDeliveryAddress: true,
-    showSalesInvoiceRef: true,
-    showPriorityBadge: true,
-    showSummaryCards: true,
-    colSubZone: true,
-    colSubBarcode: true,
-    colSubSKU: true,
-    colSubBrand: true,
-    colSubBinLocation: true,
-    colSeq: true,
-    colDescription: true,
-    showShortDescription: true,
-    showDetailedDescription: true,
-    colQtyRequired: true,
-    colBatch: true,
-    colPickedQty: true,
-    colPickBatch: true,
-    showPickRoute: true,
-    showBarcodeSection: true,
-    showWarehouseNotes: true,
-    showPackingVerification: true,
-    showSignatureStrip: true,
-    showCompanyStamp: false,
-    stampUrl: "",
-    showFooterBar: true
-  };
-}
 function Toggle({ label, checked, onChange }) {
   return <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0", cursor: "pointer" }}>
     <span style={{ fontSize: 13, color: "#374151" }}>{label}</span>
@@ -593,6 +543,5 @@ function PickListDesigner({ templateName, initialSettings = {}, onClose, onSave 
   </div>;
 }
 export {
-  PickListDesigner,
-  defaultPickListSettings
+  PickListDesigner
 };

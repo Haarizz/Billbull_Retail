@@ -2,12 +2,12 @@ import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 
-vi.mock('../../api/employeeTargetsApi', () => ({ getMyPerformance: vi.fn() }));
-vi.mock('../../components/CurrencyAmount', () => ({
+vi.mock('@billbull/shared/api/employeeTargetsApi', () => ({ getMyPerformance: vi.fn() }));
+vi.mock('@billbull/shared/components/CurrencyAmount', () => ({
   default: ({ value }) => <span>{value == null ? '' : String(value)}</span>,
 }));
 
-import { getMyPerformance } from '../../api/employeeTargetsApi';
+import { getMyPerformance } from '@billbull/shared/api/employeeTargetsApi';
 import MyTargetsPerformance from '../MyTargetsPerformance';
 
 const MINE = {

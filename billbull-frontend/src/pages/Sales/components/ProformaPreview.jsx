@@ -10,9 +10,9 @@ import { getProformaStatusBadge, resolveProformaSourceType } from '../utils/prof
 import { getAvailableProformaActions } from '../utils/proformaActionRules';
 import { buildProformaTimeline } from '../utils/buildProformaTimeline';
 import { resolveCustomer, resolveDefaultShippingAddress } from '../../../utils/customerResolution';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { copyToClipboard } from '../../../utils/clipboard';
-import CurrencyAmount from '../../../components/CurrencyAmount';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import { usePermission } from '../../../hooks/usePermission';
 
 function OverflowMenu({ children, label = 'More' }) {

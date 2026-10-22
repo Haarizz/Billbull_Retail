@@ -9,9 +9,9 @@ import PaymentHistorySection from './PaymentHistorySection';
 import PrintTemplateMenu from './PrintTemplateMenu';
 import InvoiceHistoryModal from './InvoiceHistoryModal';
 import InvoiceItemsTable from './InvoiceItemsTable';
-import { getSalesInvoiceById } from '../../../api/salesInvoiceApi';
-import { getInvoicePaymentSummaries } from '../../../api/salesPaymentApi';
-import { buildPaymentBlockFromRecords } from '../../Sales/POS/payments/paymentPresentation';
+import { getSalesInvoiceById } from '@billbull/shared/api/salesInvoiceApi';
+import { getInvoicePaymentSummaries } from '@billbull/shared/api/salesPaymentApi';
+import { buildPaymentBlockFromRecords } from '@billbull/shared/pages/Sales/POS/payments/paymentPresentation';
 import PaymentDetailsPanel from '../../Sales/POS/payments/PaymentDetailsPanel';
 import { useInvoicePaymentHistory } from '../../../hooks/useInvoicePaymentHistory';
 import { useInvoiceThermalPrint } from '../../../hooks/useInvoiceThermalPrint';
@@ -19,11 +19,11 @@ import { getInvoiceStatusBadge, resolveInvoiceSourceType, getInvoiceTypeBadge } 
 import { getAvailableInvoiceActions } from '../utils/invoiceActionRules';
 import { buildInvoiceTimeline } from '../utils/buildInvoiceTimeline';
 import { resolveCustomer, resolveDefaultShippingAddress } from '../../../utils/customerResolution';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { copyToClipboard } from '../../../utils/clipboard';
-import CurrencyAmount from '../../../components/CurrencyAmount';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import { usePermission } from '../../../hooks/usePermission';
-import { useCompany } from '../../../context/CompanyContext';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
 import useShortcuts from '../../../hooks/useShortcuts';
 
 const isTypingTarget = (el) => Boolean(el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable));

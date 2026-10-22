@@ -1,10 +1,13 @@
 package com.billbull.backend.document;
 
 import com.microsoft.playwright.Browser;
+import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.BrowserType;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
+import com.microsoft.playwright.options.LoadState;
 import com.microsoft.playwright.options.Margin;
+import com.microsoft.playwright.options.ServiceWorkerPolicy;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,7 +24,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Renders document HTML to PDF using a headless Chromium instance driven by
@@ -63,8 +68,22 @@ public class HtmlPdfService {
     /** Shared browser location for all client processes on the VPS. */
     private static final String DEFAULT_BROWSERS_PATH = "/opt/ms-playwright";
 
+    /** Bound on each render step (load, network idle). */
+    static final double RENDER_TIMEOUT_MS = 30_000;
+
+    private final PdfResourcePolicy resourcePolicy;
+
     private Playwright playwright;
     private Browser browser;
+
+    public HtmlPdfService() {
+        this(PdfResourcePolicy.forServer());
+    }
+
+    /** Tests point the policy at a temporary uploads directory. */
+    HtmlPdfService(PdfResourcePolicy resourcePolicy) {
+        this.resourcePolicy = resourcePolicy;
+    }
 
     /**
      * Where Chromium lives, shared by every client process on the VPS. Honour an
@@ -114,9 +133,22 @@ public class HtmlPdfService {
         return browser;
     }
 
+    /**
+     * Every HTTP(S) request a render makes is answered by {@link PdfResourcePolicy}
+     * (fulfilled from disk, fetched by the Playwright driver, or aborted), so the
+     * browser itself never needs the network. The proxy flags give whatever the
+     * router cannot see — WebSockets, WebRTC, QUIC — a dead end instead: an
+     * unreachable proxy, with loopback no longer implicitly bypassed.
+     */
+    static final List<String> NO_DIRECT_NETWORK_ARGS = List.of(
+            "--proxy-server=http://127.0.0.1:1",
+            "--proxy-bypass-list=<-loopback>",
+            "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+            "--disable-quic");
+
     private Browser launchChromium() {
         return playwright.chromium().launch(
-                new BrowserType.LaunchOptions().setHeadless(true));
+                new BrowserType.LaunchOptions().setHeadless(true).setArgs(NO_DIRECT_NETWORK_ARGS));
     }
 
     /** A missing-binary failure reads differently from a missing-syslib failure. */
@@ -210,26 +242,57 @@ public class HtmlPdfService {
      * The HTML is expected to carry its own {@code @page { size; margin }} rules
      * (the print stylesheet already does). We therefore tell Chromium to honour
      * the page CSS and not impose its own margins.
+     *
+     * <p>{@code synchronized}: Playwright Java is not thread-safe — the Playwright
+     * object and everything created from it must not be used from two threads at
+     * once — and Download PDF, WhatsApp and document emails all call this from
+     * request threads. Renders therefore run one at a time per process, on the same
+     * monitor that guards {@link #browser()} and {@link #shutdown()}. Each step is
+     * bounded by {@link #RENDER_TIMEOUT_MS}, so a stuck page cannot hold the lock
+     * indefinitely.
+     *
+     * <p>Every resource request goes through {@link PdfResourcePolicy} (uploads
+     * served from disk, public hosts only, no redirects); service workers are
+     * blocked so nothing bypasses that router, and the launch flags in
+     * {@link #NO_DIRECT_NETWORK_ARGS} dead-end WebSockets/WebRTC/QUIC.
      */
-    public byte[] render(String html) {
-        try (Page page = browser().newPage()) {
+    public synchronized byte[] render(String html) {
+        // A fresh context per render (no shared cookies/storage between documents),
+        // with the routes installed before its first page exists.
+        BrowserContext context = browser().newContext(new Browser.NewContextOptions()
+                .setServiceWorkers(ServiceWorkerPolicy.BLOCK));
+        try {
+            context.route(Pattern.compile(".*"), resourcePolicy::handle);
+            Page page = context.newPage();
+            page.setDefaultTimeout(RENDER_TIMEOUT_MS);
+            page.setDefaultNavigationTimeout(RENDER_TIMEOUT_MS);
+
             // Load the HTML directly; wait until network is idle so embedded
             // images / fonts (data URIs are instant, remote ones get a moment)
             // are painted before we snapshot.
             page.setContent(html, new Page.SetContentOptions()
-                    .setWaitUntil(com.microsoft.playwright.options.WaitUntilState.NETWORKIDLE));
-            page.waitForLoadState();
+                    .setWaitUntil(com.microsoft.playwright.options.WaitUntilState.NETWORKIDLE)
+                    .setTimeout(RENDER_TIMEOUT_MS));
+            page.waitForLoadState(LoadState.LOAD,
+                    new Page.WaitForLoadStateOptions().setTimeout(RENDER_TIMEOUT_MS));
 
             return page.pdf(new Page.PdfOptions()
                     .setPrintBackground(true)            // amber bars, zebra rows, etc.
                     .setPreferCSSPageSize(true)          // honour the doc's own @page size
                     .setMargin(new Margin()              // doc CSS owns margins; zero here
                             .setTop("0").setBottom("0").setLeft("0").setRight("0")));
+        } finally {
+            // Closing the context closes its page and frees the render's resources.
+            try {
+                context.close();
+            } catch (RuntimeException e) {
+                log.warn("Error closing PDF render page: {}", e.getMessage());
+            }
         }
     }
 
     @PreDestroy
-    public void shutdown() {
+    public synchronized void shutdown() {
         try {
             if (browser != null) browser.close();
         } catch (Exception e) {

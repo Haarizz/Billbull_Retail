@@ -7,21 +7,21 @@ import {
     ChevronLeft, ChevronRight, RefreshCw, Send, Box,
     Calendar, Filter, Loader, Save, SlidersHorizontal
 } from 'lucide-react';
-import { searchExactProducts } from "../../../api/productsApi";
+import { searchExactProducts } from "@billbull/shared/api/productsApi";
 import { getLpos } from "../../../api/lpoApi";
 import { getPostedPurchaseInvoices } from '../../../api/purchaseInvoiceApi';
 import { getVendors } from "../../../api/vendorsApi";
 import { getBarcodeTemplates, createBarcodeTemplate, updateBarcodeTemplate, deleteBarcodeTemplate } from '../../../api/barcodeTemplateApi';
 import { getStockTakeSessions, getStockTakeSession } from '../../../api/stockTakeApi';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useCompany } from "../../../context/CompanyContext";
-import { useBranch } from "../../../context/BranchContext";
-import { getImageUrl } from "../../../utils/urlUtils";
+import { useCompany } from "@billbull/shared/context/CompanyContext";
+import { useBranch } from "@billbull/shared/context/BranchContext";
+import { getImageUrl } from "@billbull/shared/utils/urlUtils";
 import {
     resolveCurrencyDisplayConfig,
     resolveCurrencyDisplayCode,
     UAE_DIRHAM_SYMBOL_IMAGE
-} from "../../../utils/countryCurrencyOptions";
+} from "@billbull/shared/utils/countryCurrencyOptions";
 import { buildZplBatch } from "../../../utils/zebraZpl";
 import { resolveLabelPrinter, sendZplToLabelPrinter, LabelPrinterError } from "../../../utils/labelPrinterTransport";
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { summaryLabelForModes } from './POS/payments/paymentPresentation';
+import { summaryLabelForModes } from '@billbull/shared/pages/Sales/POS/payments/paymentPresentation';
 import {
     DollarSign,
     Search,
@@ -29,23 +29,23 @@ import {
 } from 'lucide-react';
 
 // API Imports
-import { getAllSalesPayments, getSalesPaymentsPage, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats, deleteSalesPayment } from '../../api/salesPaymentApi';
+import { getAllSalesPayments, getSalesPaymentsPage, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats, deleteSalesPayment } from '@billbull/shared/api/salesPaymentApi';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import DateFilter from '../../components/common/DateFilter';
-import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
-import { getAllCustomers, getOpeningInvoicesByCustomerCode } from '../../api/customerledgerApi';
-import { getBankAccounts } from '../../api/ledgerApi';
-import { getSalesSettings } from '../../api/salesSettingsApi';
-import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../utils/printGenerator';
+import { getAllSalesInvoices } from '@billbull/shared/api/salesInvoiceApi';
+import { getAllCustomers, getOpeningInvoicesByCustomerCode } from '@billbull/shared/api/customerledgerApi';
+import { getBankAccounts } from '@billbull/shared/api/ledgerApi';
+import { getSalesSettings } from '@billbull/shared/api/salesSettingsApi';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '@billbull/shared/utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
-import { useCompany } from '../../context/CompanyContext';
-import { useBranch } from '../../context/BranchContext';
-import billBullLogo from '../../assets/billBullLogo.png';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 import ExportDropdown from '../../components/common/ExportDropdown';
-import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
-import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
-import { formatDisplayDate, toLocalInputDate } from '../../utils/dateUtils';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import CurrencyAmount, { CurrencySymbol } from '@billbull/shared/components/CurrencyAmount';
+import { formatDisplayDate, toLocalInputDate } from '@billbull/shared/utils/dateUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
@@ -892,7 +892,7 @@ const Payment = () => {
                             <div className="mb-6">
                                 <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><Filter size={16} /> Payment Filters</h3>
                                 <div className="flex items-center gap-3 mb-3">
-                                    <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
+                                    <DateFilter loading={isLoading} onChange={(range) => { setDateRange(range); setListPage(0); }} />
                                 </div>
                                 <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
                                     <div className="md:col-span-2 relative">

@@ -38,25 +38,25 @@ import {
 } from '../../api/paymentApi';
 import { fetchExpenses } from '../../api/expensesApi';
 import { getVendors } from '../../api/vendorsApi';
-import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
 import { getPostedInvoicesForPayment } from '../../api/purchaseInvoiceApi';
 
-import { useCompany } from '../../context/CompanyContext';
-import { useBranch } from '../../context/BranchContext';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import {
     buildPaymentVoucherPrintData,
     findVendorRecord,
 } from '../../utils/purchasePrintUtils';
-import { printHtml } from '../../utils/printGenerator';
+import { printHtml } from '@billbull/shared/utils/printGenerator';
 import { resolveVoucherSettings } from '../../utils/financialPrintTemplate';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { ReceiptPaymentPreview } from './FinancialVoucherDesigner';
-import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
-import { formatDisplayDate } from '../../utils/dateUtils';
-import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
-import { CurrencySymbol } from '../../components/CurrencyAmount';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
+import { resolveCurrencyDisplayCode } from '@billbull/shared/utils/countryCurrencyOptions';
+import { CurrencySymbol } from '@billbull/shared/components/CurrencyAmount';
 import PaginationFooter from '../../components/common/PaginationFooter';
-import { generateDocFilename } from '../../utils/filenameUtils';
+import { generateDocFilename } from '@billbull/shared/utils/filenameUtils';
 import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ------------------------------------------------------------------

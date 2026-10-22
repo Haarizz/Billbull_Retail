@@ -23,9 +23,12 @@ public class WhatsAppConfig {
     @Column(name = "enabled")
     private Boolean enabled = false;
 
-    /** Graph API version segment, e.g. "v21.0". Kept configurable so a Meta deprecation is a settings change, not a release. */
+    /**
+     * Graph API version segment, e.g. "v25.0". Kept configurable so a Meta deprecation is a settings change,
+     * not a release. Changing this default does not move saved rows; V118 does that once.
+     */
     @Column(name = "graph_api_version", length = 20)
-    private String graphApiVersion = "v21.0";
+    private String graphApiVersion = GraphApiVersion.DEFAULT;
 
     /** "Phone number ID" from Meta → WhatsApp → API Setup (NOT the phone number itself). */
     @Column(name = "phone_number_id", length = 64)
@@ -56,18 +59,20 @@ public class WhatsAppConfig {
 
     /**
      * Meta-approved template names, one per document (see {@link WhatsAppDocumentType}). A blank
-     * name means "not set up" — that document falls back to the manual wa.me flow.
+     * name means "not set up" — that document falls back to the manual wa.me flow. No defaults:
+     * a name is stored only when someone enters it, so "set" never means "we guessed". The
+     * suggested names (quotation_document, ...) are placeholders on the settings page.
      */
     @Column(name = "quotation_template_name", length = 512)
-    private String quotationTemplateName = "quotation_document";
+    private String quotationTemplateName;
 
     /** Template for sales orders (DOCUMENT header + 4 body variables). */
     @Column(name = "sales_order_template_name", length = 512)
-    private String salesOrderTemplateName = "sales_order_document";
+    private String salesOrderTemplateName;
 
     /** Template for sales invoices (DOCUMENT header + 4 body variables). */
     @Column(name = "sales_invoice_template_name", length = 512)
-    private String salesInvoiceTemplateName = "sales_invoice_document";
+    private String salesInvoiceTemplateName;
 
     /** Template language code exactly as approved in Meta, e.g. "en", "en_US", "ar". */
     @Column(name = "template_language", length = 15)
@@ -81,6 +86,12 @@ public class WhatsAppConfig {
 
     public String getGraphApiVersion() { return graphApiVersion; }
     public void setGraphApiVersion(String graphApiVersion) { this.graphApiVersion = graphApiVersion; }
+
+    /** Read-only, for the settings page: when the saved version expires and whether to warn. Not stored. */
+    @com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+    public GraphApiVersion.Status getGraphApiVersionStatus() {
+        return GraphApiVersion.status(graphApiVersion, java.time.LocalDate.now());
+    }
 
     public String getPhoneNumberId() { return phoneNumberId; }
     public void setPhoneNumberId(String phoneNumberId) { this.phoneNumberId = phoneNumberId; }

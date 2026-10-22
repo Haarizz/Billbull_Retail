@@ -1,17 +1,17 @@
 ﻿import React, { useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
-import { Button } from "../../components/ui/button";
-import { Input } from "../../components/ui/input";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@billbull/shared/components/ui/card";
+import { Button } from "@billbull/shared/components/ui/button";
+import { Input } from "@billbull/shared/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "../../components/ui/avatar";
-import { Badge } from "../../components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { Badge } from "@billbull/shared/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@billbull/shared/components/ui/tabs";
 import { Progress } from "../../components/ui/progress";
-import { Separator } from "../../components/ui/separator";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
+import { Separator } from "@billbull/shared/components/ui/separator";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@billbull/shared/components/ui/table";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@billbull/shared/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@billbull/shared/components/ui/select";
 import { Checkbox } from "../../components/ui/checkbox";
-import { Label } from "../../components/ui/label";
+import { Label } from "@billbull/shared/components/ui/label";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -64,7 +64,7 @@ import {
 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { Calendar as CalendarComponent } from "../../components/ui/calendar";
-import { Switch } from "../../components/ui/switch";
+import { Switch } from "@billbull/shared/components/ui/switch";
 import { format, addDays, differenceInDays } from "date-fns";
 import {
   LineChart,

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import api from '../../api/axiosConfig';
+import api from '@billbull/shared/api/axiosConfig';
 import {
     ShoppingCart,
     Search,
@@ -41,11 +41,11 @@ import {
 
 
 
-import { getAllCustomers } from '../../api/customerledgerApi';
-import { getAllSalesOrders } from '../../api/salesorderApi';
+import { getAllCustomers } from '@billbull/shared/api/customerledgerApi';
+import { getAllSalesOrders } from '@billbull/shared/api/salesorderApi';
 import { getAllProformas } from '../../api/proformaApi';
 import { getDeliveryNotes, getPickingNotes, getUninvoicedDNsForCustomer } from '../../api/deliveryNoteApi';
-import { getEmployeeNames, getSalespersons } from '../../api/employeeApi';
+import { getEmployeeNames, getSalespersons } from '@billbull/shared/api/employeeApi';
 import {
     getAllSalesInvoices,
     getSalesInvoicesPage,
@@ -58,39 +58,39 @@ import {
     getCustomerOutstanding,
     getSalesInvoiceById,
     sendSalesInvoiceEmail
-} from '../../api/salesInvoiceApi';
-import { getSalesSettings } from '../../api/salesSettingsApi';
-import { getSalesPaymentsByInvoice } from '../../api/salesPaymentApi';
-import { receiptVoucherApi } from '../../api/receiptVoucherApi';
-import { getStockAvailability } from '../../api/stockAvailabilityApi';
-import { formatDisplayDate } from '../../utils/dateUtils';
+} from '@billbull/shared/api/salesInvoiceApi';
+import { getSalesSettings } from '@billbull/shared/api/salesSettingsApi';
+import { getSalesPaymentsByInvoice } from '@billbull/shared/api/salesPaymentApi';
+import { receiptVoucherApi } from '@billbull/shared/api/receiptVoucherApi';
+import { getStockAvailability } from '@billbull/shared/api/stockAvailabilityApi';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
-import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
+import { computeLineTaxTotals, resolveLineTaxRate } from '@billbull/shared/utils/vatMath';
 import { getBranchTaxSummary } from '../../api/taxApi';
 import { getWarehouses } from '../../api/warehouseApi';
-import { getTemplatesByCategory, getTemplateFamily } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, generatePdfHtmlAsync, generateEmailHtml, printHtml, downloadPdf, downloadPdfViaServer } from '../../utils/printGenerator';
-import { generateOverlayInvoiceHtml } from '../../utils/overlayInvoiceRenderer';
-import { applyTaxAwareDisplayOptions } from './POS/posPrintUtils';
-import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../utils/documentTaxType';
+import { getTemplatesByCategory, getTemplateFamily } from '@billbull/shared/api/printTemplateApi';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, generateEmailHtml, printHtml, downloadPdf, downloadPdfViaServer } from '@billbull/shared/utils/printGenerator';
+import { generateOverlayInvoiceHtml } from '@billbull/shared/utils/overlayInvoiceRenderer';
+import { applyTaxAwareDisplayOptions } from '@billbull/shared/pages/Sales/POS/posPrintUtils';
+import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '@billbull/shared/utils/documentTaxType';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import InvoicePreviewModal from './components/InvoicePreviewModal';
 import InvoiceSettlementModal from './components/InvoiceSettlementModal';
-import { getImageUrl } from '../../utils/urlUtils';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
-import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, printLineMoney, FOOTER_DISCOUNT_HELP } from '../../utils/documentSummaryUtils';
-import billBullLogo from '../../assets/billBullLogo.png';
-import { generateDocFilename } from '../../utils/filenameUtils';
+import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, printLineMoney, FOOTER_DISCOUNT_HELP } from '@billbull/shared/utils/documentSummaryUtils';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
+import { generateDocFilename } from '@billbull/shared/utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
-import { useCompany } from '../../context/CompanyContext';
-import { useBranch } from '../../context/BranchContext';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import DateFilter from '../../components/common/DateFilter';
 import KpiCards from '../../components/common/KpiCards';
-import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
-import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
-import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import CurrencyAmount, { CurrencySymbol } from '@billbull/shared/components/CurrencyAmount';
+import { formatCurrencyDisplay } from '@billbull/shared/utils/countryCurrencyOptions';
 import { useWhatsAppDocumentSend } from '../../components/whatsapp/useWhatsAppDocumentSend';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import { compareDocumentValues } from '../../utils/documentOrdering';
@@ -140,9 +140,9 @@ import {
     paymentDetailsForExport,
     summaryLabelForModes,
     PAYMENT_FILTERS,
-} from './POS/payments/paymentPresentation';
+} from '@billbull/shared/pages/Sales/POS/payments/paymentPresentation';
 import PaymentDetailsPanel from './POS/payments/PaymentDetailsPanel';
-import { getInvoicePaymentSummaries } from '../../api/salesPaymentApi';
+import { getInvoicePaymentSummaries } from '@billbull/shared/api/salesPaymentApi';
 
 const SALES_INVOICE_COLUMNS = [
     { header: 'S.No.', key: 'sNo', width: 8 },
@@ -203,7 +203,7 @@ import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 // ✅ SHORTCUTS HOOK
 import useShortcuts from '../../hooks/useShortcuts';
-import { usePermissions } from '../../context/PermissionContext';
+import { usePermissions } from '@billbull/shared/context/PermissionContext';
 import { OwnershipIndicator } from '../../components/common/OwnershipIndicator';
 
 // ==========================================
@@ -2924,7 +2924,11 @@ const SalesInvoice = () => {
                 warehouse: printBranch.defaultWarehouseName || '',
                 deliveryTerms: '',
                 salesPerson: salesperson || '',
-                notes: invoiceNotes || ''
+                notes: invoiceNotes || '',
+                // Read by the styled invoice layouts only (Pay Mode / Balance Due);
+                // kept out of totals so standard templates print unchanged.
+                paymentMode: paymentMode || '',
+                amountPaid: Number(amountCollected) || 0
             }
         };
     };
@@ -3111,7 +3115,11 @@ const SalesInvoice = () => {
                         warehouse: printBranch.defaultWarehouseName || '',
                         deliveryTerms: dataToPrint.deliveryType || '',
                         salesPerson: dataToPrint.salesperson || '',
-                        notes: dataToPrint.customerNotes || dataToPrint.notes || ''
+                        notes: dataToPrint.customerNotes || dataToPrint.notes || '',
+                        // Read by the styled invoice layouts only (Pay Mode / Balance Due);
+                        // kept out of totals so standard templates print unchanged.
+                        paymentMode: dataToPrint.paymentMode || '',
+                        amountPaid: Number(dataToPrint.amountPaid) || 0
                     }
                 };
 
@@ -3637,7 +3645,7 @@ const SalesInvoice = () => {
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                                 <h3 className="font-bold text-slate-700 text-sm">All Invoices</h3>
                                 <div className="flex flex-col md:flex-row gap-3 items-center w-full md:w-auto">
-                                    <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
+                                    <DateFilter loading={isListLoading} onChange={(range) => { setDateRange(range); setListPage(0); }} />
                                     <div className="relative w-full md:w-auto">
                                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                                         <input type="text" placeholder="Search invoices..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9 pr-4 py-2 border border-slate-200 rounded-md text-xs w-full md:w-64 focus:outline-none focus:border-[#F5C742]" />
@@ -4248,7 +4256,7 @@ const SalesInvoice = () => {
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y divide-slate-100/50">
-                                                        {[...items].reverse().map((item, index) => {
+                                                        {items.map((item, index) => {
                                                             const isVoided = Boolean(item.voided ?? item.isVoided ?? false);
                                                             return (
                                                             <React.Fragment key={item.id}>
@@ -5133,6 +5141,11 @@ const SalesInvoice = () => {
                 companyProfile={buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: activeBranch?.id })}
                 apiFn={sendSalesInvoiceEmail}
                 buildPayload={buildCurrentInvoicePrintData}
+                // The attachment is the Download PDF document: same template choice and print HTML.
+                buildPdfHtml={() => {
+                    const source = buildCurrentFormPrintSource();
+                    return buildInvoiceHtml(source, { titleOverride: getInvoiceDocumentTitle(source), forPdf: false, storedValues: isReadOnlyInvoice });
+                }}
             />
 
             {/* Review-before-commit preview (Save Draft / Confirm) */}

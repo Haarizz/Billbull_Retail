@@ -71,10 +71,12 @@ public class SalesOrderController {
     }
 
     // QA-040: send the SO email using the frontend-rendered HTML body.
+    // Checked before the try: the catch-all below would turn the denial into a 500.
     @PostMapping("/{id}/send-email")
     @SuppressWarnings("unchecked")
     public ResponseEntity<?> sendEmail(@PathVariable Long id,
                                        @RequestBody(required = false) Map<String, Object> body) {
+        modulePermissionService.requireCanView(MODULE);
         try {
             String toEmail = body != null ? (String) body.get("toEmail") : null;
             String subject = body != null ? (String) body.get("subject") : null;
@@ -87,10 +89,16 @@ public class SalesOrderController {
             if (subject == null || subject.isBlank()) {
                 subject = "Sales Order " + order.getSoNumber() + " from " + emailSender.getFromName();
             }
-            emailSender.send(toEmail, subject, htmlBody, inlineAttachments);
+            // pdfHtml is the print HTML; the attachment is named from the stored number.
+            DocumentEmailSender.PdfAttachment pdf = DocumentEmailSender.PdfAttachment.fromRequest(
+                    body, order.getSoNumber(), "Sales-Order-" + id);
+            emailSender.send(toEmail, subject, htmlBody, inlineAttachments, null, pdf);
             return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + toEmail));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            // Branch scope (403) and ownership (404) from the document lookup keep their status.
+            throw e;
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Failed to send email: " + e.getMessage());
         }
@@ -115,6 +123,11 @@ public class SalesOrderController {
                     (String) body.get("html"),
                     order.getSoNumber(),
                     orderTemplateParams(order, companyProfileService.getProfile().getCurrency()))));
+        } catch (com.billbull.backend.document.DocumentPdfGuard.PdfRejectedException e) {
+            // Server-side: the PDF could not be produced, so nothing was uploaded to Meta.
+            return ResponseEntity.status(e.reason() == com.billbull.backend.document.DocumentPdfGuard.Reason.TOO_LARGE
+                    ? org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY
+                    : org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR).body(e.getMessage());
         } catch (IllegalArgumentException | IllegalStateException | WhatsAppApiException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
@@ -159,12 +172,11 @@ public class SalesOrderController {
             @RequestParam(required = false) String fromDate,
             @RequestParam(required = false) String toDate) {
         modulePermissionService.requireCanView(MODULE);
-        java.util.List<SalesOrder> all = (fromDate != null || toDate != null)
-                ? service.getAllByDateRange(
-                        fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1),
-                        toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now())
-                : service.getAll();
-        return com.billbull.backend.util.PaginationUtil.paginate(all, page, size, search, status);
+        boolean ranged = fromDate != null || toDate != null;
+        return service.getPage(
+                ranged ? (fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1)) : null,
+                ranged ? (toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now()) : null,
+                page, size, search, status);
     }
 
     @GetMapping("/stats")

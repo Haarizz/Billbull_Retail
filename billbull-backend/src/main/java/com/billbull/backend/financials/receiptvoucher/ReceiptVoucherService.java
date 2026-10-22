@@ -112,6 +112,8 @@ public class ReceiptVoucherService {
     public ReceiptVoucher getReceiptById(Long id) {
         ReceiptVoucher rv = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Receipt not found with id " + id));
+        branchAccessService.assertTransactionBranchAccessible(
+                rv.getBranchEntity() != null ? rv.getBranchEntity().getId() : null, "Receipt Voucher");
         ownershipAccessService.assertCanAccessRecord(rv.getCreatedByUserId(), "Receipt Voucher");
         rv.snapshotBranchFields();
         entityManager.detach(rv);

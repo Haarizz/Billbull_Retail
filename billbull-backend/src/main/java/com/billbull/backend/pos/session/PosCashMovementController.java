@@ -1,6 +1,7 @@
 package com.billbull.backend.pos.session;
 
 import com.billbull.backend.security.ModulePermissionService;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.PageResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -19,6 +20,11 @@ import java.time.LocalDate;
  * requirement). New endpoints here follow the same RBAC pattern as {@code
  * PosTerminalController}: single-switch {@code permissions.pos.cashmovement.<action>} rows
  * checked via {@link ModulePermissionService}, not a hardcoded role list.
+ *
+ * <p>Branch scope: every endpoint is limited to the branches the caller may act on, judged on the
+ * stored movement, the named session, or a requested {@code branchId}. Listing applies the scope
+ * inside the query, so {@code branchId} omitted (all branches to the query) cannot widen it.
+ * {@code viewall} widens the view across sessions, not across branches.
  */
 @RestController
 @RequestMapping("/api/pos/cash-movements")
@@ -31,13 +37,32 @@ public class PosCashMovementController {
     private static final String PERM_EDIT     = "permissions.pos.cashmovement.edit";
     private static final String PERM_VOID     = "permissions.pos.cashmovement.void";
 
+    private static final String LABEL = "Cash movement";
+
     private final PosCashMovementService service;
     private final ModulePermissionService modulePermissionService;
+    private final BranchAccessService branchAccessService;
+    private final PosSessionRepository sessionRepository;
 
     public PosCashMovementController(PosCashMovementService service,
-                                      ModulePermissionService modulePermissionService) {
+                                      ModulePermissionService modulePermissionService,
+                                      BranchAccessService branchAccessService,
+                                      PosSessionRepository sessionRepository) {
         this.service = service;
         this.modulePermissionService = modulePermissionService;
+        this.branchAccessService = branchAccessService;
+        this.sessionRepository = sessionRepository;
+    }
+
+    private void requireMovementInScope(Long id) {
+        branchAccessService.assertTransactionBranchAccessible(service.branchIdOf(id), LABEL);
+    }
+
+    /** A named session must belong to a reachable branch. An unknown id is left to the service. */
+    private void requireSessionInScope(Long sessionId) {
+        if (sessionId == null) return;
+        sessionRepository.findById(sessionId).ifPresent(session ->
+                branchAccessService.assertTransactionBranchAccessible(session.getBranchId(), "POS session"));
     }
 
     private void requireAction(String permissionKey) {
@@ -68,7 +93,9 @@ public class PosCashMovementController {
                         "sessionId is required for users without cross-session view access.");
             }
         }
-        return ResponseEntity.ok(service.list(branchId, sessionId, status, movementType,
+        branchAccessService.assertTransactionBranchAccessible(branchId, LABEL);
+        requireSessionInScope(sessionId);
+        return ResponseEntity.ok(service.list(branchAccessService.currentSearchScope(), branchId, sessionId, status, movementType,
                 fromDate, toDate, performedBy, page, size));
     }
 
@@ -76,6 +103,7 @@ public class PosCashMovementController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosCashMovementResponse> getById(@PathVariable Long id) {
         requireAction(modulePermissionService.canView(PERM_VIEW_ALL) ? PERM_VIEW_ALL : PERM_VIEW);
+        requireMovementInScope(id);
         return ResponseEntity.ok(service.getById(id));
     }
 
@@ -87,7 +115,11 @@ public class PosCashMovementController {
     public ResponseEntity<java.util.List<PosCashMovementSessionOption>> eligibleSessions(
             @RequestParam(required = false) Long branchId) {
         requireAction(PERM_CREATE);
-        return ResponseEntity.ok(service.listEligibleSessions(branchId));
+        branchAccessService.assertTransactionBranchAccessible(branchId, LABEL);
+        // A null branchId lists every branch's open sessions, so the rows are filtered too.
+        return ResponseEntity.ok(service.listEligibleSessions(branchId).stream()
+                .filter(option -> branchAccessService.canAccessTransactionBranch(option.getBranchId()))
+                .toList());
     }
 
     public static class CreateRequest {
@@ -105,6 +137,8 @@ public class PosCashMovementController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosCashMovementResponse> create(@RequestBody CreateRequest body) {
         requireAction(PERM_CREATE);
+        // Before the movement and its GL posting: the target drawer must be in a reachable branch.
+        requireSessionInScope(body.sessionId);
         return ResponseEntity.ok(service.create(body.sessionId, body.movementType, body.amount,
                 body.description, body.reference, body.categoryId));
     }
@@ -120,6 +154,7 @@ public class PosCashMovementController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosCashMovementResponse> edit(@PathVariable Long id, @RequestBody EditRequest body) {
         requireAction(PERM_EDIT);
+        requireMovementInScope(id);
         return ResponseEntity.ok(service.edit(id, body.description, body.reference));
     }
 
@@ -131,6 +166,7 @@ public class PosCashMovementController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosCashMovementResponse> voidMovement(@PathVariable Long id, @RequestBody VoidRequest body) {
         requireAction(PERM_VOID);
+        requireMovementInScope(id);
         return ResponseEntity.ok(service.voidMovement(id, body.voidReason));
     }
 }

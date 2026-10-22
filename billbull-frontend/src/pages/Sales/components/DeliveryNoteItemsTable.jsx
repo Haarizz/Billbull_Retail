@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Package, Box } from 'lucide-react';
-import { getImageUrl } from '../../../utils/urlUtils';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 
 // Items table for the Delivery Note Transaction Preview. A DN is a fulfillment
 // document, not a money document — so the columns are quantity-centric

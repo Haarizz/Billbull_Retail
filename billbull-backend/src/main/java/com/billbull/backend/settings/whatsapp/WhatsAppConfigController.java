@@ -14,14 +14,14 @@ public class WhatsAppConfigController {
     private static final String MODULE = "userManagement";
 
     private final WhatsAppConfigService service;
-    private final WhatsAppCloudApiClient client;
+    private final WhatsAppConnectionCheck connectionCheck;
     private final ModulePermissionService modulePermissionService;
 
     public WhatsAppConfigController(WhatsAppConfigService service,
                                     WhatsAppCloudApiClient client,
                                     ModulePermissionService modulePermissionService) {
         this.service = service;
-        this.client = client;
+        this.connectionCheck = new WhatsAppConnectionCheck(service, client);
         this.modulePermissionService = modulePermissionService;
     }
 
@@ -37,19 +37,22 @@ public class WhatsAppConfigController {
         return ResponseEntity.ok(service.saveConfig(config));
     }
 
-    /** Calls Meta with the SAVED credentials and returns the sender number's verified name / quality. */
+    /**
+     * Checks the SAVED settings against Meta (see {@link WhatsAppConnectionCheck}); nothing is sent.
+     * 200 with credentials, business account and per-template results, or 400 {@code {message}}
+     * when the credentials themselves are missing or rejected.
+     */
     @PostMapping("/test")
     public ResponseEntity<?> testConnection() {
         modulePermissionService.requireCanEdit(MODULE);
-        WhatsAppConfig cfg = service.getConfig();
-        if (cfg.getPhoneNumberId() == null || cfg.getAccessToken() == null) {
-            return ResponseEntity.badRequest().body("Save the Phone Number ID and Access Token first.");
-        }
         try {
-            Map<String, Object> info = client.getPhoneNumberInfo(cfg);
-            return ResponseEntity.ok(info);
+            return ResponseEntity.ok(connectionCheck.run());
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         } catch (WhatsAppApiException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of(
+                    "message", WhatsAppConnectionCheck.describe(e),
+                    "metaCode", e.getMetaCode() == null ? "" : String.valueOf(e.getMetaCode())));
         }
     }
 }

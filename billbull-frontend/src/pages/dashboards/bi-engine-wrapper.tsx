@@ -1,6 +1,6 @@
 ﻿import React, { useState } from 'react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
-import { Button } from "../../components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@billbull/shared/components/ui/tabs";
+import { Button } from "@billbull/shared/components/ui/button";
 import { Brain, Sparkles, ArrowLeft } from 'lucide-react';
 import { BillBullBIEngineDashboard } from "./bi-engine-dashboard-v2";
 import { ExtraStrategicIntelligence } from "./extra-strategic-intelligence";

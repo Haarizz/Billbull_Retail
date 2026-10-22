@@ -34,13 +34,13 @@ import {
   Activity,
 } from "lucide-react";
 import { getProfitLoss, getBalanceSheet, getTrialBalance, getCashFlow, getTaxDashboard, getTaxReconciliation, getARAgingReport, getAPAgingReport, getLedgerStatement, getCostCentreOptions } from "../../api/financialReportsBackendApi";
-import { exportToExcel } from "../../utils/exportUtils";
-import { generateReportA4Html, printHtml, downloadPdf } from "../../utils/printGenerator";
-import { getCompanyProfile } from "../../api/companyProfileApi";
-import { getAccounts } from "../../api/ledgerApi";
+import { exportToExcel } from "@billbull/shared/utils/exportUtils";
+import { generateReportA4Html, printHtml, downloadPdf } from "@billbull/shared/utils/printGenerator";
+import { getCompanyProfile } from "@billbull/shared/api/companyProfileApi";
+import { getAccounts } from "@billbull/shared/api/ledgerApi";
 import ExportDropdown from "../../components/common/ExportDropdown";
-import { useBranch } from "../../context/BranchContext";
-import { CurrencySymbol } from "../../components/CurrencyAmount";
+import { useBranch } from "@billbull/shared/context/BranchContext";
+import { CurrencySymbol } from "@billbull/shared/components/CurrencyAmount";
 
 // ─── Report data types ────────────────────────────────────────────────────────
 

@@ -18,15 +18,15 @@ import {
   addFollowUp,
   reassignRep
 } from '../../api/customerApi';
-import { getEmployees } from '../../api/employeeApi';
-import { getProducts, getProductById } from '../../api/productsApi';
-import { getAllCustomers } from '../../api/customerledgerApi';
-import { getBranches } from '../../api/branchApi';
+import { getEmployees } from '@billbull/shared/api/employeeApi';
+import { getProducts, getProductById } from '@billbull/shared/api/productsApi';
+import { getAllCustomers } from '@billbull/shared/api/customerledgerApi';
+import { getBranches } from '@billbull/shared/api/branchApi';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import ProductSelector from '../../components/ProductSelector';
 import CustomerSelector from '../../components/CustomerSelector';
-import CurrencyAmount from '../../components/CurrencyAmount';
-import { getImageUrl } from '../../utils/urlUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import toast from 'react-hot-toast';
 
 // ==========================================

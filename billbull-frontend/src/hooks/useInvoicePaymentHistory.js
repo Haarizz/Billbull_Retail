@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getSalesPaymentsByInvoice } from '../api/salesPaymentApi';
-import { receiptVoucherApi } from '../api/receiptVoucherApi';
+import { getSalesPaymentsByInvoice } from '@billbull/shared/api/salesPaymentApi';
+import { receiptVoucherApi } from '@billbull/shared/api/receiptVoucherApi';
 
 // Fetches + merges every payment tied to a sales invoice (sales payments +
 // standalone receipt vouchers, deduped against auto-created RVs), sorted

@@ -2,18 +2,14 @@ package com.billbull.backend.sales.quotation;
 
 import com.billbull.backend.customer.messaging.MessageLog;
 import com.billbull.backend.customer.messaging.MessagingService;
+import com.billbull.backend.settings.email.DocumentEmailSender;
 import com.billbull.backend.settings.email.EmailConfigService;
 import jakarta.mail.MessagingException;
-import jakarta.mail.internet.MimeMessage;
-import jakarta.mail.util.ByteArrayDataSource;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 
 import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
 import java.time.format.DateTimeFormatter;
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
@@ -22,24 +18,27 @@ public class QuotationEmailService {
 
     private final EmailConfigService emailConfigService;
     private final MessagingService messagingService;
+    private final DocumentEmailSender documentEmailSender;
 
     public QuotationEmailService(EmailConfigService emailConfigService,
-                                 MessagingService messagingService) {
+                                 MessagingService messagingService,
+                                 DocumentEmailSender documentEmailSender) {
         this.emailConfigService = emailConfigService;
         this.messagingService = messagingService;
+        this.documentEmailSender = documentEmailSender;
     }
 
     // QA-040: legacy 3-arg signature preserved for internal callers.
     public void sendQuotationEmail(Quotation quotation, String toEmail, String subject)
             throws MessagingException, UnsupportedEncodingException {
-        sendQuotationEmail(quotation, toEmail, subject, null, null);
+        sendQuotationEmail(quotation, toEmail, subject, null, null, null);
     }
 
     // QA-040: 4-arg overload — pre-rendered HTML body from the frontend
     // (so the email mirrors whatever was designed in Print & Email Templates).
     public void sendQuotationEmail(Quotation quotation, String toEmail, String subject, String htmlBody)
             throws MessagingException, UnsupportedEncodingException {
-        sendQuotationEmail(quotation, toEmail, subject, htmlBody, null);
+        sendQuotationEmail(quotation, toEmail, subject, htmlBody, null, null);
     }
 
     // QA-040: 5-arg overload — htmlBody references images by `cid:<id>`, the
@@ -48,6 +47,17 @@ public class QuotationEmailService {
     // bloating it with data: URIs that get stripped on delivery.
     public void sendQuotationEmail(Quotation quotation, String toEmail, String subject,
                                    String htmlBody, List<Map<String, String>> inlineAttachments)
+            throws MessagingException, UnsupportedEncodingException {
+        sendQuotationEmail(quotation, toEmail, subject, htmlBody, inlineAttachments, null);
+    }
+
+    // 6-arg overload — `pdf` (print HTML; null = no attachment) is rendered and
+    // attached by DocumentEmailSender, which builds the MIME message and sends for
+    // every document email. Quotation keeps its own recipient/subject/body defaults
+    // and the MessageLog row, written only after SMTP accepted the message.
+    public void sendQuotationEmail(Quotation quotation, String toEmail, String subject,
+                                   String htmlBody, List<Map<String, String>> inlineAttachments,
+                                   DocumentEmailSender.PdfAttachment pdf)
             throws MessagingException, UnsupportedEncodingException {
 
         String recipient = (toEmail != null && !toEmail.isBlank())
@@ -61,44 +71,12 @@ public class QuotationEmailService {
                 ? subject
                 : "Quotation " + quotation.getQtnNo() + " from " + emailConfigService.getFromName();
 
-        JavaMailSender sender = emailConfigService.buildMailSender();
-        String fromAddress = emailConfigService.getFromAddress();
-        String fromName = emailConfigService.getFromName();
-
         String body = (htmlBody != null && !htmlBody.isBlank())
                 ? htmlBody
-                : buildHtmlEmail(quotation, fromName);
+                : buildHtmlEmail(quotation, emailConfigService.getFromName());
 
-        boolean hasInlineParts = inlineAttachments != null && !inlineAttachments.isEmpty();
-
-        MimeMessage message = sender.createMimeMessage();
-        // multipart=true is required as soon as we addInline anything.
-        MimeMessageHelper helper = new MimeMessageHelper(message, hasInlineParts, "UTF-8");
-        helper.setFrom(fromAddress, fromName);
-        helper.setTo(recipient);
-        helper.setSubject(emailSubject);
-        helper.setText(body, true);
-
-        if (hasInlineParts) {
-            for (Map<String, String> att : inlineAttachments) {
-                String cid = att.get("cid");
-                String base64 = att.get("base64");
-                String contentType = att.getOrDefault("contentType", "application/octet-stream");
-                if (cid == null || cid.isBlank() || base64 == null || base64.isBlank()) continue;
-                try {
-                    byte[] bytes = Base64.getDecoder().decode(base64);
-                    ByteArrayDataSource source = new ByteArrayDataSource(bytes, contentType);
-                    // addInline(<cid>, ...) — JavaMail handles the Content-ID
-                    // and angle-bracket wrapping so the email body's
-                    // `src="cid:<cid>"` resolves on the recipient side.
-                    helper.addInline(cid, source);
-                } catch (IllegalArgumentException e) {
-                    // Bad base64 — skip this attachment instead of failing the send.
-                }
-            }
-        }
-
-        sender.send(message);
+        // No branchId: quotations keep the plain configured From name and no reply-to.
+        documentEmailSender.send(recipient, emailSubject, body, inlineAttachments, null, pdf);
         logEmail(quotation, recipient, emailSubject, "sent");
     }
 

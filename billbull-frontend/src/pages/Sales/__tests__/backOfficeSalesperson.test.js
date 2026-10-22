@@ -52,7 +52,7 @@ describe('back-office salesperson — ON', () => {
   it('uses the eligible-only roster, not the unfiltered employee-name feed', () => {
     // getEmployeeNames returns Active AND Inactive and every designation — exactly what must NOT
     // be offered as a salesperson.
-    expect(SRC).toContain("import { getEmployeeNames, getSalespersons } from '../../api/employeeApi'");
+    expect(SRC).toContain("import { getEmployeeNames, getSalespersons } from '@billbull/shared/api/employeeApi'");
     expect(SRC).toContain('setSalespersonOptions(Array.isArray(roster?.options) ? roster.options : [])');
   });
 

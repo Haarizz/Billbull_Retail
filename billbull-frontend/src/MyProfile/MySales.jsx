@@ -7,10 +7,10 @@ import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
     PieChart, Pie, Cell
 } from 'recharts';
-import { getUserProfile, hasRole } from '../api/auth';
-import { getSalesInvoicesPage, getSalesInvoiceById } from '../api/salesInvoiceApi';
-import CurrencyAmount, { CurrencySymbol } from '../components/CurrencyAmount';
-import { getImageUrl } from '../utils/urlUtils';
+import { getUserProfile, hasRole } from '@billbull/shared/api/auth';
+import { getSalesInvoicesPage, getSalesInvoiceById } from '@billbull/shared/api/salesInvoiceApi';
+import CurrencyAmount, { CurrencySymbol } from '@billbull/shared/components/CurrencyAmount';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import toast from 'react-hot-toast';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

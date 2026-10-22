@@ -76,6 +76,8 @@ class PosDeliveryReturnServiceTest {
     @Mock private SalesReturnService salesReturnService;
     @Mock private InvoiceBalanceService invoiceBalanceService;
     @Mock private PosSettingsService posSettingsService;
+    // Branch scope on the delivery order; a bare mock admits every branch.
+    @Mock private com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
 
     @InjectMocks private PosDeliveryReturnService service;
 

@@ -10,7 +10,7 @@ import { getDeliveryNoteStatusBadge, getPodBadge, resolveDeliveryNoteSourceType 
 import { getAvailableDeliveryNoteActions } from '../utils/deliveryNoteActionRules';
 import { buildDeliveryNoteTimeline } from '../utils/buildDeliveryNoteTimeline';
 import { resolveCustomer, resolveDefaultShippingAddress } from '../../../utils/customerResolution';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { copyToClipboard } from '../../../utils/clipboard';
 import { usePermission } from '../../../hooks/usePermission';
 

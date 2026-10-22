@@ -4,10 +4,10 @@ import {
   approvePosTerminal, rejectPosTerminal,
   archivePosTerminal, restorePosTerminal, decommissionPosTerminal,
   assignTerminalCounter,
-} from "../../api/posApi";
-import { getActiveCounters } from "../../api/counterApi";
-import TerminalStatusBadge from "../../components/pos/TerminalStatusBadge";
-import { usePermissions } from "../../context/PermissionContext";
+} from "@billbull/shared/api/posApi";
+import { getActiveCounters } from "@billbull/shared/api/counterApi";
+import TerminalStatusBadge from "@billbull/shared/components/pos/TerminalStatusBadge";
+import { usePermissions } from "@billbull/shared/context/PermissionContext";
 import { AlertTriangle, XCircle } from "lucide-react";
 
 function timeAgo(iso) {

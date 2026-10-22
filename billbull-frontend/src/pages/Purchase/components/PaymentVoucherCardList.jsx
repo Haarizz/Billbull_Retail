@@ -1,6 +1,6 @@
 import React from 'react';
 import { Search, FileX } from 'lucide-react';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { getPaymentVoucherStatusBadge } from '../utils/paymentVoucherStatusBadge';
 
 // Compact payment-voucher card for the Transaction Preview's left column.

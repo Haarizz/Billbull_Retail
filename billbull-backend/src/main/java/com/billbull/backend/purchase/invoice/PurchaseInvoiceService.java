@@ -1036,6 +1036,7 @@ public class PurchaseInvoiceService {
         }
         dto.setAmountPaid(amountPaid);
         dto.setBalanceDue(balanceDue);
+        dto.setChequeReserved(paymentVoucherService.getReservedChequeAmountForInvoice(invoice.getId(), null));
 
         dto.setDueDate(invoice.getDueDate());
         dto.setStatus(invoice.getStatus());

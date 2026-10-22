@@ -7,18 +7,18 @@ import {
     Printer as PrintIcon, Building2, CreditCard, Banknote, CheckSquare, Mail
 } from 'lucide-react';
 import { getVendors } from '../../api/vendorsApi';
-import { getCostCenters, getAccounts, getBankAccounts } from '../../api/ledgerApi';
+import { getCostCenters, getAccounts, getBankAccounts } from '@billbull/shared/api/ledgerApi';
 import { fetchExpenses, createExpense, updateExpense, deleteExpense } from '../../api/expensesApi';
-import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
 import { resolveVoucherSettings } from '../../utils/financialPrintTemplate';
-import { printHtml } from '../../utils/printGenerator';
+import { printHtml } from '@billbull/shared/utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { ExpensePreview } from './FinancialVoucherDesigner';
 import toast from 'react-hot-toast';
-import { useCompany } from '../../context/CompanyContext';
-import { useBranch } from '../../context/BranchContext';
-import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
-import { formatDisplayDate } from '../../utils/dateUtils';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
+import CurrencyAmount, { CurrencySymbol } from '@billbull/shared/components/CurrencyAmount';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import LedgerAccountCreateModal from '../../components/common/LedgerAccountCreateModal';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import TableSkeleton from '../../components/common/TableSkeleton';

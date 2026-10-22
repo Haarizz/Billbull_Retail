@@ -16,15 +16,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const getPosPrinters = vi.fn();
 const printPosPrinterEscPos = vi.fn();
 const resolvePrinterForContext = vi.fn();
-const printEscPosThroughAgent = vi.fn();
+const printZplThroughAgent = vi.fn();
 
-vi.mock('../../api/posPrinterApi', () => ({
+vi.mock('@billbull/shared/api/posPrinterApi', () => ({
   getPosPrinters: (...a) => getPosPrinters(...a),
   printPosPrinterEscPos: (...a) => printPosPrinterEscPos(...a),
 }));
-vi.mock('../localPrintAgent', () => ({
+vi.mock('@billbull/shared/utils/localPrintAgent', () => ({
   resolvePrinterForContext: (...a) => resolvePrinterForContext(...a),
-  printEscPosThroughAgent: (...a) => printEscPosThroughAgent(...a),
+  printZplThroughAgent: (...a) => printZplThroughAgent(...a),
 }));
 
 import {
@@ -95,15 +95,15 @@ describe('sendZplToLabelPrinter', () => {
   it('relays a network printer through the backend socket', async () => {
     const result = await sendZplToLabelPrinter(NET, '^XA^XZ');
 
-    expect(printPosPrinterEscPos).toHaveBeenCalledWith(2, btoa('^XA^XZ'));
-    expect(printEscPosThroughAgent).not.toHaveBeenCalled();
+    expect(printPosPrinterEscPos).toHaveBeenCalledWith(2, btoa('^XA^XZ'), { format: 'ZPL' });
+    expect(printZplThroughAgent).not.toHaveBeenCalled();
     expect(result).toEqual({ transport: 'network', target: '10.0.0.9:9100' });
   });
 
   it('sends a USB printer through the local agent', async () => {
     const result = await sendZplToLabelPrinter(USB, '^XA^XZ', { title: 'Labels' });
 
-    expect(printEscPosThroughAgent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(printZplThroughAgent).toHaveBeenCalledWith(expect.objectContaining({
       printerName: 'ZD220', dataBase64: btoa('^XA^XZ'), connectionType: 'USB', title: 'Labels',
     }));
     expect(printPosPrinterEscPos).not.toHaveBeenCalled();
@@ -114,7 +114,7 @@ describe('sendZplToLabelPrinter', () => {
     // ^CI28 puts the ZPL in UTF-8, so a label can legitimately contain non-Latin-1 characters.
     // A plain btoa would throw on those; the encode/unescape pair is what makes it survive.
     await sendZplToLabelPrinter(USB, '^XA^FDمندوب^FS^XZ');
-    const { dataBase64 } = printEscPosThroughAgent.mock.calls[0][0];
+    const { dataBase64 } = printZplThroughAgent.mock.calls[0][0];
     expect(atob(dataBase64)).toContain('Ù'); // a UTF-8 lead byte, not a mangled '?'
   });
 });
@@ -127,7 +127,7 @@ describe('printZplToBranchLabelPrinter', () => {
 
     const result = await printZplToBranchLabelPrinter('^XA^XZ', { branchId: 3, title: 'T' });
 
-    expect(printEscPosThroughAgent).toHaveBeenCalled();
+    expect(printZplThroughAgent).toHaveBeenCalled();
     expect(result.transport).toBe('agent');
   });
 });

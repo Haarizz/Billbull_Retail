@@ -6,12 +6,12 @@ import {
   CardTitle,
   CardDescription,
   CardContent,
-} from "../../components/ui/card";
+} from "@billbull/shared/components/ui/card";
 
-import { Button } from "../../components/ui/button";
-import { Badge } from "../../components/ui/badge";
-import { Separator } from "../../components/ui/separator";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
+import { Button } from "@billbull/shared/components/ui/button";
+import { Badge } from "@billbull/shared/components/ui/badge";
+import { Separator } from "@billbull/shared/components/ui/separator";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@billbull/shared/components/ui/table";
 
 import {
   Package,

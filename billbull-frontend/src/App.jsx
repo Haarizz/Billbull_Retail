@@ -20,15 +20,15 @@ import Dashboard from "./pages/Dashboard";
 
 // Route Guards
 import PrivateRoute from "./auth/PrivateRoute";
-import { PermissionProvider } from "./context/PermissionContext";
+import { PermissionProvider } from "@billbull/shared/context/PermissionContext";
 import { NotificationProvider } from "./context/NotificationContext";
-import { CompanyProvider } from "./context/CompanyContext";
-import { BranchProvider } from "./context/BranchContext";
+import { CompanyProvider } from "@billbull/shared/context/CompanyContext";
+import { BranchProvider } from "@billbull/shared/context/BranchContext";
 import ResourceGuard from "./components/auth/ResourceGuard";// import CustomerInquiries from "./pages/Customer/CustomerInquiries";
-import AedSymbolRenderer from "./components/AedSymbolRenderer";
+import AedSymbolRenderer from "@billbull/shared/components/AedSymbolRenderer";
 import GlobalSearchModal from "./components/search/GlobalSearchModal";
-import AppAlertBridge from "./components/AppAlertBridge";
-import { logClientError, logClientEvent } from "./utils/clientLogger";
+import AppAlertBridge from "@billbull/shared/components/AppAlertBridge";
+import { logClientError, logClientEvent } from "@billbull/shared/utils/clientLogger";
 import { clientConfig } from "./config/clientConfig";
 // import FollowUpModal from "./pages/Customer/FollowUpModal";
 // import MessageModal from "./pages/Customer/MessageModal";
@@ -65,6 +65,7 @@ import Expenses from "./pages/Financials/Expenses";
 import Followups from "./pages/Customer/Followups";
 import StockTransfer from "./pages/Inventory/StockTransfer/StockTransfer";
 import BankReconciliation from "./pages/Financials/BankReconciliation";
+import PayCheques from "./pages/Financials/PayCheques";
 import BarcodePrinter from "./pages/Inventory/Barcode/BarcodePrinter";
 import ReceiptVoucher from "./pages/Financials/ReceiptVoucher";
 import FinancialsPaymentVoucher from "./pages/Financials/PaymentVoucher";
@@ -78,7 +79,7 @@ import FinancialConfig from "./pages/Financials/FinancialConfig";
 import FinancialsPrintEmailTemplates from "./pages/Financials/FinancialsPrintEmailTemplates";
 import PrintEmailTemplates from "./pages/Sales/PrintEmailTemplates";
 import SalesSettings from "./pages/Sales/SalesSettings";
-import POSSales from "./pages/Sales/POSSales";
+import POSSales from "@billbull/shared/pages/Sales/POSSales";
 import CashMovements from "./pages/Sales/CashMovements";
 import PurchasePrintEmailTemplates from "./pages/Purchase/PurchasePrintEmailTemplates";
 import StockTaking from "./pages/Inventory/StockTaking/StockTaking";
@@ -466,8 +467,12 @@ function App() {
                     <Route
                       path="/sales/pos"
                       element={
-                        <ResourceGuard module="sales.invoice">
-                          <POSSales />
+                        // sales.pos is the till permission the POS APIs enforce; sales.invoice
+                        // covers the invoice reads the till makes. Same rule as the standalone till.
+                        <ResourceGuard module="sales.pos">
+                          <ResourceGuard module="sales.invoice">
+                            <POSSales />
+                          </ResourceGuard>
                         </ResourceGuard>
                       }
                     />
@@ -523,6 +528,15 @@ function App() {
                       element={
                         <ResourceGuard module="finance.voucher">
                           <Expenses />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/finance/paycheques"
+                      element={
+                        <ResourceGuard module="finance.voucher">
+                          <PayCheques />
                         </ResourceGuard>
                       }
                     />

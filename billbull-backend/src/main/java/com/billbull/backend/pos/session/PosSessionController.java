@@ -19,6 +19,8 @@ import com.billbull.backend.pos.auth.CredentialVerificationResult;
 import com.billbull.backend.pos.auth.AuthorizationResult;
 import com.billbull.backend.pos.auth.ClosureAuthorizationRequest;
 import com.billbull.backend.pos.auth.PosClosureAuthorizationRegistry;
+import com.billbull.backend.pos.auth.PosTillPermission;
+import com.billbull.backend.security.ModulePermissionService;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -43,6 +45,7 @@ public class PosSessionController {
     private final PosCredentialVerificationService credentialVerificationService;
     private final PosSessionAuthorizationService sessionAuthorizationService;
     private final PosClosureAuthorizationRegistry closureAuthorizationRegistry;
+    private final ModulePermissionService modulePermissionService;
 
     public PosSessionController(PosSessionService service, PosSessionSyncService syncService, ObjectMapper objectMapper,
                                  PosDayStatusService dayStatusService,
@@ -51,7 +54,8 @@ public class PosSessionController {
                                  PosAuthorizationService authorizationService,
                                  PosCredentialVerificationService credentialVerificationService,
                                  PosSessionAuthorizationService sessionAuthorizationService,
-                                 PosClosureAuthorizationRegistry closureAuthorizationRegistry) {
+                                 PosClosureAuthorizationRegistry closureAuthorizationRegistry,
+                                 ModulePermissionService modulePermissionService) {
         this.service = service;
         this.syncService = syncService;
         this.objectMapper = objectMapper;
@@ -62,6 +66,30 @@ public class PosSessionController {
         this.credentialVerificationService = credentialVerificationService;
         this.sessionAuthorizationService = sessionAuthorizationService;
         this.closureAuthorizationRegistry = closureAuthorizationRegistry;
+        this.modulePermissionService = modulePermissionService;
+    }
+
+    // Every endpoint here backs the till, so each one requires the till permission. Supervisor,
+    // closure, variance and day-close rules sit on top of this check, never instead of it.
+    private void requireTillAccess() {
+        modulePermissionService.requireCanView(PosTillPermission.MODULE);
+    }
+
+    /** Till access, plus the session must belong to a branch the caller may act on. The branch
+     *  comes from the stored session, never from the request. Runs before any write. */
+    private void requireSessionInScope(Long sessionId) {
+        requireTillAccess();
+        PosSession session = service.getById(sessionId);
+        branchAccessService.assertTransactionBranchAccessible(session.getBranchId(), "POS session");
+    }
+
+    /** Till access, plus a caller-supplied {@code branchId} must be one the caller may act on. */
+    private void requireBranchInScope(Long branchId) {
+        requireTillAccess();
+        if (!branchAccessService.canAccessTransactionBranch(branchId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "This branch is not accessible in the current session.");
+        }
     }
 
     /** Default {@code date} for endpoints that don't receive an explicit one: the next
@@ -74,6 +102,8 @@ public class PosSessionController {
     @PostMapping("/open")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> openSession(@RequestBody Map<String, Object> body) {
+        // The branch is resolved server-side from the terminal, so there is no client branch to check.
+        requireTillAccess();
         String terminalId = body.getOrDefault("terminalId", "").toString();
         String counterName = body.getOrDefault("counterName", "Main Counter").toString();
         BigDecimal openingCash = body.get("openingCash") != null
@@ -109,6 +139,7 @@ public class PosSessionController {
     public ResponseEntity<PosSessionTransferResponse> transferSession(
             @PathVariable Long id,
             @RequestBody Map<String, Object> body) {
+        requireSessionInScope(id);
         String destinationTerminalId = body != null && body.get("destinationTerminalId") != null
                 ? body.get("destinationTerminalId").toString() : null;
         boolean confirm = body != null && Boolean.TRUE.equals(body.get("confirm"));
@@ -130,6 +161,8 @@ public class PosSessionController {
     @GetMapping("/active")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosSession> getActiveSession(@RequestParam(required = false, defaultValue = "") String terminalId) {
+        // The service only returns a session the caller opened, so till access is the gate here.
+        requireTillAccess();
         Optional<PosSession> session = service.getActiveSession(terminalId);
         return session.map(ResponseEntity::ok).orElse(ResponseEntity.noContent().build());
     }
@@ -137,12 +170,14 @@ public class PosSessionController {
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosSession> getById(@PathVariable Long id) {
+        requireSessionInScope(id);
         return ResponseEntity.ok(service.getById(id));
     }
 
     @GetMapping("/{id}/sync")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosSessionSyncResponse> syncSession(@PathVariable Long id, @RequestParam(required = false) String terminalId) {
+        requireSessionInScope(id);
         return ResponseEntity.ok(syncService.syncSession(id, terminalId));
     }
 
@@ -151,6 +186,7 @@ public class PosSessionController {
     public ResponseEntity<PosSession> closeSession(
             @PathVariable Long id,
             @RequestBody(required = false) Map<String, Object> body) {
+        requireSessionInScope(id);
         // Counted Cash is derived server-side from the denomination quantities. A legacy client
         // may still send closingCash; it is logged and dropped here and never reaches the
         // service, so it cannot influence any persisted financial value. Accepting-and-ignoring
@@ -202,6 +238,7 @@ public class PosSessionController {
     public ResponseEntity<PosSession> beginClosure(
             @PathVariable Long id,
             @RequestBody(required = false) Map<String, Object> body) {
+        requireSessionInScope(id);
         String closureAuthToken = body != null ? (String) body.get("closureAuthToken") : null;
         return ResponseEntity.ok(service.beginClosure(id, closureAuthToken));
     }
@@ -222,6 +259,7 @@ public class PosSessionController {
     public ResponseEntity<PosSession> cancelClosure(
             @PathVariable Long id,
             @RequestBody(required = false) Map<String, Object> body) {
+        requireSessionInScope(id);
         String reason = body != null ? (String) body.get("reason") : null;
         String usernameOrEmail = body != null ? (String) body.get("usernameOrEmail") : null;
         String password = body != null ? (String) body.get("password") : null;
@@ -229,10 +267,13 @@ public class PosSessionController {
     }
 
     @PostMapping("/{id}/authorize-closure")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<AuthorizationResult> authorizeClosure(
             @PathVariable Long id,
             @RequestBody ClosureAuthorizationRequest request) {
-        
+        // Checked before the credentials are verified, so this cannot be used to test passwords
+        // against a session outside the caller's branch.
+        requireSessionInScope(id);
         PosSession session = service.getById(id);
         
         CredentialVerificationResult cred = credentialVerificationService.verifyCredentials(
@@ -265,6 +306,12 @@ public class PosSessionController {
     public ResponseEntity<PosCashMovement> addCashMovement(
             @PathVariable Long id,
             @RequestBody Map<String, Object> body) {
+        // Till access and the session's branch. Not permissions.pos.cashmovement.create, which the
+        // back-office route (POST /api/pos/cash-movements) requires: Roles & Permissions has no
+        // switch for that key, so a till role without the seeded grant could not be given it and
+        // would lose cash in/out. See docs/standalone-pos/PERMISSIONS.md. The till opens the
+        // drawer only after this call succeeds, so a refusal here keeps the drawer shut.
+        requireSessionInScope(id);
         String type = body.getOrDefault("movementType", "DROP_IN").toString();
         BigDecimal amount = new BigDecimal(body.get("amount").toString());
         String description = body.get("description") != null ? body.get("description").toString() : "";
@@ -276,6 +323,7 @@ public class PosSessionController {
     @GetMapping("/{id}/x-report")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Object>> getXReport(@PathVariable Long id) {
+        requireSessionInScope(id);
         return ResponseEntity.ok(service.getXReport(id));
     }
 
@@ -284,6 +332,7 @@ public class PosSessionController {
     @PostMapping("/{id}/x-report/generate")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Object>> generateXReport(@PathVariable Long id) {
+        requireSessionInScope(id);
         return ResponseEntity.ok(service.generateXReport(id));
     }
 
@@ -294,6 +343,7 @@ public class PosSessionController {
             @RequestParam(required = false) String date,
             @RequestParam(required = false) Long startSessionId,
             @RequestParam(required = false) Long endSessionId) {
+        requireBranchInScope(branchId);
         LocalDate reportDate = date != null ? LocalDate.parse(date) : resolveDefaultDate(branchId);
         return ResponseEntity.ok(service.getZReport(branchId, reportDate, startSessionId, endSessionId));
     }
@@ -309,6 +359,7 @@ public class PosSessionController {
             @RequestParam(required = false) String date,
             @RequestParam(required = false) Long startSessionId,
             @RequestParam(required = false) Long endSessionId) {
+        requireBranchInScope(branchId);
         LocalDate reportDate = date != null ? LocalDate.parse(date) : resolveDefaultDate(branchId);
         return ResponseEntity.ok(service.getDayCloseSummary(branchId, reportDate, startSessionId, endSessionId));
     }
@@ -319,6 +370,7 @@ public class PosSessionController {
     @PostMapping("/{id}/x-report/print-check")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> checkXReportPrintable(@PathVariable Long id) {
+        requireSessionInScope(id);
         service.assertXReportPrintable(id);
         return ResponseEntity.noContent().build();
     }
@@ -330,6 +382,7 @@ public class PosSessionController {
     public ResponseEntity<Void> checkZReportPrintable(
             @RequestParam Long branchId,
             @RequestParam(required = false) String date) {
+        requireBranchInScope(branchId);
         LocalDate reportDate = date != null ? LocalDate.parse(date) : resolveDefaultDate(branchId);
         service.assertZReportPrintable(branchId, reportDate);
         return ResponseEntity.noContent().build();
@@ -343,6 +396,9 @@ public class PosSessionController {
             @RequestParam(required = false) Long startSessionId,
             @RequestParam(required = false) Long endSessionId,
             @RequestParam(required = false, defaultValue = "false") boolean acknowledgeExclusions) {
+        // Till access and branch scope always apply. With requireSupervisorForDayClose off,
+        // authorizeDayClose adds nothing, so these are what stop any signed-in user closing a day.
+        requireBranchInScope(branchId);
         authorizationService.authorizeDayClose(branchId);
         LocalDate reportDate = date != null ? LocalDate.parse(date) : resolveDefaultDate(branchId);
         return ResponseEntity.ok(service.closeDay(branchId, reportDate, startSessionId, endSessionId, acknowledgeExclusions));
@@ -371,6 +427,7 @@ public class PosSessionController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<DayStatusResponse> getDayStatus(
             @RequestParam(required = false, defaultValue = "") String terminalId) {
+        requireTillAccess();
         return ResponseEntity.ok(dayStatusService.getDayStatus(terminalId));
     }
 
@@ -386,7 +443,8 @@ public class PosSessionController {
             @RequestParam(required = false) String status,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        Long resolvedBranchId = branchId != null ? branchId : branchAccessService.getRequiredCurrentUserBranch().getId();
+        Long resolvedBranchId =branchId != null ? branchId : branchAccessService.getRequiredCurrentUserBranch().getId();
+        requireBranchInScope(resolvedBranchId);
         return ResponseEntity.ok(service.getSessionHistory(
                 resolvedBranchId, LocalDate.parse(dateFrom), LocalDate.parse(dateTo), terminalId, status, page, size));
     }
@@ -398,12 +456,14 @@ public class PosSessionController {
     @PostMapping("/{id}/suspend")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosSession> suspend(@PathVariable Long id) {
+        requireSessionInScope(id);
         return ResponseEntity.ok(service.suspendSession(id));
     }
 
     @PostMapping("/{id}/resume")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosSession> resume(@PathVariable Long id) {
+        requireSessionInScope(id);
         return ResponseEntity.ok(service.resumeSession(id));
     }
 
@@ -411,6 +471,7 @@ public class PosSessionController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosSession> supervisorTakeover(@PathVariable Long id,
                                                           @RequestBody Map<String, Object> body) {
+        requireSessionInScope(id);
         String pin = body.get("supervisorPin") != null ? body.get("supervisorPin").toString() : null;
         return ResponseEntity.ok(service.supervisorTakeover(id, pin));
     }
@@ -418,6 +479,7 @@ public class PosSessionController {
     @PostMapping("/{id}/touch-activity")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> touchActivity(@PathVariable Long id) {
+        requireSessionInScope(id);
         service.touchActivity(id);
         return ResponseEntity.noContent().build();
     }
@@ -464,6 +526,7 @@ public class PosSessionController {
     public ResponseEntity<Map<String, Object>> authorizeVariance(
             @PathVariable Long id,
             @RequestBody Map<String, Object> body) {
+        requireSessionInScope(id);
 
         String usernameOrEmail = body != null ? (String) body.get("usernameOrEmail") : null;
         String password = body != null ? (String) body.get("password") : null;

@@ -47,7 +47,7 @@ import {
   DollarSign
 } from 'lucide-react';
 
-import { getImageUrl } from "../../../utils/urlUtils";
+import { getImageUrl } from "@billbull/shared/utils/urlUtils";
 import { getDefaultProductUnit, resolveUnitAmount } from "../../../utils/unitPricing";
 import { createDraftFromLpo } from '../../../api/purchaseInvoiceApi';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
@@ -57,14 +57,14 @@ import PaginationFooter from '../../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 import toast from 'react-hot-toast';
-import { useCompany } from '../../../context/CompanyContext';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 
 // Printing Utilities
-import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../../utils/printGenerator';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '@billbull/shared/utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
-import billBullLogo from '../../../assets/billBullLogo.png';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 import {
   buildLpoPrintData,
   buildPaymentVoucherPrintData,
@@ -72,9 +72,9 @@ import {
   resolvePurchasePrintTemplate
 } from '../../../utils/purchasePrintUtils';
 import ExportDropdown from '../../../components/common/ExportDropdown';
-import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
-import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../../utils/countryCurrencyOptions';
-import CurrencyAmount from '../../../components/CurrencyAmount';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '@billbull/shared/utils/countryCurrencyOptions';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import { compareDocumentValues } from '../../../utils/documentOrdering';
 import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
 
@@ -110,7 +110,7 @@ import {
   createLpoAdvancePayment,
   getLpoPaymentVouchers
 } from '../../../api/lpoApi';
-import api from '../../../api/axiosConfig';
+import api from '@billbull/shared/api/axiosConfig';
 import { approvalWorkflowApi } from '../../../api/purchase/approvalWorkflowApi';
 import { getVendors } from '../../../api/vendorsApi';
 import {
@@ -123,7 +123,7 @@ import {
 
 // SHORTCUTS HOOK
 import useShortcuts from '../../../hooks/useShortcuts';
-import { useBranch } from '../../../context/BranchContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 
 // ==========================================
 // UTILITIES & CONSTANTS
@@ -343,7 +343,7 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, onDownload, ac
 
       {/* Search Bar - Full width on mobile */}
       <div className="flex flex-col md:flex-row gap-3 mb-6">
-        <DateFilter onChange={(range) => setDateRange({ from: range.fromDate, to: range.toDate })} />
+        <DateFilter loading={loading} onChange={(range) => setDateRange({ from: range.fromDate, to: range.toDate })} />
         <div className="relative flex-1 w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
@@ -1720,7 +1720,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {[...calculations.calculatedItems].reverse().map((item, index) => (
+                  {calculations.calculatedItems.map((item, index) => (
                     <React.Fragment key={item.id}>
                       <tr className="group hover:bg-slate-50">
                         <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>

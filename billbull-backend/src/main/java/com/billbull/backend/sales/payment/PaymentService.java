@@ -83,6 +83,40 @@ public class PaymentService {
     }
 
     public List<Payment> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<Payment> payments = listScopedByDateRange(from, to);
+        recomputeInvoiceBalances(payments);
+        return payments;
+    }
+
+    /**
+     * The list tab's page. Running balances still come from each invoice's whole payment group
+     * in the loaded set, but only invoices shown on this page get their terminal balance read
+     * (previously one invoice query per distinct invoice in the range). A null range means all.
+     */
+    public com.billbull.backend.util.PageResponse<Payment> getPage(
+            java.time.LocalDate from, java.time.LocalDate to, int page, int size, String search, String status) {
+        List<Payment> payments;
+        if (from != null && to != null) {
+            payments = listScopedByDateRange(from, to);
+        } else {
+            payments = new ArrayList<>(
+                    ownershipAccessService.filterOwned(
+                            branchAccessService.filterBranchScopedByBranch(paymentRepository.findAll(), Payment::getBranch),
+                            Payment::getCreatedByUserId));
+            DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                    payments, Payment::getPaymentDate, Payment::getPaymentNumber, Payment::getId);
+        }
+        return com.billbull.backend.util.PaginationUtil.paginate(payments, page, size, search, status, rows -> {
+            java.util.Set<String> pageInvoices = new java.util.HashSet<>();
+            rows.forEach(p -> pageInvoices.add(p.getLinkedInvoice()));
+            recomputeInvoiceBalances(payments.stream()
+                    .filter(p -> pageInvoices.contains(p.getLinkedInvoice()))
+                    .toList());
+            return rows;
+        });
+    }
+
+    private List<Payment> listScopedByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
         List<Payment> payments = new ArrayList<>(
                 ownershipAccessService.filterOwned(
                         branchAccessService.filterBranchScopedByBranch(paymentRepository.findByPaymentDateBetween(from, to), Payment::getBranch),
@@ -92,7 +126,6 @@ public class PaymentService {
                 Payment::getPaymentDate,
                 Payment::getPaymentNumber,
                 Payment::getId);
-        recomputeInvoiceBalances(payments);
         return payments;
     }
 

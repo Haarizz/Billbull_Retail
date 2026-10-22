@@ -1,4 +1,4 @@
-import axiosInstance from './axiosConfig';
+import axiosInstance from '@billbull/shared/api/axiosConfig';
 
 export const createStockTakeSession = async (sessionData) => {
     const response = await axiosInstance.post('/api/inventory/stock-take/sessions', sessionData);

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Search, ChevronUp, ChevronDown, SlidersHorizontal, Menu, PackageCheck } from 'lucide-react';
-import { getImageUrl } from '../utils/urlUtils';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 
 export const ItemDescriptionHeader = React.memo(({
     itemCount,

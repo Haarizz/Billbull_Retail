@@ -1,4 +1,4 @@
-import axios from './axiosConfig';
+import axios from '@billbull/shared/api/axiosConfig';
 
 export const fetchExpenseVouchers = () =>
     axios.get('/api/expense-vouchers').then(r => r.data);

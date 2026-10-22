@@ -1,0 +1,10 @@
+{
+  "name": "@billbull/pos",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone BillBull POS till, served at /pos/ on the tenant's existing origin. Build and run it from billbull-frontend: npm run dev:pos / build:pos / preview:pos.",
+  "dependencies": {
+    "@billbull/shared": "0.0.0"
+  }
+}

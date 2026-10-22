@@ -5,11 +5,11 @@ import {
     ExternalLink, MoreHorizontal, Info, Plus, X, Split, Check,
     CheckSquare, LayoutGrid
 } from 'lucide-react';
-import { getBankAccounts, getTransactions, finalizeReconciliation } from '../../api/ledgerApi';
+import { getBankAccounts, getTransactions, finalizeReconciliation } from '@billbull/shared/api/ledgerApi';
 import toast from 'react-hot-toast';
-import { useCompany } from '../../context/CompanyContext';
-import CurrencyAmount from '../../components/CurrencyAmount';
-import { formatDisplayDate } from '../../utils/dateUtils';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 
 const BankReconciliation = () => {
     const { company } = useCompany();

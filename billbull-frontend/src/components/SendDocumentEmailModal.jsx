@@ -15,17 +15,21 @@
 //   customerEmail   : default recipient
 //   buildPayload    : () => object — same payload shape as the print path
 //   companyProfile  : company profile object (logo/stamp/currency)
-//   apiFn           : (id, { toEmail, subject, htmlBody, inlineAttachments }) => Promise
+//   apiFn           : (id, { toEmail, subject, htmlBody, inlineAttachments, pdfHtml }) => Promise
 //   docLabel        : human-friendly label ("Quotation", "Sales Invoice", ...)
+//   buildPdfHtml    : optional async () => print HTML for the PDF attachment. Pass the
+//                     page's Download PDF builder where it has one so the attachment is
+//                     the same document; defaults to generatePrintHtmlAsync with the
+//                     template + payload used for the email body.
 //   onSent          : optional () => void on success
 //   onError         : optional (msg) => void on failure
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { Mail, X } from 'lucide-react';
-import { getTemplatesByCategory } from '../api/printTemplateApi';
-import { generateEmailHtml } from '../utils/printGenerator';
+import { Mail, Paperclip, X } from 'lucide-react';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { generateEmailHtml, generatePrintHtmlAsync } from '@billbull/shared/utils/printGenerator';
 import { buildEmailBody } from '../utils/emailImageInliner';
-import billBullLogo from '../assets/billBullLogo.png';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 import toast from 'react-hot-toast';
 
 const SendDocumentEmailModal = ({
@@ -39,6 +43,7 @@ const SendDocumentEmailModal = ({
     companyProfile = {},
     apiFn,
     docLabel,
+    buildPdfHtml,
     onSent,
     onError,
 }) => {
@@ -88,11 +93,13 @@ const SendDocumentEmailModal = ({
 
         let htmlBody = '';
         let inlineAttachments = [];
+        let template = null;
+        let payload = {};
         try {
             const templates = await getTemplatesByCategory(category);
-            const template = templates?.find(t => t.isDefault) || templates?.[0];
+            template = templates?.find(t => t.isDefault) || templates?.[0] || null;
             if (template) {
-                const payload = buildPayload?.() || {};
+                payload = buildPayload?.() || {};
                 const rawHtml = generateEmailHtml(template, payload, { companyProfile, billBullLogo });
                 const built = await buildEmailBody(rawHtml);
                 htmlBody = built.html;
@@ -102,8 +109,27 @@ const SendDocumentEmailModal = ({
             console.warn('Email body render failed; sending without templated body:', renderErr);
         }
 
+        // The PDF attachment is rendered on the server from the PRINT HTML — never
+        // from htmlBody, whose layout is email-specific and whose images are cid:
+        // references a browser cannot load. Without it the email is not sent.
+        let pdfHtml = '';
         try {
-            await apiFn(docId, { toEmail: toEmail.trim(), subject, htmlBody, inlineAttachments });
+            pdfHtml = buildPdfHtml
+                ? await buildPdfHtml()
+                : (template ? await generatePrintHtmlAsync(template, payload, { companyProfile, billBullLogo }) : '');
+        } catch (pdfErr) {
+            console.warn('PDF attachment HTML could not be built:', pdfErr);
+        }
+        if (!pdfHtml) {
+            const msg = `Could not prepare the PDF attachment. Check that a default "${category}" print template exists in Settings → Print & Email Templates.`;
+            toast.error(msg);
+            onError?.(msg);
+            setIsSending(false);
+            return;
+        }
+
+        try {
+            await apiFn(docId, { toEmail: toEmail.trim(), subject, htmlBody, inlineAttachments, pdfHtml });
             toast.success(`Email sent to ${toEmail}`);
             onSent?.();
             onClose?.();
@@ -160,6 +186,14 @@ const SendDocumentEmailModal = ({
                             className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-yellow-400"
                             disabled={isSending}
                         />
+                    </div>
+                    <div className="grid grid-cols-[80px_1fr] items-center gap-3">
+                        <span className="text-xs font-semibold text-slate-600">Attachment</span>
+                        <span className="flex items-center gap-1.5 text-xs text-slate-600">
+                            <Paperclip size={12} className="text-slate-400" />
+                            {/* The server names the file from the stored number with this same filter. */}
+                            {`${String(docNumber || docLabel || 'document').replace(/[^A-Za-z0-9._\- ]/g, '_')}.pdf`}
+                        </span>
                     </div>
                 </div>
 

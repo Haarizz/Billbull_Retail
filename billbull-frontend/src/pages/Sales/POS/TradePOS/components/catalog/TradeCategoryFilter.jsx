@@ -1,5 +1,5 @@
 import React from 'react';
-import { TradeButton } from '../ui';
+import { TradeButton } from '@billbull/shared/pages/Sales/POS/TradePOS/components/ui/index';
 
 export const TradeCategoryFilter = React.memo(({
   productCategories = [],

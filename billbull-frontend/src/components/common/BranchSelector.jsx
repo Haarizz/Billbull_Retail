@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Building2, ChevronDown, Check, Star } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useBranch } from '../../context/BranchContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 
 const BranchSelector = () => {
     const {

@@ -6,10 +6,10 @@ import {
 } from 'lucide-react';
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import PaginationFooter from '../../../components/common/PaginationFooter';
-import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
 import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
-import { useBranch } from '../../../context/BranchContext';
-import { useCompany } from '../../../context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
 
 // ==========================================
 // CONFIGURATION
@@ -35,13 +35,13 @@ import {
     deleteStockTransfer, sendStockTransfer, receiveStockTransfer,
     requestStockTransferApproval, cancelStockTransfer, getStockTransferCostPreview
 } from '../../../api/stockTransferApi';
-import { getCompanyProfile } from '../../../api/companyProfileApi';
+import { getCompanyProfile } from '@billbull/shared/api/companyProfileApi';
 import { toast } from 'react-hot-toast';
 import ProductSelector from '../../../components/ProductSelector';
-import { printHtml } from '../../../utils/printGenerator';
-import { getImageUrl } from '../../../utils/urlUtils';
-import CurrencyAmount from '../../../components/CurrencyAmount';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { printHtml } from '@billbull/shared/utils/printGenerator';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 
 // ==========================================
 // CONSTANTS

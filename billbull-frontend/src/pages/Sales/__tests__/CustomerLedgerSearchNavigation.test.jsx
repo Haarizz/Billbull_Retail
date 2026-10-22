@@ -8,7 +8,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 const getAllCustomersMock = vi.fn();
 const getCustomerByIdMock = vi.fn();
 
-vi.mock('../../../api/customerledgerApi', () => ({
+vi.mock('@billbull/shared/api/customerledgerApi', () => ({
   getAllCustomers: (...args) => getAllCustomersMock(...args),
   getCustomerById: (...args) => getCustomerByIdMock(...args),
   createCustomer: vi.fn(),
@@ -18,31 +18,31 @@ vi.mock('../../../api/customerledgerApi', () => ({
   getNextCustomerCode: vi.fn(() => Promise.resolve('CUS-0100')),
 }));
 
-vi.mock('../../../api/financialsApi', () => ({
+vi.mock('@billbull/shared/api/financialsApi', () => ({
   fetchStatementOfAccount: vi.fn(() => Promise.resolve([])),
   fetchARAgingReport: vi.fn(() => Promise.resolve([])),
 }));
 vi.mock('../../../api/warehouseApi', () => ({ getWarehouses: vi.fn(() => Promise.resolve([])) }));
-vi.mock('../../../api/employeeApi', () => ({ getEmployees: vi.fn(() => Promise.resolve([])) }));
-vi.mock('../../../api/salesPaymentApi', () => ({
+vi.mock('@billbull/shared/api/employeeApi', () => ({ getEmployees: vi.fn(() => Promise.resolve([])) }));
+vi.mock('@billbull/shared/api/salesPaymentApi', () => ({
   getAllSalesPayments: vi.fn(() => Promise.resolve([])),
   saveSalesPayment: vi.fn(),
   getNextSalesPaymentNumber: vi.fn(() => Promise.resolve('RV-001')),
   getSalesPaymentStats: vi.fn(() => Promise.resolve({})),
 }));
-vi.mock('../../../api/salesInvoiceApi', () => ({ getAllSalesInvoices: vi.fn(() => Promise.resolve([])) }));
-vi.mock('../../../api/ledgerApi', () => ({ getBankAccounts: vi.fn(() => Promise.resolve([])) }));
-vi.mock('../../../api/salesSettingsApi', () => ({ getSalesSettings: vi.fn(() => Promise.resolve({})) }));
-vi.mock('../../../api/printTemplateApi', () => ({ getTemplatesByCategory: vi.fn(() => Promise.resolve([])) }));
+vi.mock('@billbull/shared/api/salesInvoiceApi', () => ({ getAllSalesInvoices: vi.fn(() => Promise.resolve([])) }));
+vi.mock('@billbull/shared/api/ledgerApi', () => ({ getBankAccounts: vi.fn(() => Promise.resolve([])) }));
+vi.mock('@billbull/shared/api/salesSettingsApi', () => ({ getSalesSettings: vi.fn(() => Promise.resolve({})) }));
+vi.mock('@billbull/shared/api/printTemplateApi', () => ({ getTemplatesByCategory: vi.fn(() => Promise.resolve([])) }));
 
-vi.mock('../../../context/BranchContext', () => ({
+vi.mock('@billbull/shared/context/BranchContext', () => ({
   useBranch: () => ({ activeBranch: { id: 1, name: 'Dubai' }, branches: [], isAllBranches: false }),
 }));
-vi.mock('../../../context/CompanyContext', () => ({
+vi.mock('@billbull/shared/context/CompanyContext', () => ({
   default: React.createContext({ company: { currency: 'AED' } }),
   useCompany: () => ({ company: { currency: 'AED' } }),
 }));
-vi.mock('../../../context/PermissionContext', () => ({
+vi.mock('@billbull/shared/context/PermissionContext', () => ({
   usePermissions: () => ({
     canView: () => true, canCreate: () => true, canEdit: () => true, canApprove: () => true,
   }),

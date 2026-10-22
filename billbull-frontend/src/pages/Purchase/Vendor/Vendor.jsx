@@ -12,23 +12,23 @@ import {
 import StatementPrintPreview from '../../../components/StatementPrintPreview';
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import ExportDropdown from '../../../components/common/ExportDropdown';
-import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
-import { generateSOAFilename } from '../../../utils/filenameUtils';
-import CurrencyAmount from '../../../components/CurrencyAmount';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import { generateSOAFilename } from '@billbull/shared/utils/filenameUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
-import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../../utils/statementUtils';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '@billbull/shared/utils/statementUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { getListSerialNumber, withListSerialNumbers, withExportSerialNumbers } from '../../../utils/serialNumbering';
-import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml } from '../../../utils/printGenerator';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { generatePrintHtmlAsync, printHtml } from '@billbull/shared/utils/printGenerator';
 import {
   buildVendorSoaPrintData,
   buildPaymentVoucherPrintData,
   resolvePurchasePrintTemplate
 } from '../../../utils/purchasePrintUtils';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
-import { useBranch } from '../../../context/BranchContext';
-import billBullLogo from '../../../assets/billBullLogo.png';
+import { useBranch } from '@billbull/shared/context/BranchContext';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 import toast from 'react-hot-toast';
 
 // ==========================================
@@ -55,8 +55,8 @@ import {
   updateVendor,
   deleteVendor
 } from "../../../api/vendorsApi";
-import { fetchStatementOfAccount } from '../../../api/financialsApi';
-import { useCompany } from '../../../context/CompanyContext';
+import { fetchStatementOfAccount } from '@billbull/shared/api/financialsApi';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
 import {
   formatCurrencyDisplay,
   getCountryOptions,
@@ -65,7 +65,7 @@ import {
   normalizeCurrencyValue,
   resolveCurrencyDisplayCode,
   withFallbackOption
-} from '../../../utils/countryCurrencyOptions';
+} from '@billbull/shared/utils/countryCurrencyOptions';
 
 // --- DROPDOWN OPTIONS ---
 const vendorStatusOptions = ["Active", "On Hold", "Blocked"];
@@ -188,7 +188,7 @@ const RenderStars = ({ rating }) => (
 // NEW IMPORTS FOR PAYMENT MODULE
 import { getPostedInvoicesForPayment, getInvoices } from '../../../api/purchaseInvoiceApi';
 import { createPaymentVoucher, getPaymentVouchers, updateVoucherStatus } from '../../../api/paymentApi';
-import { getBankAccounts } from '../../../api/ledgerApi';
+import { getBankAccounts } from '@billbull/shared/api/ledgerApi';
 
 const PayInvoices = ({ vendors, initialVendor }) => {
   const { company } = useCompany();
@@ -276,7 +276,8 @@ const PayInvoices = ({ vendors, initialVendor }) => {
           ...inv,
           grandTotal: Number(inv.grandTotal || 0),
           amountPaid: Number(inv.amountPaid || 0),
-          balanceDue: Number(inv.balanceDue ?? inv.grandTotal ?? 0),
+          // Amounts already allotted to a cheque that is not issued yet are not available again.
+          balanceDue: Number(inv.balanceDue ?? inv.grandTotal ?? 0) - Number(inv.chequeReserved || 0),
         }))
         .filter(inv =>
           ((inv.vendorId === selectedVendor.code) ||
@@ -460,7 +461,9 @@ const PayInvoices = ({ vendors, initialVendor }) => {
       setLastSavedPayment(latestSavedPayment);
       setLastSavedInvoice(latestSavedInvoice);
 
-      alert("Payment processed successfully!");
+      alert(paymentMethod === 'Cheque'
+        ? "Cheque payment allotted. Create and issue the cheque in Financials → Pay Cheques; the ledger posts when the cheque is issued and paid."
+        : "Payment processed successfully!");
       setReference('');
       setNotes('');
       setSelectedInvoices({});

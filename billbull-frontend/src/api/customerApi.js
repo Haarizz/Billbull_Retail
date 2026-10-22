@@ -1,5 +1,5 @@
 // src/api/customerApi.js
-import api from "./axiosConfig";
+import api from "@billbull/shared/api/axiosConfig";
 
 // ================= INQUIRIES =================
 

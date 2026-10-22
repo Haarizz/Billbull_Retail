@@ -2,7 +2,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { ItemDescriptionCell } from '../ItemDescriptionCell';
-import { summarizeSalesItems, makeFooterDiscount } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, makeFooterDiscount } from '@billbull/shared/utils/documentSummaryUtils';
 
 const row = { id: 1, code: 'A', desc: '1000 GLN WATER TANK', qty: 1, price: 3500, disc: 20, tax: 5, taxAmt: 140, unit: 'PCS' };
 

@@ -1,5 +1,5 @@
-import api from "./axiosConfig";
-import { getBranchTaxConfiguration, getBranchTaxConfigurationForBranch } from "./branchTaxApi";
+import api from "@billbull/shared/api/axiosConfig";
+import { getBranchTaxConfiguration, getBranchTaxConfigurationForBranch } from "@billbull/shared/api/branchTaxApi";
 
 // ================= CONFIGURATIONS =================
 

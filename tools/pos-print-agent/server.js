@@ -7,35 +7,49 @@ const path = require("node:path");
 const fs = require("node:fs/promises");
 const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
+const { createConfig, normalizeOrigin } = require("./lib/config");
+const { createTokenStore, createPairingManager, PairingError } = require("./lib/pairing");
+const { inspectEscPos, describeRefusal } = require("./lib/escposPolicy");
+const { inspectZpl, describeZplRefusal } = require("./lib/zplPolicy");
+const { createNetworkPolicy, NetworkPolicyError } = require("./lib/networkPolicy");
+const { DestinationError, resolveQueue, resolveNetwork, queueProtocol } = require("./lib/destinations");
+const { StartupError, createStarter, closeGracefully, writeStatus, watchForStopRequest } = require("./lib/lifecycle");
 
-const HOST = "127.0.0.1";
-const PORT = Number(process.env.BILLBULL_PRINT_AGENT_PORT || 19777);
-// Surfaced on /health so a till's installed agent build can be identified
-// remotely — older builds carry the silent-failure RAW-print bug fixed in 0.2.0.
-const VERSION = require("./package.json").version;
+const { HOST, PORT, VERSION } = require("./lib/constants");
+// Bumped when the HTTP contract changes in a way the frontend must know about.
+// 2 = origin allow-list + pairing token (0.6.0). Agents before 0.6.0 report no
+// protocol and accept any caller.
+const PROTOCOL = 2;
 
-const BROWSER_PRINT_BASES = [
-  "https://localhost:9101",
-  "http://localhost:9100",
-  "http://127.0.0.1:9100",
-  "https://127.0.0.1:9101",
-];
+class HttpError extends Error {
+  constructor(status, code, message, extra = {}) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.extra = extra;
+  }
+}
 
-const sendJson = (res, statusCode, payload) => {
-  res.writeHead(statusCode, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-  });
-  res.end(JSON.stringify(payload));
-};
-
-const readJsonBody = async (req) => {
+const readJsonBody = async (req, maxBytes) => {
+  const declared = Number(req.headers["content-length"]);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new HttpError(413, "AGENT_BODY_TOO_LARGE", `Request body exceeds ${maxBytes} bytes.`);
+  }
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > maxBytes) throw new HttpError(413, "AGENT_BODY_TOO_LARGE", `Request body exceeds ${maxBytes} bytes.`);
+    chunks.push(chunk);
+  }
   if (!chunks.length) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
+    return parsed;
+  } catch {
+    throw new HttpError(400, "AGENT_BAD_REQUEST", "Request body must be a JSON object.");
+  }
 };
 
 const encodePowerShell = (script) =>
@@ -260,27 +274,12 @@ const textToEscPosBuffer = (text) => {
   return Buffer.concat([init, body, tail]);
 };
 
-const printTextToNetworkPrinter = async ({ ipAddress, portNumber = 9100, text }) =>
-  new Promise((resolve, reject) => {
-    const socket = net.createConnection({ host: ipAddress, port: Number(portNumber) }, () => {
-      // Same drain grace as the ESC/POS path below — ending the socket right
-      // after write() can truncate the tail (the cut command) on slower
-      // controllers.
-      socket.write(textToEscPosBuffer(text), () => {
-        setTimeout(() => socket.end(), 150);
-      });
-    });
-
-    socket.on("close", () => resolve({ ok: true, message: "Network print job sent successfully." }));
-    socket.on("error", (error) => reject(new Error(error?.message || "Unable to reach network printer.")));
-  });
-
 // Diagnostic capture: dump the EXACT bytes a print job carries to the user's
 // Desktop so a failing receipt can be analysed byte-for-byte offline. The
 // filename records which physical route the job took (queue vs network) —
 // itself a key diagnostic, since a stray config value used to silently reroute
-// USB jobs over TCP. Safe to leave on (small files); remove once the POS-80C
-// raster issue is closed.
+// USB jobs over TCP. Receipts carry customer names, phone numbers and totals,
+// so this only runs with "diagnostics": true in config.json.
 const captureEscPosBytes = async (decoded, route) => {
   try {
     const capDir = path.join(os.homedir(), "Desktop", "billbull-print-capture");
@@ -292,28 +291,29 @@ const captureEscPosBytes = async (decoded, route) => {
   }
 };
 
-// Sends a raw ESC/POS byte buffer straight to a network-attached printer's
-// socket (no text re-encoding, no driver involved). Many thermal controllers
-// (and Bluetooth-to-serial bridges) need the cut command's bytes to actually
-// reach the print head before the socket closes, so we wait for the kernel
-// send buffer to drain and give the controller a short grace period before
-// tearing the connection down — closing immediately after write() can truncate
-// the tail of the job (the cut command itself) on slower controllers.
-const printEscPosToNetworkPrinter = async ({ ipAddress, portNumber = 9100, dataBase64 }) => {
-  const buffer = Buffer.from(String(dataBase64 ?? ""), "base64");
-  console.log(`[escpos] network=${ipAddress}:${portNumber} bytes=${buffer.length} sha256=${crypto.createHash("sha256").update(buffer).digest("hex")}`);
-  await captureEscPosBytes(buffer, "network");
-  return new Promise((resolve, reject) => {
-    const socket = net.createConnection({ host: ipAddress, port: Number(portNumber) }, () => {
+const NETWORK_CONNECT_TIMEOUT_MS = 10000;
+
+// Sends a byte buffer straight to a network-attached printer's socket (no text
+// re-encoding, no driver involved). `address` is the IP the network policy
+// already resolved and approved — never a host name, so DNS cannot answer
+// differently here. Many thermal controllers (and Bluetooth-to-serial bridges)
+// need the cut command's bytes to actually reach the print head before the
+// socket closes, so we wait for the kernel send buffer to drain and give the
+// controller a short grace period before tearing the connection down — closing
+// immediately after write() can truncate the tail of the job (the cut command
+// itself) on slower controllers.
+const sendToNetworkPrinter = ({ address, port, buffer }) =>
+  new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: address, port: Number(port) }, () => {
+      socket.setTimeout(0);
       socket.write(buffer, () => {
         setTimeout(() => socket.end(), 150);
       });
     });
-
-    socket.on("close", () => resolve({ ok: true, message: "ESC/POS print job sent successfully." }));
+    socket.setTimeout(NETWORK_CONNECT_TIMEOUT_MS, () => socket.destroy(new Error(`Network printer ${address}:${port} did not answer.`)));
+    socket.on("close", (hadError) => { if (!hadError) resolve({ ok: true, message: "Network print job sent successfully." }); });
     socket.on("error", (error) => reject(new Error(error?.message || "Unable to reach network printer.")));
   });
-};
 
 // ── Capability probe command builders ──────────────────────────────────────
 // These build ISOLATED, single-feature ESC/POS jobs used by /probe/capabilities
@@ -442,21 +442,18 @@ const PROBE_JOBS = (qrData) => [
   ["E. GS ( k QR (long payload)", probeQrGSk(qrData || LONG_QR)],
 ];
 
-// Runs every probe slip in sequence to the given printer/queue, returning a
-// per-slip send-status summary. Printing is what produces the evidence; the
-// HTTP response just confirms each job was accepted by the spooler.
-const runCapabilityProbe = async ({ printerName, ipAddress, portNumber, connectionType, qrData }) => {
+// Runs every probe slip in sequence through `send` (the same policy-checked
+// path receipts take), returning a per-slip send-status summary. Printing is
+// what produces the evidence; the HTTP response just confirms each job was
+// accepted by the spooler.
+const runCapabilityProbe = async ({ qrData }, send) => {
   const jobs = PROBE_JOBS(qrData || null); // null → PROBE_JOBS uses the long multi-line QR
   const results = [];
   for (const [label, cmd] of jobs) {
-    const dataBase64 = probeSlip(label, cmd).toString("base64");
+    const buffer = probeSlip(label, cmd);
     try {
-      if (connectionType === "NETWORK_IP" || ipAddress) {
-        await printEscPosToNetworkPrinter({ ipAddress, portNumber, dataBase64 });
-      } else {
-        await printEscPosToPrinterQueue({ printerName, dataBase64, title: `BillBull Probe ${label}` });
-      }
-      results.push({ probe: label, ok: true, bytes: Buffer.from(dataBase64, "base64").length });
+      await send(buffer, `BillBull Probe ${label}`);
+      results.push({ probe: label, ok: true, bytes: buffer.length });
     } catch (err) {
       results.push({ probe: label, ok: false, error: err?.message || String(err) });
     }
@@ -472,18 +469,9 @@ const runCapabilityProbe = async ({ printerName, ipAddress, portNumber, connecti
 // by USB, Bluetooth (paired as a printer port), or a generic/text driver —
 // none of which is possible through System.Drawing.Printing (that path always
 // rasterizes through the driver, which is what loses ESC/POS control).
-const printEscPosToPrinterQueue = async ({ printerName, dataBase64, title = "BillBull ESC/POS Receipt" }) => {
+const printEscPosToPrinterQueue = async ({ printerName, buffer: decoded, title = "BillBull ESC/POS Receipt" }) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "billbull-print-"));
   const dataFile = path.join(tempDir, "job.bin");
-  const decoded = Buffer.from(String(dataBase64 ?? ""), "base64");
-  // Integrity log (RCA checklist §8): record the byte length + SHA-256 of the
-  // buffer the agent decoded, so it can be compared against the hash the browser
-  // computed at generation time — proving the base64→HTTP→agent hop added/dropped
-  // no bytes. WritePrinter's own $written===Length assert (below, in-script)
-  // covers the final agent→spooler hop.
-  const sha256 = crypto.createHash("sha256").update(decoded).digest("hex");
-  console.log(`[escpos] queue="${printerName}" bytes=${decoded.length} sha256=${sha256}`);
-  await captureEscPosBytes(decoded, "queue");
   await fs.writeFile(dataFile, decoded);
   const script = `
     $ErrorActionPreference = 'Stop'
@@ -619,208 +607,466 @@ const printEscPosToPrinterQueue = async ({ printerName, dataBase64, title = "Bil
 
   try {
     await runPowerShell(script);
-    // Return the byte length + hash the agent actually wrote so callers can log
-    // it alongside their generation-time hash (RCA checklist §8) without a
-    // separate /probe/echo round-trip.
-    return { ok: true, message: "ESC/POS print job sent successfully.", bytes: decoded.length, sha256 };
+    return { ok: true, message: "ESC/POS print job sent successfully." };
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }
 };
 
-const resolveBrowserPrintBase = async () => {
-  for (const base of BROWSER_PRINT_BASES) {
-    try {
-      const resp = await fetch(`${base}/available`);
-      if (resp.ok) return base;
-    } catch {
-      // Keep probing.
-    }
-  }
-  return null;
+// ── HTTP interface ─────────────────────────────────────────────────────────
+//
+// Every request passes, in order:
+//   1. Peer: the TCP peer must be loopback (the socket is bound to 127.0.0.1;
+//      this holds even if HOST is ever changed).
+//   2. Host: exactly 127.0.0.1:<port> or localhost:<port>. A DNS-rebinding page
+//      reaches this port with its own name in Host (evil.example:19777) and is
+//      refused here, before anything else runs.
+//   3. Origin: when present it must be on the configured allow-list (exact
+//      scheme + host + port). Untrusted origins get 403 and no CORS headers, so
+//      the page cannot read anything. Only GET /health and the diagnostics page
+//      may omit Origin — every browser fetch sends one, so a missing Origin
+//      means curl, a monitor or a top-level navigation.
+//   4. Token: everything that prints, lists printers or reports pairing state
+//      needs `Authorization: Bearer <token>` issued to that same origin by
+//      pairing. CORS is not authentication; this is.
+//   5. Destination: network targets pass the LAN policy (private address,
+//      printer port). Then the target — a Windows queue, or the resolved
+//      address and port — must be set up in config.json "printers", and the
+//      protocol it is set up for must be the one the route carries: ESC/POS on
+//      /print/escpos, /print/receipt, /test-print and the probes; ZPL on
+//      /print/zpl. An unlisted, ambiguous or conflicting destination, or a
+//      mismatch, is refused here, before a socket or queue is opened.
+//   6. Content: the whole job passes the allow-list of the destination's
+//      protocol — ESC/POS (no drawer, buzzer, power-off, NV writes, nothing
+//      unknown or truncated) or ZPL (complete BillBull label formats, no
+//      tilde, configuration, network or storage commands).
+// Configuration (allowed origins, revocation, printer kinds) is never reachable
+// over HTTP — only through config.json, the CLI and the tray menu on this PC.
+
+const ROUTES = {
+  "GET /health": { auth: "none" },
+  "POST /pair/start": { auth: "origin" },
+  "POST /pair/complete": { auth: "origin" },
+  "GET /auth/status": { auth: "token" },
+  "POST /pair/revoke": { auth: "token" },
+  "GET /printers": { auth: "token" },
+  "POST /test-print": { auth: "token" },
+  "POST /print/receipt": { auth: "token" },
+  "POST /print/escpos": { auth: "token" },
+  "POST /print/zpl": { auth: "token" },
+  "POST /probe/echo": { auth: "token", diagnostics: true },
+  "POST /probe/capabilities": { auth: "token", diagnostics: true },
+  "GET /diagnostics/probe": { auth: "none", diagnostics: true },
+};
+const ALLOWED_REQUEST_HEADERS = new Set(["authorization", "content-type"]);
+const LOOPBACK_PEERS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+
+// Default display for pairing codes when there is no tray: an interactive
+// terminal only. A redirected log file is not a screen, so pairing is refused
+// rather than writing the code somewhere it outlives the two-minute window.
+const consolePairingDisplay = (event) => {
+  if (event.done) return true;
+  if (!process.stdout.isTTY) return false;
+  console.log(`\n[pairing] ${event.origin} wants to pair. Code: ${event.code} (expires in 2 minutes)\n`);
+  return true;
 };
 
-const proxyZebraPrint = async ({ device, zpl }) => {
-  const base = await resolveBrowserPrintBase();
-  if (!base) {
-    throw new Error("Zebra Browser Print is not reachable on this workstation.");
+const sha256Hex = (buffer) => crypto.createHash("sha256").update(buffer).digest("hex");
+
+const isNetworkTarget = (target) =>
+  // Route by the EXPLICIT connectionType; only fall back to ipAddress presence
+  // when the caller sent no connectionType at all (legacy callers). A stray
+  // ipAddress on a USB/queue printer's config must not silently reroute its
+  // jobs over TCP — a different physical path than intended.
+  target.connectionType === "NETWORK_IP" || (!target.connectionType && Boolean(target.ipAddress));
+
+const requirePrinterName = (target) => {
+  if (!target.printerName || typeof target.printerName !== "string") {
+    throw new HttpError(400, "AGENT_BAD_REQUEST", "printerName is required for workstation printers.");
   }
-  const response = await fetch(`${base}/write`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ device, data: zpl }),
+};
+
+const TOKEN_MESSAGES = {
+  AGENT_AUTH_REQUIRED: "This print agent is not paired with this BillBull site. Pair it in POS → Devices → Local Print Agent.",
+  AGENT_TOKEN_EXPIRED: "The pairing with this print agent has expired. Pair it again in POS → Devices → Local Print Agent.",
+  AGENT_TOKEN_REVOKED: "The pairing with this print agent was revoked. Pair it again in POS → Devices → Local Print Agent.",
+  AGENT_TOKEN_INVALID: "The print agent did not accept this pairing. Pair it again in POS → Devices → Local Print Agent.",
+};
+
+const createAgentServer = ({
+  config = createConfig(),
+  transports = {},
+  displayPairingCode = consolePairingDisplay,
+  now = Date.now,
+} = {}) => {
+  const io = {
+    listPrinters,
+    printText: printTextToPrinter,
+    printQueue: printEscPosToPrinterQueue,
+    sendNetwork: sendToNetworkPrinter,
+    capture: captureEscPosBytes,
+    ...transports,
+  };
+  const store = createTokenStore({ home: config.home, now });
+  const pairing = createPairingManager({
+    store,
+    getTtlDays: () => config.current().tokenTtlDays,
+    display: (event) => displayPairingCode(event),
+    now,
   });
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(text || `Browser Print returned HTTP ${response.status}`);
-  }
-  return { ok: true, message: "Zebra label job sent successfully." };
-};
-
-const server = http.createServer(async (req, res) => {
-  if (req.method === "OPTIONS") {
-    sendJson(res, 204, {});
-    return;
-  }
-
-  try {
-    if (req.method === "GET" && req.url === "/health") {
-      sendJson(res, 200, { ok: true, service: "billbull-pos-print-agent", version: VERSION });
-      return;
+  let networkPolicyKey = null;
+  let networkPolicy = null;
+  const policyFor = (cfg) => {
+    const key = JSON.stringify(cfg.network);
+    if (key !== networkPolicyKey) {
+      networkPolicy = createNetworkPolicy(cfg.network);
+      networkPolicyKey = key;
     }
+    return networkPolicy;
+  };
 
-    if (req.method === "GET" && req.url === "/printers") {
-      const printers = await listPrinters();
-      sendJson(res, 200, { printers });
-      return;
-    }
+  const server = http.createServer();
+  const boundPort = () => server.address()?.port;
 
-    if (req.method === "POST" && (req.url === "/test-print" || req.url === "/print/receipt")) {
-      const body = await readJsonBody(req);
-      if (!body?.text) {
-        sendJson(res, 400, { ok: false, message: "text is required." });
-        return;
-      }
-      let result;
-      // Route by the EXPLICIT connectionType; only fall back to ipAddress
-      // presence when the caller sent no connectionType at all (legacy callers).
-      // Previously a stray ipAddress on a USB/queue printer's config silently
-      // rerouted its jobs over TCP — a different physical path than intended.
-      if (body.connectionType === "NETWORK_IP" || (!body.connectionType && body.ipAddress)) {
-        if (!body.ipAddress || !body.portNumber) {
-          sendJson(res, 400, { ok: false, message: "ipAddress and portNumber are required for network printers." });
-          return;
-        }
-        result = await printTextToNetworkPrinter({
-          ipAddress: body.ipAddress,
-          portNumber: body.portNumber,
-          text: body.text,
-        });
-      } else {
-        if (!body.printerName) {
-          sendJson(res, 400, { ok: false, message: "printerName is required for workstation printers." });
-          return;
-        }
-        result = await printTextToPrinter({
-          printerName: body.printerName,
-          text: body.text,
-          title: body.title || "BillBull POS Receipt",
-          paperWidthMm: body.paperWidthMm,
-        });
-      }
-      sendJson(res, 200, result);
-      return;
-    }
+  // Diagnostics mode serves probe.html from the agent itself; that page's own
+  // origin is trusted only while diagnostics are switched on.
+  const trustedOrigins = (cfg) => (cfg.diagnostics
+    ? new Set([...cfg.allowedOrigins, `http://127.0.0.1:${boundPort()}`, `http://localhost:${boundPort()}`])
+    : cfg.allowedOrigins);
 
-    if (req.method === "POST" && req.url === "/print/escpos") {
-      const body = await readJsonBody(req);
-      if (!body?.dataBase64) {
-        sendJson(res, 400, { ok: false, message: "dataBase64 is required." });
-        return;
+  // The command policy for each raw protocol. Each one is complete on its own:
+  // ZPL is never "checked" by the ESC/POS walker or the other way round.
+  const POLICIES = {
+    escpos: { inspect: inspectEscPos, describe: describeRefusal },
+    zpl: { inspect: inspectZpl, describe: describeZplRefusal },
+  };
+
+  // The destination a job for `target` may go to: a configured queue (sent to
+  // the configured spelling) or a configured network printer (sent to the
+  // address the network policy approved). `protocol` is what the route
+  // carries; the destination's own setting must match it. Request fields such
+  // as "protocol", "format" or "deviceType" are never read.
+  const resolveDestination = async (cfg, target, protocol) => {
+    try {
+      if (isNetworkTarget(target)) {
+        const address = await policyFor(cfg).resolveAllowed(target.ipAddress, target.portNumber);
+        return resolveNetwork(cfg.destinations, address, Number(target.portNumber), protocol);
       }
-      let result;
-      // Same explicit-connectionType routing as /test-print above — a stray
-      // ipAddress on a USB printer must not silently reroute ESC/POS jobs to TCP.
-      if (body.connectionType === "NETWORK_IP" || (!body.connectionType && body.ipAddress)) {
-        if (!body.ipAddress || !body.portNumber) {
-          sendJson(res, 400, { ok: false, message: "ipAddress and portNumber are required for network printers." });
-          return;
-        }
-        result = await printEscPosToNetworkPrinter({
-          ipAddress: body.ipAddress,
-          portNumber: body.portNumber,
-          dataBase64: body.dataBase64,
-        });
-      } else {
-        if (!body.printerName) {
-          sendJson(res, 400, { ok: false, message: "printerName is required for workstation printers." });
-          return;
-        }
-        result = await printEscPosToPrinterQueue({
-          printerName: body.printerName,
-          dataBase64: body.dataBase64,
-          title: body.title || "BillBull ESC/POS Receipt",
-        });
+      requirePrinterName(target);
+      return resolveQueue(cfg.destinations, target.printerName, protocol);
+    } catch (err) {
+      if (err instanceof DestinationError) {
+        console.warn(`[security] refused ${protocol} job: ${err.code} ${JSON.stringify(err.extra?.destination ?? null)}`);
       }
-      sendJson(res, 200, result);
-      return;
+      throw err;
     }
+  };
+
+  // Sends policy-checked bytes to a resolved destination. The single path for
+  // every raw byte stream: receipts, labels, test prints, probe slips. The
+  // destination and the whole job are checked before anything is opened or
+  // written; the destination's protocol picks the command policy.
+  const sendBytes = async (cfg, target, buffer, title, protocol, resolved = null) => {
+    const dest = resolved || await resolveDestination(cfg, target, protocol);
+    const policy = POLICIES[dest.protocol];
+    const verdict = policy.inspect(buffer);
+    if (!verdict.allowed) {
+      console.warn(`[security] refused ${dest.protocol} job: ${verdict.command} at ${verdict.offset} (${verdict.category})`);
+      throw new HttpError(403, "AGENT_COMMAND_FORBIDDEN", policy.describe(verdict),
+        { protocol: dest.protocol, category: verdict.category, command: verdict.command, offset: verdict.offset });
+    }
+    // Integrity log (RCA checklist §8): byte length + SHA-256 of what the agent
+    // decoded, compared by the browser against its generation-time hash.
+    const sha256 = sha256Hex(buffer);
+    if (dest.kind === "network") {
+      console.log(`[${dest.protocol}] network=${dest.address}:${dest.port} bytes=${buffer.length} sha256=${sha256}`);
+      if (cfg.diagnostics) await io.capture(buffer, "network");
+      const result = await io.sendNetwork({ address: dest.address, port: dest.port, buffer });
+      return { ...result, bytes: buffer.length, sha256 };
+    }
+    console.log(`[${dest.protocol}] queue=${JSON.stringify(dest.printerName)} bytes=${buffer.length} sha256=${sha256}`);
+    if (cfg.diagnostics) await io.capture(buffer, "queue");
+    const result = await io.printQueue({ printerName: dest.printerName, buffer, title });
+    return { ...result, bytes: buffer.length, sha256 };
+  };
+
+  // Plain-text jobs. The agent builds the bytes itself (textToEscPosBuffer maps
+  // every control character to '?'), so text can never smuggle an ESC/POS
+  // command. Text is still a receipt: '^' and '~' reach the printer as typed,
+  // so it goes only to a destination set up for ESC/POS — never to a Zebra,
+  // which would execute "^XA..." typed into a text job.
+  const printText = async ({ cfg, body }) => {
+    if (!body.text || typeof body.text !== "string") throw new HttpError(400, "AGENT_BAD_REQUEST", "text is required.");
+    const dest = await resolveDestination(cfg, body, "escpos");
+    if (dest.kind === "network") {
+      return io.sendNetwork({ address: dest.address, port: dest.port, buffer: textToEscPosBuffer(body.text) });
+    }
+    return io.printText({
+      printerName: dest.printerName,
+      text: body.text,
+      title: body.title || "BillBull POS Receipt",
+      paperWidthMm: body.paperWidthMm,
+    });
+  };
+
+  const handlers = {
+    "GET /health": async () => ({ ok: true, service: "billbull-pos-print-agent", version: VERSION, protocol: PROTOCOL }),
+
+    "POST /pair/start": async ({ origin, body }) =>
+      ({ ok: true, ...pairing.start({ origin, label: typeof body.label === "string" ? body.label : null }) }),
+
+    "POST /pair/complete": async ({ origin, body }) =>
+      ({ ok: true, ...pairing.complete({ origin, pairingId: body.pairingId, code: body.code }) }),
+
+    "GET /auth/status": async ({ token }) =>
+      ({ ok: true, paired: true, origin: token.origin, expiresAt: new Date(token.expiresAt).toISOString() }),
+
+    "POST /pair/revoke": async ({ token }) => ({ ok: store.revoke(token.id) }),
+
+    // Each queue carries the kind it is set up for on this PC ("escpos", "zpl",
+    // "conflict", or null = not set up), so POS → Devices can say why a printer
+    // will be refused. Read-only: nothing over HTTP changes it.
+    "GET /printers": async ({ cfg }) => ({
+      printers: (await io.listPrinters()).map((p) => ({ ...p, BillBullProtocol: queueProtocol(cfg.destinations, p.Name) })),
+    }),
+
+    "POST /test-print": printText,
+    "POST /print/receipt": printText,
+
+    "POST /print/escpos": async ({ cfg, body }) => {
+      if (!body.dataBase64 || typeof body.dataBase64 !== "string") {
+        throw new HttpError(400, "AGENT_BAD_REQUEST", "dataBase64 is required.");
+      }
+      const buffer = Buffer.from(body.dataBase64, "base64");
+      if (!buffer.length) throw new HttpError(400, "AGENT_BAD_REQUEST", "dataBase64 decoded to no bytes.");
+      return sendBytes(cfg, body, buffer, body.title || "BillBull ESC/POS Receipt", "escpos");
+    },
+
+    // Zebra labels. Same transports as /print/escpos, ZPL command policy.
+    "POST /print/zpl": async ({ cfg, body }) => {
+      if (!body.dataBase64 || typeof body.dataBase64 !== "string") {
+        throw new HttpError(400, "AGENT_BAD_REQUEST", "dataBase64 is required.");
+      }
+      const buffer = Buffer.from(body.dataBase64, "base64");
+      if (!buffer.length) throw new HttpError(400, "AGENT_BAD_REQUEST", "dataBase64 decoded to no bytes.");
+      return sendBytes(cfg, body, buffer, body.title || "BillBull Labels", "zpl");
+    },
 
     // Transmission-integrity check: decode the base64 the browser sent and
-    // report the received byte count + SHA-256, WITHOUT printing. The caller
-    // compares these against what escPosReceipt.js generated in the browser; if
-    // they match, the base64→HTTP→agent hop is byte-perfect and any garbage on
-    // paper is the printer firmware, not a corrupted stream. Also echoes the
-    // first/last bytes as hex so a malformed leading command is visible.
-    if (req.method === "POST" && req.url === "/probe/echo") {
-      const body = await readJsonBody(req);
-      if (!body?.dataBase64) {
-        sendJson(res, 400, { ok: false, message: "dataBase64 is required." });
-        return;
-      }
+    // report the received byte count + SHA-256, WITHOUT printing.
+    "POST /probe/echo": async ({ body }) => {
+      if (!body.dataBase64) throw new HttpError(400, "AGENT_BAD_REQUEST", "dataBase64 is required.");
       const buf = Buffer.from(String(body.dataBase64), "base64");
-      sendJson(res, 200, {
+      return {
         ok: true,
         receivedBytes: buf.length,
-        sha256: crypto.createHash("sha256").update(buf).digest("hex"),
+        sha256: sha256Hex(buf),
         firstBytesHex: buf.subarray(0, 32).toString("hex"),
         lastBytesHex: buf.subarray(Math.max(0, buf.length - 16)).toString("hex"),
-      });
-      return;
-    }
+      };
+    },
 
     // Prints the isolated single-opcode capability slips to the target printer.
-    if (req.method === "POST" && req.url === "/probe/capabilities") {
-      const body = await readJsonBody(req);
-      if (!body?.printerName && !body?.ipAddress) {
-        sendJson(res, 400, { ok: false, message: "printerName or ipAddress is required." });
-        return;
+    "POST /probe/capabilities": async ({ cfg, body }) => {
+      if (!body.printerName && !body.ipAddress) {
+        throw new HttpError(400, "AGENT_BAD_REQUEST", "printerName or ipAddress is required.");
       }
-      const results = await runCapabilityProbe({
-        printerName: body.printerName,
-        ipAddress: body.ipAddress,
-        portNumber: body.portNumber,
-        connectionType: body.connectionType,
-        qrData: body.qrData,
-      });
-      sendJson(res, 200, { ok: results.every((r) => r.ok), results });
+      const dest = await resolveDestination(cfg, body, "escpos");
+      const results = await runCapabilityProbe({ qrData: body.qrData }, (buffer, title) => sendBytes(cfg, body, buffer, title, "escpos", dest));
+      return { ok: results.every((r) => r.ok), results };
+    },
+  };
+
+  const reply = (res, status, payload, { corsOrigin = null, contentType = "application/json; charset=utf-8" } = {}) => {
+    const headers = {
+      "Content-Type": contentType,
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+      Vary: "Origin",
+    };
+    if (corsOrigin) headers["Access-Control-Allow-Origin"] = corsOrigin;
+    res.writeHead(status, headers);
+    res.end(typeof payload === "string" ? payload : JSON.stringify(payload));
+  };
+
+  const handle = async (req, res, state) => {
+    const pathname = new URL(req.url, "http://agent.invalid").pathname;
+    const cfg = config.current();
+    const refuse = (status, code, message) => {
+      console.warn(`[security] ${status} ${code} ${req.method} ${JSON.stringify(pathname)} origin=${JSON.stringify(req.headers.origin ?? null)} host=${JSON.stringify(req.headers.host ?? null)}`);
+      throw new HttpError(status, code, message);
+    };
+
+    if (!LOOPBACK_PEERS.has(req.socket.remoteAddress)) {
+      refuse(403, "AGENT_REMOTE_REJECTED", "The print agent only accepts connections from this PC.");
+    }
+
+    const host = String(req.headers.host || "").toLowerCase();
+    if (host !== `127.0.0.1:${boundPort()}` && host !== `localhost:${boundPort()}`) {
+      refuse(421, "AGENT_HOST_REJECTED", "Requests must address the print agent as 127.0.0.1 or localhost.");
+    }
+
+    const originHeader = req.headers.origin;
+    let origin = null;
+    if (originHeader !== undefined) {
+      const normalized = normalizeOrigin(originHeader);
+      if (!normalized || !trustedOrigins(cfg).has(normalized)) {
+        refuse(403, "AGENT_ORIGIN_NOT_ALLOWED",
+          "This print agent does not trust this site. Add the BillBull address on this PC with: BillBullPrintAgent.exe --add-origin <address> | more");
+      }
+      origin = normalized;
+      // Echo the exact allow-listed value the browser sent, never anything else.
+      state.corsOrigin = originHeader;
+    } else if (cfg.diagnostics && req.headers["sec-fetch-site"] === "same-origin") {
+      // Browsers omit Origin on same-origin GETs, which is what the agent-served
+      // probe page makes. Host is already pinned to 127.0.0.1/localhost above,
+      // so this can only be the agent's own origin; a token is still required.
+      origin = `http://${host}`;
+    }
+
+    if (req.method === "OPTIONS") {
+      if (!origin) refuse(403, "AGENT_ORIGIN_REQUIRED", "Preflight requests must carry an Origin.");
+      const route = ROUTES[`${req.headers["access-control-request-method"] || ""} ${pathname}`];
+      if (!route || (route.diagnostics && !cfg.diagnostics)) refuse(404, "AGENT_NOT_FOUND", "Not found.");
+      const requested = String(req.headers["access-control-request-headers"] || "")
+        .split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+      if (requested.some((h) => !ALLOWED_REQUEST_HEADERS.has(h))) {
+        refuse(403, "AGENT_HEADERS_NOT_ALLOWED", "Only Authorization and Content-Type request headers are accepted.");
+      }
+      const headers = {
+        "Access-Control-Allow-Origin": state.corsOrigin,
+        "Access-Control-Allow-Methods": "GET, POST",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        "Access-Control-Max-Age": "600",
+        "Cache-Control": "no-store",
+        Vary: "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+      };
+      // Chrome's Private/Local Network Access preflight for a public site
+      // calling 127.0.0.1 — answered only for an allow-listed origin.
+      if (req.headers["access-control-request-private-network"] === "true") {
+        headers["Access-Control-Allow-Private-Network"] = "true";
+      }
+      res.writeHead(204, headers);
+      res.end();
       return;
     }
 
-    if (req.method === "POST" && req.url === "/print/label/zebra") {
-      const body = await readJsonBody(req);
-      if (!body?.device || !body?.zpl) {
-        sendJson(res, 400, { ok: false, message: "device and zpl are required." });
-        return;
-      }
-      const result = await proxyZebraPrint(body);
-      sendJson(res, 200, result);
+    const routeKey = `${req.method} ${pathname}`;
+    const route = ROUTES[routeKey];
+    if (!route || (route.diagnostics && !cfg.diagnostics)) refuse(404, "AGENT_NOT_FOUND", "Not found.");
+
+    if (routeKey === "GET /diagnostics/probe") {
+      const html = await fs.readFile(path.join(__dirname, "probe.html"), "utf8");
+      reply(res, 200, html, { contentType: "text/html; charset=utf-8" });
       return;
     }
 
-    sendJson(res, 404, { ok: false, message: "Not found." });
-  } catch (error) {
-    sendJson(res, 500, { ok: false, message: error?.message || "Unhandled print-agent error." });
-  }
-});
+    if (route.auth !== "none" && !origin) {
+      refuse(403, "AGENT_ORIGIN_REQUIRED", "Requests must come from a BillBull page.");
+    }
 
-const startServer = () =>
-  new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(PORT, HOST, () => {
-      console.log(`[billbull-pos-print-agent] listening on http://${HOST}:${PORT}`);
-      resolve({ host: HOST, port: PORT });
+    let token = null;
+    if (route.auth === "token") {
+      const match = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization || ""));
+      if (!match) refuse(401, "AGENT_AUTH_REQUIRED", TOKEN_MESSAGES.AGENT_AUTH_REQUIRED);
+      const verdict = store.verify(match[1], origin);
+      if (!verdict.ok) refuse(401, verdict.code, TOKEN_MESSAGES[verdict.code]);
+      token = verdict.record;
+    }
+
+    let body = {};
+    if (req.method === "POST") {
+      const type = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+      if (type !== "application/json") refuse(415, "AGENT_UNSUPPORTED_MEDIA_TYPE", "Requests must be application/json.");
+      body = await readJsonBody(req, cfg.maxBodyBytes);
+    }
+
+    reply(res, 200, await handlers[routeKey]({ cfg, origin, token, body }), { corsOrigin: state.corsOrigin });
+  };
+
+  server.on("request", (req, res) => {
+    const state = { corsOrigin: null };
+    handle(req, res, state).catch((error) => {
+      const known = error instanceof HttpError || error instanceof PairingError || error instanceof DestinationError;
+      const status = known ? error.status : error instanceof NetworkPolicyError ? 400 : 500;
+      const code = typeof error.code === "string" && error.code.startsWith("AGENT_") ? error.code : "AGENT_PRINT_FAILED";
+      const extra = error instanceof HttpError || error instanceof DestinationError ? error.extra
+        : error instanceof PairingError && error.attemptsRemaining !== undefined ? { attemptsRemaining: error.attemptsRemaining } : {};
+      if (status >= 500) console.error(`[agent] ${req.method} ${JSON.stringify(req.url)} failed: ${error?.message || error}`);
+      if (res.headersSent) {
+        res.end();
+        return;
+      }
+      // A refused upload is not drained; close the connection after the reply
+      // rather than read megabytes we have already decided to reject.
+      if (status === 413) res.setHeader("Connection", "close");
+      reply(res, status, { ok: false, code, message: error?.message || "Unhandled print-agent error.", ...extra },
+        { corsOrigin: state.corsOrigin });
     });
   });
 
-module.exports = { startServer, listPrinters, PORT, HOST };
+  server.agent = { config, store, pairing };
+  return server;
+};
+
+// What a listening agent reports about its setup, once, at startup.
+const logStartup = (server) => {
+  const { allowedOrigins, destinations, fileProblem } = server.agent.config.current();
+  console.log(`[billbull-pos-print-agent] ${VERSION} listening on http://${HOST}:${PORT}`);
+  console.log(`[billbull-pos-print-agent] config ${server.agent.config.file}; trusted origins: ${[...allowedOrigins].join(", ") || "(none — run --add-origin)"}`);
+  if (fileProblem) console.warn(`[billbull-pos-print-agent] config.json cannot be used (${fileProblem}); every request is refused until it is fixed`);
+  if (!destinations.queues.size && !destinations.network.size) {
+    console.warn('[billbull-pos-print-agent] no printer is set up for BillBull; every print is refused until one is (tray menu → Printers, or --set-printer "<name>" escpos|zpl)');
+  }
+};
+
+// Process exit codes when the agent itself (not a CLI command) cannot start.
+// 0 and 2 belong to the CLI (see lib/cli.js).
+const START_EXIT = Object.freeze({ FAILED: 1, ALREADY_RUNNING: 3, PORT_UNAVAILABLE: 4 });
+
+/**
+ * Creates and binds the agent: { host, port, server, starter } once listening.
+ * Rejects with a lifecycle StartupError when the port is taken — this headless
+ * path does not retry (the tray does).
+ */
+const startServer = async (options = {}) => {
+  const server = createAgentServer(options);
+  const starter = createStarter({ server, home: server.agent.config.home, host: HOST, port: PORT, version: VERSION, retryMs: null });
+  const state = await starter.start();
+  if (state.state !== "running") throw new StartupError(state.code, state.message);
+  logStartup(server);
+  return { host: HOST, port: PORT, server, starter };
+};
+
+module.exports = {
+  startServer, createAgentServer, logStartup, listPrinters, textToEscPosBuffer, PORT, HOST, VERSION, PROTOCOL, START_EXIT,
+};
 
 // Running directly (`node server.js` / `npm start`) keeps the original
-// headless behavior; the tray entrypoint requires startServer instead so it
-// can also drive the systray UI in the same process.
+// headless behavior; the tray entrypoint drives the same pieces with a
+// systray UI in the same process. Configuration commands (--add-origin,
+// --revoke-all, ...) run and exit instead of starting.
 if (require.main === module) {
-  startServer().catch((error) => {
-    console.error(`[billbull-pos-print-agent] failed to start:`, error?.message || error);
-    process.exit(1);
-  });
+  const { runCli } = require("./lib/cli");
+  if (!runCli(process.argv.slice(2))) {
+    const startedAt = Date.now();
+    startServer().then(({ server, starter }) => {
+      const home = server.agent.config.home;
+      watchForStopRequest({
+        home,
+        startedAt,
+        onStop: async () => {
+          console.log("[billbull-pos-print-agent] stop requested (--stop); finishing in-flight requests");
+          starter.stop();
+          await closeGracefully(server);
+          writeStatus(home, { state: "stopped", reason: "stop requested", version: VERSION, port: PORT });
+          process.exit(0);
+        },
+      });
+    }).catch((error) => {
+      console.error(`[billbull-pos-print-agent] failed to start: ${error?.message || error}`);
+      process.exit(error?.code === "AGENT_ALREADY_RUNNING" ? START_EXIT.ALREADY_RUNNING
+        : error instanceof StartupError ? START_EXIT.PORT_UNAVAILABLE : START_EXIT.FAILED);
+    });
+  }
 }

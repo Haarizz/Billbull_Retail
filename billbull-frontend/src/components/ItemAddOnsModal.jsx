@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, SlidersHorizontal } from 'lucide-react';
-import CurrencyAmount from './CurrencyAmount';
-import { computeLineTaxTotals, VAT_MODES } from '../utils/vatMath';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { computeLineTaxTotals, VAT_MODES } from '@billbull/shared/utils/vatMath';
 
 const calculateRow = (item, vatMode = VAT_MODES.EXCLUSIVE) => {
     const qty = parseFloat(item.qty ?? item.currentQty ?? item.orderedQty) || 0;

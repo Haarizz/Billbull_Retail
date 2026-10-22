@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Calendar, ChevronDown, X } from 'lucide-react';
-import { toLocalInputDate } from '../../utils/dateUtils';
+import { Calendar, ChevronDown, Loader2 } from 'lucide-react';
+import { toLocalInputDate } from '@billbull/shared/utils/dateUtils';
 
 // Local calendar day, never toISOString() — that converts to UTC and shifts the
 // day backwards in UTC+ zones, so "This Month" would start on the last day of
@@ -56,7 +56,8 @@ function formatLabel(fromDate, toDate, preset) {
     return fromDate || toDate || 'Custom';
 }
 
-export default function DateFilter({ onChange, defaultPreset = 'today' }) {
+/** `loading` — the list behind the filter is fetching; the box shows a spinner meanwhile. */
+export default function DateFilter({ onChange, defaultPreset = 'today', loading = false }) {
     const [preset, setPreset] = useState(defaultPreset);
     const [customFrom, setCustomFrom] = useState('');
     const [customTo, setCustomTo] = useState('');
@@ -96,10 +97,13 @@ export default function DateFilter({ onChange, defaultPreset = 'today' }) {
         <div className="relative" ref={ref}>
             <button
                 onClick={() => setOpen(v => !v)}
+                aria-busy={loading}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[#FDE6A9] bg-[#FFF8E7] text-sm font-medium text-gray-700 hover:bg-amber-50 transition-colors whitespace-nowrap"
             >
-                <Calendar size={14} className="text-amber-500" />
-                <span>{formatLabel(resolvedFrom, resolvedTo, preset)}</span>
+                {loading
+                    ? <Loader2 size={14} className="text-amber-500 animate-spin" aria-label="Loading" />
+                    : <Calendar size={14} className="text-amber-500" />}
+                <span className={loading ? 'text-gray-500' : undefined}>{formatLabel(resolvedFrom, resolvedTo, preset)}</span>
                 <ChevronDown size={14} className="text-gray-400" />
             </button>
 
@@ -109,9 +113,10 @@ export default function DateFilter({ onChange, defaultPreset = 'today' }) {
                         <button
                             key={p.key}
                             onClick={() => applyPreset(p.key)}
-                            className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${preset === p.key ? 'bg-amber-100 text-amber-800 font-medium' : 'hover:bg-gray-50 text-gray-700'}`}
+                            className={`w-full flex items-center justify-between text-left px-3 py-2 rounded-lg text-sm transition-colors ${preset === p.key ? 'bg-amber-100 text-amber-800 font-medium' : 'hover:bg-gray-50 text-gray-700'}`}
                         >
                             {p.label}
+                            {loading && preset === p.key && <Loader2 size={14} className="text-amber-500 animate-spin" />}
                         </button>
                     ))}
 

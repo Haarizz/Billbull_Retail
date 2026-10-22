@@ -1,4 +1,4 @@
-import api from './axiosConfig';
+import api from '@billbull/shared/api/axiosConfig';
 
 const BASE_PATH = '/api/generalledger/journal-entries';
 

@@ -2,12 +2,12 @@ import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, within, waitFor, fireEvent } from '@testing-library/react';
 
-vi.mock('../../../components/CurrencyAmount', () => ({
+vi.mock('@billbull/shared/components/CurrencyAmount', () => ({
   default: ({ value }) => <span>{value == null ? '' : String(value)}</span>,
 }));
 
 const getTargetReadiness = vi.fn();
-vi.mock('../../../api/employeeTargetsApi', () => ({
+vi.mock('@billbull/shared/api/employeeTargetsApi', () => ({
   getTargetReadiness: (...a) => getTargetReadiness(...a),
 }));
 

@@ -4,8 +4,8 @@ import {
     CheckCircle2, Phone, CreditCard, Star,
     Package, Calendar, ArrowRight, Building2, Plus, X
 } from 'lucide-react';
-import CurrencyAmount from './CurrencyAmount';
-import { addCustomerSavedAddress } from '../api/customerledgerApi';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { addCustomerSavedAddress } from '@billbull/shared/api/customerledgerApi';
 import toast from 'react-hot-toast';
 
 /**

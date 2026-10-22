@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { getCompanyProfile } from '../api/companyProfileApi';
-import { useCompany } from '../context/CompanyContext';
-import { normalizeDocumentCompanyProfile } from '../utils/documentTemplateRenderer';
-import { resolveCurrencyDisplayCode } from '../utils/countryCurrencyOptions';
-import { formatDisplayDate } from '../utils/dateUtils';
-import { formatStatementEntryType } from '../utils/statementUtils';
+import { getCompanyProfile } from '@billbull/shared/api/companyProfileApi';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { normalizeDocumentCompanyProfile } from '@billbull/shared/utils/documentTemplateRenderer';
+import { resolveCurrencyDisplayCode } from '@billbull/shared/utils/countryCurrencyOptions';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
+import { formatStatementEntryType } from '@billbull/shared/utils/statementUtils';
 
 const asNumber = (value) => {
     const parsed = Number(value ?? 0);

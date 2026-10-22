@@ -4,6 +4,7 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.UnaryOperator;
 
 public final class PaginationUtil {
     public static final int MAX_PAGE_SIZE = 30;
@@ -19,6 +20,19 @@ public final class PaginationUtil {
         int to = Math.min(from + normalizedSize, total);
         int totalPages = total == 0 ? 0 : (int) Math.ceil((double) total / normalizedSize);
         return new PageResponse<>(filtered.subList(from, to), normalizedPage, normalizedSize, total, totalPages);
+    }
+
+    /**
+     * Pages first, then hands only the visible rows to {@code hydrate} (item/product/batch
+     * lookups, full DTO mapping). Enriching every row of a date range and discarding all but
+     * one page is what made the list date filters slow. {@code hydrate} must not change the
+     * String or {@code status} fields that search/status match on, or the page would differ.
+     */
+    public static <T> PageResponse<T> paginate(List<T> source, int page, int size, String search, String status,
+                                               UnaryOperator<List<T>> hydrate) {
+        PageResponse<T> paged = paginate(source, page, size, search, status);
+        List<T> rows = hydrate.apply(new ArrayList<>(paged.getContent()));
+        return new PageResponse<>(rows, paged.getPage(), paged.getSize(), paged.getTotalElements(), paged.getTotalPages());
     }
 
     private static <T> List<T> filter(List<T> source, String search, String status) {

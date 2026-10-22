@@ -1,8 +1,8 @@
 // BillBull Dashboard Service Adapter
 // Bridges the new dashboard UI to the Spring Boot backend via Axios
 
-import api from "./axiosConfig";
-import { getBranches as fetchBranches } from "./branchApi";
+import api from "@billbull/shared/api/axiosConfig";
+import { getBranches as fetchBranches } from "@billbull/shared/api/branchApi";
 import { getDashboardData, clearDashboardApiCache } from "./dashboardApi";
 import {
   globalSearch as sharedGlobalSearch,

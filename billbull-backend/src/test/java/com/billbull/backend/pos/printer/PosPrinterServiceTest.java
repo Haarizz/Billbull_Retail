@@ -32,7 +32,8 @@ class PosPrinterServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PosPrinterService(repo, deviceManager);
+        service = new PosPrinterService(repo, deviceManager, PrinterNetworkPolicy.defaults(),
+                org.mockito.Mockito.mock(com.billbull.backend.pos.cashdrawer.PosDrawerKickAuthorizer.class));
     }
 
     @Test

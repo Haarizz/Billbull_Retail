@@ -1,5 +1,5 @@
 import React from 'react';
-import { usePermissions } from '../../context/PermissionContext';
+import { usePermissions } from '@billbull/shared/context/PermissionContext';
 
 /**
  * User-Based Data Visibility (Ownership Filtering) UI helpers.

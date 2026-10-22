@@ -1,4 +1,4 @@
-import axios from './axiosConfig';
+import axios from '@billbull/shared/api/axiosConfig';
 
 export const fetchExpenses = async () => {
     const response = await axios.get('/api/expenses');

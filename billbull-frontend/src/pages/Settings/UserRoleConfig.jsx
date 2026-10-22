@@ -6,9 +6,9 @@ import {
   ChevronRight, AlertTriangle, RefreshCw, Check, X,
   Info, Settings2, Lock, KeyRound, RotateCcw, Copy, Monitor
 } from 'lucide-react';
-import { rolePermissionsApi } from '../../api/rolePermissionsApi';
+import { rolePermissionsApi } from '@billbull/shared/api/rolePermissionsApi';
 import { usersApi } from '../../api/usersApi';
-import { usePermissions } from '../../context/PermissionContext';
+import { usePermissions } from '@billbull/shared/context/PermissionContext';
 
 // ─── Module definitions ────────────────────────────────────────────────────
 // Keep in sync with backend security/ModuleCatalog.java

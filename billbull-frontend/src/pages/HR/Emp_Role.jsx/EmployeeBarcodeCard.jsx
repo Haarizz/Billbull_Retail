@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import JsBarcode from 'jsbarcode';
 import { X, Printer, Loader2, AlertTriangle } from 'lucide-react';
-import { useBranch } from '../../../context/BranchContext';
-import { useCompany } from '../../../context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
 import { buildZplBatch } from '../../../utils/zebraZpl';
 import {
   resolveLabelPrinter, sendZplToLabelPrinter, LabelPrinterError,

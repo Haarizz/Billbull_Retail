@@ -131,7 +131,17 @@ public class DeliveryNoteService {
     }
 
     private DeliveryNoteResponse toResponse(DeliveryNote dn) {
-        hydrateDeliveryItemDisplayData(dn);
+        return toResponse(dn, true);
+    }
+
+    /**
+     * {@code withItems=false} builds the header only (no product/batch lookups) — the list
+     * page searches and pages those, then maps just the visible rows in full.
+     */
+    private DeliveryNoteResponse toResponse(DeliveryNote dn, boolean withItems) {
+        if (withItems) {
+            hydrateDeliveryItemDisplayData(dn);
+        }
 
         DeliveryNoteResponse r = new DeliveryNoteResponse();
 
@@ -181,6 +191,11 @@ public class DeliveryNoteService {
         r.totalBoxes = dn.getTotalBoxes();
 
         r.status = dn.getStatus();
+
+        if (!withItems) {
+            r.items = List.of();
+            return r;
+        }
 
         r.items = dn.getItems().stream().map(item -> {
             DeliveryNoteItemResponse ir = new DeliveryNoteItemResponse();
@@ -289,30 +304,48 @@ public class DeliveryNoteService {
 
     @Transactional(readOnly = true)
     public List<DeliveryNoteResponse> list() {
-        List<DeliveryNote> deliveryNotes = new ArrayList<>(
-                ownershipAccessService.filterOwned(
-                        branchAccessService.filterBranchScoped(repo.findAll(), DeliveryNote::getBranchId),
-                        DeliveryNote::getCreatedByUserId));
-        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
-                deliveryNotes,
-                DeliveryNote::getDnDate,
-                DeliveryNote::getDnNumber,
-                DeliveryNote::getId);
-        return deliveryNotes.stream().map(this::toResponse).toList();
+        return listScoped(null, null).stream().map(this::toResponse).toList();
     }
 
     @Transactional(readOnly = true)
     public List<DeliveryNoteResponse> listByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        return listScoped(from, to).stream().map(this::toResponse).toList();
+    }
+
+    /**
+     * The list tab's page: searches and pages header-only responses, then maps only the
+     * visible rows with their items (product and batch-selection lookups per line).
+     * A null range means every delivery note.
+     */
+    @Transactional(readOnly = true)
+    public com.billbull.backend.util.PageResponse<DeliveryNoteResponse> page(
+            java.time.LocalDate from, java.time.LocalDate to, int page, int size, String search, String status) {
+        List<DeliveryNote> deliveryNotes = listScoped(from, to);
+        Map<Long, DeliveryNote> byId = new HashMap<>();
+        deliveryNotes.forEach(dn -> byId.put(dn.getId(), dn));
+        return com.billbull.backend.util.PaginationUtil.paginate(
+                deliveryNotes.stream().map(dn -> toResponse(dn, false)).toList(),
+                page, size, search, status,
+                rows -> rows.stream().map(r -> toResponse(byId.get(r.id))).toList());
+    }
+
+    /** Branch/ownership-scoped, sorted delivery notes; a null range means all of them. */
+    private List<DeliveryNote> listScoped(java.time.LocalDate from, java.time.LocalDate to) {
+        boolean ranged = from != null && to != null;
         List<DeliveryNote> deliveryNotes = new ArrayList<>(
                 ownershipAccessService.filterOwned(
-                        branchAccessService.filterBranchScoped(repo.findByDnDateBetween(from, to), DeliveryNote::getBranchId),
+                        branchAccessService.filterBranchScoped(
+                                ranged ? repo.findByDnDateBetween(from, to) : repo.findAll(),
+                                DeliveryNote::getBranchId),
                         DeliveryNote::getCreatedByUserId));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
-                deliveryNotes,
-                DeliveryNote::getDnDate,
-                DeliveryNote::getDnNumber,
-                DeliveryNote::getId);
-        return deliveryNotes.stream().map(this::toResponse).toList();
+        if (ranged) {
+            DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                    deliveryNotes, DeliveryNote::getDnDate, DeliveryNote::getDnNumber, DeliveryNote::getId);
+        } else {
+            DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                    deliveryNotes, DeliveryNote::getDnDate, DeliveryNote::getDnNumber, DeliveryNote::getId);
+        }
+        return deliveryNotes;
     }
 
     @Transactional(readOnly = true)

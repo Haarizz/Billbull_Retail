@@ -7,15 +7,15 @@ import {
 import RecordPreviewShell from './RecordPreviewShell';
 import PaymentHistorySection from './PaymentHistorySection';
 import SalesOrderItemsTable from './SalesOrderItemsTable';
-import { getSalesOrderById } from '../../../api/salesorderApi';
+import { getSalesOrderById } from '@billbull/shared/api/salesorderApi';
 import { useSalesOrderReceipts } from '../../../hooks/useSalesOrderReceipts';
 import { getSalesOrderStatusBadge, resolveSalesOrderSourceType } from '../utils/salesOrderStatusBadge';
 import { getAvailableSalesOrderActions } from '../utils/salesOrderActionRules';
 import { buildSalesOrderTimeline } from '../utils/buildSalesOrderTimeline';
 import { resolveCustomer, resolveDefaultShippingAddress } from '../../../utils/customerResolution';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { copyToClipboard } from '../../../utils/clipboard';
-import CurrencyAmount from '../../../components/CurrencyAmount';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import { usePermission } from '../../../hooks/usePermission';
 
 const isTypingTarget = (el) => Boolean(el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable));

@@ -1,4 +1,4 @@
-import api from './axiosConfig';
+import api from '@billbull/shared/api/axiosConfig';
 
 // Back-office "POS Reports" module — read-only browser over already-generated, immutable
 // X-Report / Z-Report snapshots (see backend PosReportsController). List calls return

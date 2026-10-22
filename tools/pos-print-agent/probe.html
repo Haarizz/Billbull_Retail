@@ -19,11 +19,18 @@
 </head>
 <body>
 <h1>BillBull POS-80C ESC/POS Capability Probe</h1>
-<p>Run this <b>on the till</b> that has the POS-80C attached, with the BillBull print agent (v0.5.0+) running. It (1) verifies the byte stream reaches the agent uncorrupted, and (2) prints one slip per binary opcode so we can see which the firmware actually supports.</p>
+<p>Run this <b>on the till</b> that has the POS-80C attached. It (1) verifies the byte stream reaches the agent uncorrupted, and (2) prints one slip per binary opcode so we can see which the firmware actually supports.</p>
+<p>Agent 0.6.0+: switch diagnostics on (<code>BillBullPrintAgent.exe --diagnostics on</code>), open this page from the agent at <code>http://127.0.0.1:19777/diagnostics/probe</code>, and pair it once (step 0). Switch diagnostics off afterwards.</p>
 
 <div class="row">
   Agent: <input id="agent" value="http://127.0.0.1:19777" size="26" />
   &nbsp; Printer name: <input id="printer" value="POS-80C" size="18" />
+</div>
+
+<div class="row">
+  <button onclick="pairStart()">0. Pair this page</button>
+  Code from the tray: <input id="paircode" size="8" inputmode="numeric" />
+  <button class="secondary" onclick="pairComplete()">Confirm code</button>
 </div>
 
 <div class="row">
@@ -63,6 +70,33 @@ const log = (msg, cls) => { const p = $('out'); p.innerHTML += `\n${cls ? `<span
 const clear = () => { $('out').textContent = ''; };
 const agent = () => $('agent').value.replace(/\/+$/, '');
 const printer = () => $('printer').value.trim();
+if (location.protocol === 'http:' && location.port) $('agent').value = location.origin;
+
+// Agent 0.6.0+ requires a pairing token; kept for this tab only.
+const TOKEN_KEY = 'billbull.probe.token';
+const api = (path, init = {}) => {
+  const token = sessionStorage.getItem(TOKEN_KEY);
+  return fetch(`${agent()}${path}`, {
+    ...init,
+    headers: { ...(init.headers || {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+};
+let pairingId = null;
+async function pairStart() {
+  clear();
+  const r = await api('/pair/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: 'probe.html' }) });
+  const j = await r.json();
+  if (!r.ok) return log(`Pairing refused: ${j.message}`, 'bad');
+  pairingId = j.pairingId;
+  log('Enter the 6-digit code the agent shows in its tray notification / tray menu, then Confirm.');
+}
+async function pairComplete() {
+  const r = await api('/pair/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pairingId, code: $('paircode').value.trim() }) });
+  const j = await r.json();
+  if (!r.ok) return log(`Pairing failed: ${j.message}`, 'bad');
+  sessionStorage.setItem(TOKEN_KEY, j.token);
+  log('Paired.', 'ok');
+}
 
 const ESC = 0x1b, GS = 0x1d;
 
@@ -142,11 +176,12 @@ async function sha256Hex(bytes) {
 async function checkHealth() {
   clear();
   try {
-    const r = await fetch(`${agent()}/health`);
+    const r = await api(`/health`);
     const j = await r.json();
     log(`Agent: ${JSON.stringify(j)}`, j.version >= '0.5.0' ? 'ok' : 'bad');
     if (j.version < '0.5.0') log('This build predates the probe endpoints — update the agent to 0.5.0+.', 'bad');
-    const pr = await (await fetch(`${agent()}/printers`)).json();
+    const pr = await (await api(`/printers`)).json();
+    if (pr.code) log(`${pr.code}: ${pr.message}`, 'bad');
     log('\nPrinters seen by agent:');
     for (const p of pr.printers || []) log(`  • ${p.Name}  [${p.DriverName}]  ${p.StatusLabel}`);
     if (!(pr.printers || []).some(p => p.Name === printer())) log(`\n"${printer()}" not found — set the exact Name above.`, 'bad');
@@ -170,7 +205,7 @@ async function integrityTest() {
   log(`Browser generated:  ${stream.length} bytes`);
   log(`Browser SHA-256:    ${localHash}`);
   try {
-    const r = await fetch(`${agent()}/probe/echo`, {
+    const r = await api(`/probe/echo`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dataBase64 }),
     });
@@ -187,7 +222,7 @@ async function runProbe() {
   clear();
   log('Sending 5 probe slips to ' + printer() + ' …');
   try {
-    const r = await fetch(`${agent()}/probe/capabilities`, {
+    const r = await api(`/probe/capabilities`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ printerName: printer() }), // qrData omitted → long multi-line payload
     });
@@ -253,7 +288,7 @@ async function printRealLogo() {
 
   for (const [name, stream] of variants) {
     try {
-      const r = await fetch(`${agent()}/print/escpos`, {
+      const r = await api(`/print/escpos`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ printerName: printer(), dataBase64: b64(stream) }),
       });
@@ -343,7 +378,7 @@ async function printArabic() {
 
   for (const [name, stream] of [['A: plain text (?????)', streamA], ['B: raster (Arabic)', streamB]]) {
     try {
-      const r = await fetch(`${agent()}/print/escpos`, {
+      const r = await api(`/print/escpos`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ printerName: printer(), dataBase64: b64(stream) }),
       });

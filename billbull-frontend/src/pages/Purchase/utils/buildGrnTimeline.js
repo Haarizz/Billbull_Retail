@@ -1,4 +1,4 @@
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 
 // Builds a GRN receipt/QC timeline from data already on the fetched entity:
 // created → QC submitted → QC completed → posted. No fabricated events.

@@ -1,4 +1,4 @@
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 
 // Builds a fulfillment timeline for a delivery note from data already on the
 // fetched entity — created → dispatched → delivered (with receiver), plus any

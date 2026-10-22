@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getSalesOrderReceiptVouchers } from '../api/salesorderApi';
+import { getSalesOrderReceiptVouchers } from '@billbull/shared/api/salesorderApi';
 
 // Fetches the advance receipt vouchers tied to a sales order and maps them into
 // the same row shape PaymentHistorySection consumes (shared with the Sales

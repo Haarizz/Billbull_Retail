@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Undo2, X, Loader2, AlertCircle, AlertTriangle } from 'lucide-react';
-import CurrencyAmount from '../../../../components/CurrencyAmount';
-import { C } from '../constants';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { C } from '@billbull/shared/pages/Sales/SalesReturn/constants';
 
 /**
  * Reversal of an approved Sales Return.

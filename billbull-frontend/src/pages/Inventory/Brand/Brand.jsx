@@ -11,19 +11,19 @@ import SearchableDropdown from "../../../components/SearchableDropdown";
 import PaginationFooter from "../../../components/common/PaginationFooter";
 
 // --- API IMPORTS ---
-import { getImageUrl } from "../../../utils/urlUtils";
+import { getImageUrl } from "@billbull/shared/utils/urlUtils";
 import {
   getBrands,
   createBrand,
   updateBrand,
   deleteBrand,
   exportBrands
-} from "../../../api/brandsApi";
+} from "@billbull/shared/api/brandsApi";
 import {
   getCountryOptions,
   normalizeCountryValue,
   withFallbackOption
-} from "../../../utils/countryCurrencyOptions";
+} from "@billbull/shared/utils/countryCurrencyOptions";
 
 const LOGO_EXTENSIONS = [".jpg", ".jpeg", ".png", ".svg"];
 const LOGO_MIME_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/svg+xml"];

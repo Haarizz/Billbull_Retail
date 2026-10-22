@@ -106,11 +106,12 @@ public class PosCashMovementService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<PosCashMovementResponse> list(Long branchId, Long sessionId, PosCashMovementStatus status,
+    public PageResponse<PosCashMovementResponse> list(com.billbull.backend.settings.branch.BranchAccessService.ListScope scope,
+                                                        Long branchId, Long sessionId, PosCashMovementStatus status,
                                                         PosCashMovementType movementType, LocalDate fromDate,
                                                         LocalDate toDate, String performedBy, int page, int size) {
         Pageable pageable = PageRequest.of(Math.max(page, 0), size <= 0 ? 20 : size);
-        Page<PosCashMovement> result = repo.search(branchId, sessionId, status, movementType, fromDate, toDate,
+        Page<PosCashMovement> result = repo.search(scope.allBranches(), scope.branchIds(), branchId, sessionId, status, movementType, fromDate, toDate,
                 performedBy, pageable);
         
         List<PosCashMovement> contentEntities = result.getContent().stream()
@@ -133,6 +134,12 @@ public class PosCashMovementService {
                 entity.getId(),
                 entity);
         return withCategoryNames(List.of(PosCashMovementResponse.from(entity))).get(0);
+    }
+
+    /** The stored movement's branch, for the controller's scope check; 404 when it does not exist. */
+    @Transactional(readOnly = true)
+    public Long branchIdOf(Long id) {
+        return getEntity(id).getBranchId();
     }
 
     private PosCashMovement getEntity(Long id) {

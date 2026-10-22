@@ -1,13 +1,13 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, Plus, X, Box, Loader2, ChevronLeft, ChevronRight, Clock, Folder, Package, Tag } from 'lucide-react';
-import { getImageUrl } from '../utils/urlUtils';
-import { getProductsList, getProductById } from '../api/productsApi';
-import QuickAddProductModal from './inventory/QuickAddProductModal';
-import CurrencyAmount from './CurrencyAmount';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
+import { getProductsList, getProductById } from '@billbull/shared/api/productsApi';
+import QuickAddProductModal from '@billbull/shared/components/inventory/QuickAddProductModal';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import toast from 'react-hot-toast';
 import { pickSalesItemPrice } from '../utils/salesPricing';
-import { useBranch } from '../context/BranchContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 const PAGE_SIZE = 15;
 const RECENT_KEY = 'billbull_recent_products';
 const MAX_RECENT = 5;

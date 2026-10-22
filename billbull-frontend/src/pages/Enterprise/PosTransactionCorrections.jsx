@@ -3,8 +3,8 @@ import {
   Plus, Search, Loader2, ArrowLeftRight, X, CheckCircle2, XCircle, Send, PlayCircle, Ban, Clock, Eye, AlertTriangle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { usePermissions } from '../../context/PermissionContext';
-import { searchCustomersAllFields } from '../../api/customerledgerApi';
+import { usePermissions } from '@billbull/shared/context/PermissionContext';
+import { searchCustomersAllFields } from '@billbull/shared/api/customerledgerApi';
 import { getActivePaymentMethods } from '../../api/financialReportsBackendApi';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import SearchSelect from '../../components/common/SearchSelect';

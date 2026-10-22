@@ -20,7 +20,7 @@ import {
     reopenAccountingPeriod
 } from '../../api/accountingPeriodApi';
 import * as backendApi from '../../api/financialReportsBackendApi';
-import { getAccounts, getOpeningBalanceLocks, saveOpeningBalances } from '../../api/ledgerApi';
+import { getAccounts, getOpeningBalanceLocks, saveOpeningBalances } from '@billbull/shared/api/ledgerApi';
 import toast from 'react-hot-toast';
 
 const FinancialConfig = () => {

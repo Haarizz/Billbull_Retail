@@ -7,11 +7,11 @@ import {
   DialogContent,
   DialogDescription,
   DialogTitle,
-} from "../ui/dialog";
-import { ScrollArea } from "../ui/scroll-area";
-import { Separator } from "../ui/separator";
+} from "@billbull/shared/components/ui/dialog";
+import { ScrollArea } from "@billbull/shared/components/ui/scroll-area";
+import { Separator } from "@billbull/shared/components/ui/separator";
 import { Skeleton } from "../ui/skeleton";
-import { cn } from "../ui/utils";
+import { cn } from "@billbull/shared/components/ui/utils";
 
 import {
   GLOBAL_SEARCH_CATEGORIES,
@@ -24,11 +24,11 @@ import {
   isCategorySupported,
 } from "../../api/globalSearchApi";
 import { navigateToSearchResult } from "../../utils/entityNavigation";
-import { usePermissions } from "../../context/PermissionContext";
-import CompanyContext from "../../context/CompanyContext";
+import { usePermissions } from "@billbull/shared/context/PermissionContext";
+import CompanyContext from "@billbull/shared/context/CompanyContext";
 import useGlobalSearchShortcut from "../../hooks/useGlobalSearchShortcut";
 import useEntityDetail from "../../hooks/useEntityDetail";
-import { resolveCurrencyDisplayCode } from "../../utils/countryCurrencyOptions";
+import { resolveCurrencyDisplayCode } from "@billbull/shared/utils/countryCurrencyOptions";
 import ProductDetailPanel from "./details/ProductDetailPanel";
 import LedgerDetailPanel from "./details/LedgerDetailPanel";
 import CustomerDetailPanel from "./details/CustomerDetailPanel";

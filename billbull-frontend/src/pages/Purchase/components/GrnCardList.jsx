@@ -1,7 +1,7 @@
 import React from 'react';
 import { Search, FileX, Warehouse as WarehouseIcon } from 'lucide-react';
-import CurrencyAmount from '../../../components/CurrencyAmount';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { getGrnStatusBadge, getInvStatusBadge } from '../utils/grnStatusBadge';
 
 // Compact GRN card for the Transaction Preview's left column.

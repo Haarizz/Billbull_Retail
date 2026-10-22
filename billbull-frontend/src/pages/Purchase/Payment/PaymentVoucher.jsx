@@ -25,23 +25,23 @@ import {
     Printer
 } from 'lucide-react';
 import SearchableDropdown from '../../../components/SearchableDropdown';
-import { useCompany } from '../../../context/CompanyContext';
-import { useBranch } from '../../../context/BranchContext';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 
 // Printing Utilities
-import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../../utils/printGenerator';
-import billBullLogo from '../../../assets/billBullLogo.png';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '@billbull/shared/utils/printGenerator';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 import toast from 'react-hot-toast';
 import {
     buildPaymentVoucherPrintData,
     findVendorRecord,
     resolvePurchasePrintTemplate
 } from '../../../utils/purchasePrintUtils';
-import { formatCurrencyDisplay } from '../../../utils/countryCurrencyOptions';
-import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
+import { formatCurrencyDisplay } from '@billbull/shared/utils/countryCurrencyOptions';
+import CurrencyAmount, { CurrencySymbol } from '@billbull/shared/components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import { getListSerialNumber } from '../../../utils/serialNumbering';
 
@@ -57,7 +57,7 @@ import {
     updateVoucherStatus
 } from '../../../api/paymentApi';
 import { getVendors } from '../../../api/vendorsApi';
-import { getBankAccounts } from '../../../api/ledgerApi';
+import { getBankAccounts } from '@billbull/shared/api/ledgerApi';
 import PaymentVoucherPreviewSplitView from '../components/PaymentVoucherPreviewSplitView';
 
 // ==========================================
@@ -84,12 +84,15 @@ const formatModeString = (mode) => {
 const formatStatusString = (status) => {
     if (!status) return "Unknown";
     if (status === 'PENDING_APPROVAL') return 'Pending Approval';
+    if (status === 'CHEQUE_PENDING') return 'Cheque Pending';
     return status.charAt(0) + status.slice(1).toLowerCase();
 };
 
 const getStatusColor = (status) => {
-    const s = status ? status.toUpperCase() : "";
+    const s = status ? status.toUpperCase().replace(/ /g, '_') : "";
     if (s === 'PENDING_APPROVAL') return "bg-amber-100 text-amber-700 border-amber-200";
+    // Allotted by cheque in Pay Invoices; posted when the cheque is issued in Financials → Pay Cheques.
+    if (s === 'CHEQUE_PENDING') return "bg-violet-100 text-violet-700 border-violet-200";
     if (s === 'POSTED') return "bg-emerald-100 text-emerald-700 border-emerald-200";
     if (s === 'CLEARED') return "bg-green-100 text-green-700 border-green-200";
     if (s === 'REJECTED') return "bg-red-100 text-red-700 border-red-200";
@@ -685,7 +688,8 @@ const PaymentVoucher = () => {
                 ...inv,
                 grandTotal: Number(inv.grandTotal || 0),
                 amountPaid: Number(inv.amountPaid || 0),
-                balanceDue: Number(inv.balanceDue ?? inv.grandTotal ?? 0),
+                // Amounts already allotted to a cheque that is not issued yet are not available again.
+                balanceDue: Number(inv.balanceDue ?? inv.grandTotal ?? 0) - Number(inv.chequeReserved || 0),
             }))
             .filter(inv =>
                 (inv.vendorId === vendor.code || inv.vendorName === vendor.name || inv.vendor === vendor.name) &&
@@ -695,9 +699,9 @@ const PaymentVoucher = () => {
         const openingBal = parseFloat(vendor.openingBalance || 0);
         // Outstanding OB = opening balance minus on-account payments already posted.
         // Falls back to the raw opening balance if the API hasn't supplied it.
-        const openingOutstanding = vendor.openingBalanceOutstanding != null
+        const openingOutstanding = (vendor.openingBalanceOutstanding != null
             ? parseFloat(vendor.openingBalanceOutstanding)
-            : openingBal;
+            : openingBal) - parseFloat(vendor.openingBalanceChequeReserved || 0);
         if (openingOutstanding > 0) {
             filtered.unshift({
                 id: `OB-${vendor.id || vendor.code}`,
@@ -808,7 +812,9 @@ const PaymentVoucher = () => {
                 }
             }));
 
-            alert('Payment processed successfully!');
+            alert(paymentMethod === 'Cheque'
+                ? 'Cheque payment allotted. Create and issue the cheque in Financials → Pay Cheques; the ledger posts when the cheque is issued and paid.'
+                : 'Payment processed successfully!');
             setSelectedInvoices({});
             setSettleAmounts({});
             setReceivedAmount('');

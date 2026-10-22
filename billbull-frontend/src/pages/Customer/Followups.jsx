@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { getInquiries, addFollowUp, updateInquiry } from '../../api/customerApi';
 import { getAllQuotations } from '../../api/quotationApi';
-import { getAllSalesOrders } from '../../api/salesorderApi';
-import { getProductById } from '../../api/productsApi';
+import { getAllSalesOrders } from '@billbull/shared/api/salesorderApi';
+import { getProductById } from '@billbull/shared/api/productsApi';
 import { useNavigate } from 'react-router-dom';
 import {
     Calendar, Clock, CheckCircle, AlertCircle, FileText, Activity,
@@ -14,8 +14,8 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
     PieChart, Pie, Cell, Legend, LineChart, Line
 } from 'recharts';
-import { useBranch } from '../../context/BranchContext';
-import CurrencyAmount from '../../components/CurrencyAmount';
+import { useBranch } from '@billbull/shared/context/BranchContext';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import PaginationFooter from '../../components/common/PaginationFooter';
 
 const Followups = () => {

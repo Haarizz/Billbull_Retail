@@ -254,6 +254,17 @@ public class SalesInvoiceService {
      * Used by the sales screen to show "Previous Outstanding" before a new invoice.
      */
     public Map<String, Object> getCustomerOutstanding(String customerCode) {
+        // A customer outside the caller's branch scope (the customer search rule) reads as a
+        // customer with nothing owing, the same answer an unknown code gets.
+        if (customerRepository.codesInScope(java.util.Collections.singletonList(customerCode),
+                branchAccessService.currentSearchScope()).isEmpty()) {
+            Map<String, Object> none = new java.util.HashMap<>();
+            none.put("outstanding", 0.0);
+            none.put("invoiceOutstanding", 0.0);
+            none.put("openingBalance", 0.0);
+            none.put("lastPurchaseDate", null);
+            return none;
+        }
         Double invoiceOutstanding = invoiceRepo.findOutstandingBalanceByCustomerCode(customerCode);
         double invoiceAmt = invoiceOutstanding != null ? invoiceOutstanding : 0.0;
 
@@ -1274,42 +1285,68 @@ public class SalesInvoiceService {
     // ----------------------------
     @Transactional(readOnly = true)
     public List<SalesInvoice> getAll() {
-        List<SalesInvoice> invoices = new ArrayList<>(
-                ownershipAccessService.filterOwned(
-                        branchAccessService.filterBranchScoped(invoiceRepo.findAll(), SalesInvoice::getBranchId),
-                        SalesInvoice::getCreatedByUserId));
-        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
-                invoices,
-                SalesInvoice::getInvoiceDate,
-                SalesInvoice::getInvoiceNumber,
-                SalesInvoice::getId);
-
-        invoices.forEach(inv -> {
-            Hibernate.initialize(inv.getItems());
-            enrichItems(inv.getItems());
-            applyBatchSelectionSummary(inv);
-        });
-
+        List<SalesInvoice> invoices = listScoped(null, null);
+        invoices.forEach(this::hydrateForList);
         return withCorrections(invoices);
     }
 
     @Transactional(readOnly = true)
     public List<SalesInvoice> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<SalesInvoice> invoices = listScoped(from, to);
+        invoices.forEach(this::hydrateForList);
+        return withCorrections(invoices);
+    }
+
+    /**
+     * The list tab's page. Scopes, sorts, searches and pages the bare rows, then enriches only
+     * the visible page — enriching the whole range first cost a product lookup per line and a
+     * batch-selection read per invoice for rows that were then thrown away.
+     * A null range means every invoice (sorted by number, as {@link #getAll()}).
+     */
+    @Transactional(readOnly = true)
+    public com.billbull.backend.util.PageResponse<SalesInvoice> getPage(
+            java.time.LocalDate from, java.time.LocalDate to, int page, int size, String search, String status) {
+        List<SalesInvoice> invoices = listScoped(from, to);
+        boolean filtering = (search != null && !search.isBlank()) || (status != null && !status.isBlank());
+        // POS corrections rewrite header fields (customer, payment mode) that search matches on.
+        List<SalesInvoice> candidates = filtering ? withCorrections(invoices) : invoices;
+        return com.billbull.backend.util.PaginationUtil.paginate(candidates, page, size, search, status, rows -> {
+            // Corrected rows are detached, so reload the page managed to reach its LAZY items.
+            List<Long> ids = rows.stream().map(SalesInvoice::getId).toList();
+            Map<Long, SalesInvoice> loaded = new HashMap<>();
+            invoiceRepo.findAllById(ids).forEach(inv -> loaded.put(inv.getId(), inv));
+            List<SalesInvoice> pageRows = ids.stream()
+                    .map(loaded::get)
+                    .filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+            pageRows.forEach(this::hydrateForList);
+            return withCorrections(pageRows);
+        });
+    }
+
+    /** Branch/ownership-scoped, sorted, un-enriched invoices; a null range means all of them. */
+    private List<SalesInvoice> listScoped(java.time.LocalDate from, java.time.LocalDate to) {
+        boolean ranged = from != null && to != null;
         List<SalesInvoice> invoices = new ArrayList<>(
                 ownershipAccessService.filterOwned(
-                        branchAccessService.filterBranchScoped(invoiceRepo.findByInvoiceDateBetween(from, to), SalesInvoice::getBranchId),
+                        branchAccessService.filterBranchScoped(
+                                ranged ? invoiceRepo.findByInvoiceDateBetween(from, to) : invoiceRepo.findAll(),
+                                SalesInvoice::getBranchId),
                         SalesInvoice::getCreatedByUserId));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
-                invoices,
-                SalesInvoice::getInvoiceDate,
-                SalesInvoice::getInvoiceNumber,
-                SalesInvoice::getId);
-        invoices.forEach(inv -> {
-            Hibernate.initialize(inv.getItems());
-            enrichItems(inv.getItems());
-            applyBatchSelectionSummary(inv);
-        });
-        return withCorrections(invoices);
+        if (ranged) {
+            DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                    invoices, SalesInvoice::getInvoiceDate, SalesInvoice::getInvoiceNumber, SalesInvoice::getId);
+        } else {
+            DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                    invoices, SalesInvoice::getInvoiceDate, SalesInvoice::getInvoiceNumber, SalesInvoice::getId);
+        }
+        return invoices;
+    }
+
+    private void hydrateForList(SalesInvoice inv) {
+        Hibernate.initialize(inv.getItems());
+        enrichItems(inv.getItems());
+        applyBatchSelectionSummary(inv);
     }
 
     // ----------------------------

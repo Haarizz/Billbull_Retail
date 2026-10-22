@@ -8,7 +8,7 @@
 // Adding a category later means appending one entry to SEARCH_SOURCES — the
 // orchestration below is category-agnostic.
 
-import api from "./axiosConfig";
+import api from "@billbull/shared/api/axiosConfig";
 
 // ==================== CATEGORIES ====================
 

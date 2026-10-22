@@ -101,6 +101,8 @@ class PosCheckoutBusinessDateTest {
     // cover authorization and audit, not receipt content.
     @Mock private InvoiceCustomerContactService invoiceCustomerContactService;
 
+    // Till permission (sales.pos) check on every till endpoint; a bare mock grants it.
+    @Mock private com.billbull.backend.security.ModulePermissionService modulePermissionService;
     @InjectMocks private PosCheckoutController controller;
 
     private AutoCloseable mocks;

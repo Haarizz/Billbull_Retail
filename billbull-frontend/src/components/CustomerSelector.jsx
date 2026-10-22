@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { Search, X, Plus, User, Check, Phone, Mail, MapPin, ChevronDown } from 'lucide-react';
-import { createCustomer, CUSTOMER_GROUPS } from '../api/customerledgerApi';
-import { useBranch } from '../context/BranchContext';
+import { createCustomer, CUSTOMER_GROUPS } from '@billbull/shared/api/customerledgerApi';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import toast from 'react-hot-toast';
 
 // ==========================================

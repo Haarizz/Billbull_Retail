@@ -4,10 +4,10 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
-} from "../../components/ui/card";
-import { Button } from "../../components/ui/button";
-import { Input } from "../../components/ui/input";
-import { Label } from "../../components/ui/label";
+} from "@billbull/shared/components/ui/card";
+import { Button } from "@billbull/shared/components/ui/button";
+import { Input } from "@billbull/shared/components/ui/input";
+import { Label } from "@billbull/shared/components/ui/label";
 import {
   Table,
   TableBody,
@@ -15,22 +15,22 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "../../components/ui/table";
+} from "@billbull/shared/components/ui/table";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../../components/ui/select";
-import { Badge } from "../../components/ui/badge";
+} from "@billbull/shared/components/ui/select";
+import { Badge } from "@billbull/shared/components/ui/badge";
 import { Calendar } from "../../components/ui/calendar";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "../../components/ui/popover";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@billbull/shared/components/ui/tabs";
 import {
   BarChart,
   Bar,
@@ -77,7 +77,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { format, subMonths, subDays, subYears } from "date-fns";
-import { cn } from "../../components/ui/utils";
+import { cn } from "@billbull/shared/components/ui/utils";
 import { RevenueExpenseAnalytics } from "./revenue-expense-analytics";
 
 // Types

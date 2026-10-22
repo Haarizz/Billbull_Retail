@@ -110,6 +110,8 @@ class PosCheckoutControllerTest {
     @Mock private com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
     @Mock private com.billbull.backend.hr.employees.SalespersonService salespersonService;
 
+    // Till permission (sales.pos) check on every till endpoint; a bare mock grants it.
+    @Mock private com.billbull.backend.security.ModulePermissionService modulePermissionService;
     @InjectMocks private PosCheckoutController controller;
 
     /** The real settlement collaborator wired in {@link #setUp()} — kept as a field so the

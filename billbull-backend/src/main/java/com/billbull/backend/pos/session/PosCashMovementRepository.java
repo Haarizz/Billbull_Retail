@@ -41,8 +41,11 @@ public interface PosCashMovementRepository extends JpaRepository<PosCashMovement
                                                           @Param("status") PosCashMovementStatus status);
 
     /** Back-office list/filter for the Cash Drop / Outs module. Every filter is optional
-     *  (null = don't filter on it). */
+     *  (null = don't filter on it). {@code allBranches}/{@code branchIds} is the caller's branch
+     *  scope ({@code BranchAccessService.ListScope}), applied in the query so a null
+     *  {@code branchId} cannot widen the result and pagination stays exact. */
     @Query("SELECT m FROM PosCashMovement m WHERE "
+            + "(:allBranches = true OR m.branchId IS NULL OR m.branchId IN :branchIds) AND "
             + "(:branchId IS NULL OR m.branchId = :branchId) AND "
             + "(:sessionId IS NULL OR m.posSession.id = :sessionId) AND "
             + "(:status IS NULL OR m.status = :status) AND "
@@ -51,7 +54,9 @@ public interface PosCashMovementRepository extends JpaRepository<PosCashMovement
             + "(:toDate IS NULL OR m.businessDate <= :toDate) AND "
             + "(:performedBy IS NULL OR m.performedBy = :performedBy) "
             + "ORDER BY m.performedAt DESC")
-    Page<PosCashMovement> search(@Param("branchId") Long branchId,
+    Page<PosCashMovement> search(@Param("allBranches") boolean allBranches,
+                                  @Param("branchIds") java.util.Collection<Long> branchIds,
+                                  @Param("branchId") Long branchId,
                                   @Param("sessionId") Long sessionId,
                                   @Param("status") PosCashMovementStatus status,
                                   @Param("movementType") PosCashMovementType movementType,

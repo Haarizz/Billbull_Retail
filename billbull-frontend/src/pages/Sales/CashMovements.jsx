@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Banknote, Eye, Pencil, Ban, Plus, X } from "lucide-react";
-import { useBranch } from "../../context/BranchContext";
-import { usePermissions } from "../../context/PermissionContext";
+import { useBranch } from "@billbull/shared/context/BranchContext";
+import { usePermissions } from "@billbull/shared/context/PermissionContext";
 import PaginationFooter from "../../components/common/PaginationFooter";
 import {
   getPosCashMovements,
@@ -11,7 +11,7 @@ import {
   voidPosCashMovement,
   getCashMovementEligibleSessions,
 } from "../../api/posCashMovementApi";
-import { getSelectableCategories } from "../../api/posCashMovementCategoryApi";
+import { getSelectableCategories } from "@billbull/shared/api/posCashMovementCategoryApi";
 
 const MOVEMENT_TYPES = ["DROP_IN", "DROP_OUT"];
 const STATUSES = ["ACTIVE", "VOIDED"];

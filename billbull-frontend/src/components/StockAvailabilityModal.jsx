@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Box, X, RotateCcw, AlertTriangle } from 'lucide-react';
-import { getImageUrl } from '../utils/urlUtils';
-import { getStockAvailability } from '../api/stockAvailabilityApi';
-import { formatDisplayDate } from '../utils/dateUtils';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
+import { getStockAvailability } from '@billbull/shared/api/stockAvailabilityApi';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 
 const StockAvailabilityModal = ({ isOpen, onClose, selectedStockItem }) => {
     const [locations, setLocations] = useState([]);

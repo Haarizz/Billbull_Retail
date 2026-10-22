@@ -3,6 +3,7 @@ import {
     ArrowLeft,
     Barcode,
     Check,
+    Languages,
     ChevronRight,
     Copy,
     Download,
@@ -25,13 +26,13 @@ import {
     deletePrintTemplate,
     getPrintTemplates,
     updatePrintTemplate
-} from "../../api/printTemplateApi";
+} from "@billbull/shared/api/printTemplateApi";
 import {
     DEFAULT_TEMPLATE_COLUMNS,
     DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
     sanitizeTemplateColumns,
     sanitizeTemplateDisplayOptions
-} from "../../utils/printTemplateConfig";
+} from "@billbull/shared/utils/printTemplateConfig";
 import { DocumentTemplateDesigner } from "../Purchase/Templates/DocumentTemplateDesigner";
 import { GRVTemplateDesigner } from "../Purchase/Templates/GRVTemplateDesigner";
 import { PaymentReceiptDesigner } from "../Purchase/Templates/PaymentReceiptDesigner";
@@ -42,11 +43,19 @@ import {
     CardContent
 } from "../Purchase/Templates/PurchaseTemplateUI";
 import { InvoiceOverlayDesigner } from "./Templates/InvoiceOverlayDesigner";
-import { PickListDesigner, defaultPickListSettings } from "./Templates/PickListDesigner";
+import { PickListDesigner } from "./Templates/PickListDesigner";
+import { defaultPickListSettings } from "@billbull/shared/utils/pickListDefaults";
 import {
     CustomerSoATemplateDesigner,
     defaultCustomerSoaTemplateSettings
 } from "./Templates/CustomerSoATemplateDesigner";
+import { StyledInvoiceDesigner } from "./Templates/StyledInvoiceDesigner";
+import {
+    SALES_INVOICE_LAYOUT_STYLES,
+    defaultStyledInvoiceSettings,
+    getSalesInvoiceLayoutStyle,
+    salesInvoiceLayoutStyleMeta
+} from "@billbull/shared/utils/salesInvoiceStyledLayouts";
 
 const TEMPLATE_TYPES = [
     {
@@ -461,7 +470,7 @@ const buildRendererColumns = (settings = {}, typeId) => {
 const buildPayload = ({ typeId, name, isDefault, settings }) => {
     const meta = typeMetaByType(typeId);
     const designerSettings = {
-        ...defaultSettingsFor(typeId, name),
+        ...(getSalesInvoiceLayoutStyle(settings) ? {} : defaultSettingsFor(typeId, name)),
         ...settings,
         templateName: settings.templateName || name || `Default ${meta.label}`
     };
@@ -643,11 +652,15 @@ export default function PrintEmailTemplates() {
 
     const getTemplatesByType = (typeId) => templates.filter((template) => template.type === typeId);
 
-    const openDesigner = (typeId, row = null) => {
+    // layoutStyle starts a NEW styled Sales Invoice (Minimal / Column / Elegant);
+    // an existing styled row carries its layoutStyle in its own settings.
+    const openDesigner = (typeId, row = null, layoutStyle = null) => {
         const meta = typeMetaByType(typeId);
         const settings = row?.settings && Object.keys(row.settings).length
             ? row.settings
-            : defaultSettingsFor(typeId, row?.name || `New ${meta.label} Template`);
+            : layoutStyle
+                ? defaultStyledInvoiceSettings(layoutStyle, salesInvoiceLayoutStyleMeta(layoutStyle)?.label)
+                : defaultSettingsFor(typeId, row?.name || `New ${meta.label} Template`);
         const templateName = row?.name || settings.templateName || `New ${meta.label} Template`;
 
         setActiveDesigner(typeId);
@@ -814,6 +827,10 @@ export default function PrintEmailTemplates() {
             onSave: (settings) => persistSave(activeDesigner, settings)
         };
 
+        const layoutStyle = getSalesInvoiceLayoutStyle(designerSettings);
+        if (layoutStyle) {
+            return <StyledInvoiceDesigner layoutStyle={layoutStyle} {...commonProps} />;
+        }
         if (meta.designer === "document") {
             return <DocumentTemplateDesigner docType={meta.docType} {...commonProps} />;
         }
@@ -839,6 +856,11 @@ export default function PrintEmailTemplates() {
                                 <h3 className="truncate text-sm font-bold text-slate-950">{row.name}</h3>
                                 {row.isDefault && (
                                     <span className="rounded bg-[#F5C742] px-1.5 py-0.5 text-[10px] font-bold leading-4 text-black">Default</span>
+                                )}
+                                {getSalesInvoiceLayoutStyle(row.settings) && (
+                                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-slate-600">
+                                        {salesInvoiceLayoutStyleMeta(row.settings.layoutStyle)?.label}
+                                    </span>
                                 )}
                                 <span className="rounded bg-[#FFF8DC] px-1.5 py-0.5 text-[10px] font-semibold capitalize leading-4 text-[#A16207]">
                                     {row.paperSize} {String(row.orientation || "Portrait").toLowerCase()}
@@ -916,6 +938,39 @@ export default function PrintEmailTemplates() {
                         <Button onClick={() => openDesigner(overlay.id)} className="h-8 w-full bg-[#F5C742] text-xs font-bold text-black hover:bg-[#e6b932]">
                             <Plus className="h-3.5 w-3.5" />
                             Create {overlay.label}
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
+        );
+    };
+
+    const renderLayoutStyleCard = (style) => {
+        const count = getTemplatesByType("sales-invoice")
+            .filter((row) => row.settings?.layoutStyle === style.id).length;
+
+        return (
+            <Card key={style.id} className={`${CARD_FRAME} overflow-hidden transition hover:border-[#C9D2DD] hover:shadow-[0_6px_18px_rgba(15,23,42,0.10)]`}>
+                <CardContent className="flex min-h-[150px] flex-col p-0">
+                    <div className="flex-1 p-4">
+                        <div className="mb-3 flex items-center gap-2">
+                            <div className={ICON_TILE}>
+                                {style.id === "elegant" ? <FileText className="h-5 w-5" /> : <Languages className="h-5 w-5" />}
+                            </div>
+                            <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-500">
+                                {style.id === "elegant" ? "English" : "EN / AR"}
+                            </span>
+                        </div>
+                        <h3 className="text-sm font-bold text-slate-950">{style.label}</h3>
+                        <p className="mt-1 text-xs leading-4 text-slate-600">{style.description}</p>
+                        <p className="mt-3 text-[11px] font-medium text-slate-500">
+                            {count} template{count === 1 ? "" : "s"}
+                        </p>
+                    </div>
+                    <div className="border-t border-[#E5EAF0] bg-white px-4 py-2.5">
+                        <Button onClick={() => openDesigner("sales-invoice", null, style.id)} className="h-8 w-full bg-[#F5C742] text-xs font-bold text-black hover:bg-[#e6b932]">
+                            <Plus className="h-3.5 w-3.5" />
+                            Create {style.label}
                         </Button>
                     </div>
                 </CardContent>
@@ -1024,6 +1079,18 @@ export default function PrintEmailTemplates() {
                             </Card>
                         )}
                     </div>
+
+                    {selectedType === "sales-invoice" && (
+                        <section className="space-y-4">
+                            <div>
+                                <h2 className="text-sm font-bold uppercase tracking-wide text-slate-950">Designed Layouts</h2>
+                                <p className="mt-1 text-sm text-slate-600">Ready-made A4 invoice styles. Templates you create from them appear above and can be set as the default.</p>
+                            </div>
+                            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                                {SALES_INVOICE_LAYOUT_STYLES.map(renderLayoutStyleCard)}
+                            </div>
+                        </section>
+                    )}
 
                     {overlayTypes.length > 0 && (
                         <section className="space-y-4">

@@ -256,6 +256,25 @@ mkdir -p /root/billbull/uploads/sportsgear
 
 ---
 
+## Phase 4b: Encryption Keys (All 8 Clients)
+
+Every backend refuses to start with a client profile unless `EMAIL_ENC_KEY` holds its own random key of at least 32 characters. It encrypts the stored SMTP password and WhatsApp tokens. Generate one per client; the guard never overwrites an existing key:
+
+```bash
+install -d -m 700 /etc/billbull
+umask 077
+for c in royaltools leroyalflowers leroyalgifts fashionhouse jewelrystore electronicshub beautyboutique sportsgear; do
+  [ -e /etc/billbull/$c.env ] || printf 'EMAIL_ENC_KEY=%s\n' "$(openssl rand -base64 48 | tr -d '\n')" > /etc/billbull/$c.env
+done
+chmod 600 /etc/billbull/*.env
+# Must print nothing (no two clients share a key):
+for f in /etc/billbull/*.env; do sed -n 's/^EMAIL_ENC_KEY=//p' "$f" | sha256sum; done | sort | uniq -d
+```
+
+Back the keys up in the team's password manager, separately from database backups. **Upgrading clients that already have saved Email or WhatsApp settings:** their secrets are encrypted under the old (development) key, so re-encrypt them before switching keys. Follow DEPLOYMENT_GUIDE.md, "Encryption Key (EMAIL_ENC_KEY)", Step 3.
+
+---
+
 ## Phase 5: Create Systemd Services (All 8 Clients)
 
 ### Client 1: Royal Tools
@@ -268,6 +287,7 @@ After=network.target postgresql.service
 [Service]
 User=root
 WorkingDirectory=/root/billbull/billbull-backend
+EnvironmentFile=/etc/billbull/royaltools.env
 ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=royaltools
 Restart=always
 RestartSec=10
@@ -289,6 +309,7 @@ After=network.target postgresql.service
 [Service]
 User=root
 WorkingDirectory=/root/billbull/billbull-backend
+EnvironmentFile=/etc/billbull/leroyalflowers.env
 ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=leroyalflowers
 Restart=always
 RestartSec=10
@@ -310,6 +331,7 @@ After=network.target postgresql.service
 [Service]
 User=root
 WorkingDirectory=/root/billbull/billbull-backend
+EnvironmentFile=/etc/billbull/leroyalgifts.env
 ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=leroyalgifts
 Restart=always
 RestartSec=10
@@ -331,6 +353,7 @@ After=network.target postgresql.service
 [Service]
 User=root
 WorkingDirectory=/root/billbull/billbull-backend
+EnvironmentFile=/etc/billbull/fashionhouse.env
 ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=fashionhouse
 Restart=always
 RestartSec=10
@@ -352,6 +375,7 @@ After=network.target postgresql.service
 [Service]
 User=root
 WorkingDirectory=/root/billbull/billbull-backend
+EnvironmentFile=/etc/billbull/jewelrystore.env
 ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=jewelrystore
 Restart=always
 RestartSec=10
@@ -373,6 +397,7 @@ After=network.target postgresql.service
 [Service]
 User=root
 WorkingDirectory=/root/billbull/billbull-backend
+EnvironmentFile=/etc/billbull/electronicshub.env
 ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=electronicshub
 Restart=always
 RestartSec=10
@@ -394,6 +419,7 @@ After=network.target postgresql.service
 [Service]
 User=root
 WorkingDirectory=/root/billbull/billbull-backend
+EnvironmentFile=/etc/billbull/beautyboutique.env
 ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=beautyboutique
 Restart=always
 RestartSec=10
@@ -415,6 +441,7 @@ After=network.target postgresql.service
 [Service]
 User=root
 WorkingDirectory=/root/billbull/billbull-backend
+EnvironmentFile=/etc/billbull/sportsgear.env
 ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=sportsgear
 Restart=always
 RestartSec=10
@@ -778,6 +805,7 @@ done
 - All clients use the same React frontend (shared at `/var/www/billbull`)
 - Each client has its own backend instance on unique port (8080-8087)
 - Each client has its own PostgreSQL database
+- Each client has its own `EMAIL_ENC_KEY` in `/etc/billbull/<client>.env`; losing or changing it without re-encrypting makes the saved Email/WhatsApp secrets unreadable
 - SSL certificates auto-renew every 60 days via Certbot
 - All services are configured to restart automatically on failure
 

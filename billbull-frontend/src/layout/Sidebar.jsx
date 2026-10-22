@@ -17,10 +17,10 @@ import {
   PieChart, Users, Wallet, Banknote, ShieldCheck, Mail,
   UserCircle, TrendingUp, Hash, Search, MessageCircle
 } from "lucide-react";
-import { hasRole, logout, getUsernameFromToken } from "../api/auth";
-import { usePermissions } from "../context/PermissionContext";
-import { useCompany } from "../context/CompanyContext";
-import { formatUserDisplayName } from "../utils/displayName";
+import { hasRole, logout, getUsernameFromToken } from "@billbull/shared/api/auth";
+import { usePermissions } from "@billbull/shared/context/PermissionContext";
+import { useCompany } from "@billbull/shared/context/CompanyContext";
+import { formatUserDisplayName } from "@billbull/shared/utils/displayName";
 import BranchSelector from "../components/common/BranchSelector";
 import { clientConfig } from "../config/clientConfig";
 
@@ -221,6 +221,7 @@ const Sidebar = ({ children }) => {
         { path: "/finance/journalvoucher",  label: "Journal Voucher",           module: "finance.voucher",  icon: <PenTool size={14} /> },
         { path: "/finance/expenses",        label: "Expenses",                  module: "finance.expense",  icon: <TrendingDown size={14} /> },
         { path: "/finance/reconciliation",  label: "Bank Reconciliation",       module: "finance.reconcile",icon: <Landmark size={14} /> },
+        { path: "/finance/paycheques",      label: "Pay Cheques",               module: "finance.voucher",  icon: <Banknote size={14} /> },
         { path: "/finance/tax",             label: "Tax Dashboard",             module: "finance.tax",      icon: <Percent size={14} /> },
         { path: "/finance/reports",         label: "Reports",                   module: "finance.reports",  icon: <PieChart size={14} /> },
         { path: "/finance/config",          label: "Chart of Accounts & Config",module: "finance.config",   icon: <Settings size={14} /> },

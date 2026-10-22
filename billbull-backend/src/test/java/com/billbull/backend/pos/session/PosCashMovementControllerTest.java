@@ -25,6 +25,9 @@ class PosCashMovementControllerTest {
 
     @Mock private PosCashMovementService service;
     @Mock private ModulePermissionService modulePermissionService;
+    // Branch scope is covered by PosBranchIsolationTest; mocked here, where every check passes.
+    @Mock private com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
+    @Mock private PosSessionRepository sessionRepository;
 
     @InjectMocks private PosCashMovementController controller;
 
@@ -123,6 +126,10 @@ class PosCashMovementControllerTest {
         controller.list(7L, null, null, null, null, null, null, 0, 20);
 
         verify(modulePermissionService).requireCanView("permissions.pos.cashmovement.viewall");
-        verify(service).list(7L, null, null, null, null, null, null, 0, 20);
+        verify(service).list(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(7L),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.eq(0), org.mockito.ArgumentMatchers.eq(20));
     }
 }

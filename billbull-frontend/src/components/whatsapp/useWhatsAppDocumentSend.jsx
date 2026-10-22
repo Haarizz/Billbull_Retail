@@ -6,7 +6,7 @@ import {
     normalizeWhatsAppPhone,
     sendDocumentWhatsApp,
 } from '../../api/whatsappApi';
-import { downloadPdfViaServer } from '../../utils/printGenerator';
+import { downloadPdfViaServer } from '@billbull/shared/utils/printGenerator';
 
 // Shared "send this document on WhatsApp" flow for Quotation / Sales Order / Sales Invoice.
 //

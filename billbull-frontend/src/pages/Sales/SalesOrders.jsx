@@ -35,8 +35,8 @@ import {
 } from 'lucide-react';
 
 // ✅ API IMPORTS
-import api from '../../api/axiosConfig';
-import { getAllCustomers } from '../../api/customerledgerApi';
+import api from '@billbull/shared/api/axiosConfig';
+import { getAllCustomers } from '@billbull/shared/api/customerledgerApi';
 import { getAllQuotations } from '../../api/quotationApi';
 import { getAllProformas } from '../../api/proformaApi';
 import {
@@ -47,25 +47,25 @@ import {
   uploadSalesOrderAttachment,
   getSalesOrderReceiptVouchers,
   getSalesOrderStats
-} from '../../api/salesorderApi';
-import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { formatDisplayDate } from '../../utils/dateUtils';
+} from '@billbull/shared/api/salesorderApi';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { useWhatsAppDocumentSend } from '../../components/whatsapp/useWhatsAppDocumentSend';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
-import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
+import { computeLineTaxTotals, resolveLineTaxRate } from '@billbull/shared/utils/vatMath';
 import { getBranchTaxSummary } from '../../api/taxApi';
-import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
-import { getImageUrl } from '../../utils/urlUtils';
+import { generatePrintHtmlAsync, printHtml } from '@billbull/shared/utils/printGenerator';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
-import { getStockAvailability } from '../../api/stockAvailabilityApi';
-import { getSalesSettings } from '../../api/salesSettingsApi';
-import billBullLogo from '../../assets/billBullLogo.png';
-import { useCompany } from '../../context/CompanyContext';
-import { useBranch } from '../../context/BranchContext';
+import { getStockAvailability } from '@billbull/shared/api/stockAvailabilityApi';
+import { getSalesSettings } from '@billbull/shared/api/salesSettingsApi';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
-import { sendSalesOrderEmail } from '../../api/salesorderApi';
+import { sendSalesOrderEmail } from '@billbull/shared/api/salesorderApi';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
-import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, summaryLineLookup, printLineMoney, FOOTER_DISCOUNT_HELP } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, summaryLineLookup, printLineMoney, FOOTER_DISCOUNT_HELP } from '@billbull/shared/utils/documentSummaryUtils';
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
@@ -92,12 +92,12 @@ import BatchSelectionModal from '../../components/BatchSelectionModal';
 import useShortcuts from '../../hooks/useShortcuts';
 
 // ✅ PERMISSIONS
-import { usePermissions } from '../../context/PermissionContext';
+import { usePermissions } from '@billbull/shared/context/PermissionContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import DateFilter from '../../components/common/DateFilter';
-import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
-import CurrencyAmount from '../../components/CurrencyAmount';
-import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '@billbull/shared/utils/countryCurrencyOptions';
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
 import KpiCards from '../../components/common/KpiCards';
@@ -2059,7 +2059,7 @@ const SalesOrders = () => {
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4 md:gap-0">
             <h2 className="font-bold text-slate-700 text-sm">Sales Orders</h2>
             <div className="flex flex-col md:flex-row gap-3 items-center w-full md:w-auto">
-              <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
+              <DateFilter loading={isListLoading} onChange={(range) => { setDateRange(range); setListPage(0); }} />
               <div className="relative w-full md:w-auto">
                 <input
                   type="text"
@@ -2575,7 +2575,7 @@ const SalesOrders = () => {
                           </div>
                         </td>
                       </tr>
-                    ) : [...items].reverse().map((item, index) => (
+                    ) : items.map((item, index) => (
                       <React.Fragment key={item.id}>
                         <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isLocked ? 'opacity-80' : ''}`} onClick={() => setFocusedItem(item)}>
                           {/* Index */}
@@ -3244,6 +3244,8 @@ const SalesOrders = () => {
         companyProfile={buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedSoBranchId ?? activeBranch?.id })}
         apiFn={sendSalesOrderEmail}
         buildPayload={buildSoPrintData}
+        // The attachment is the print document WhatsApp also sends.
+        buildPdfHtml={() => buildSoHtmlRef.current()}
       />
 
       {whatsAppElement}

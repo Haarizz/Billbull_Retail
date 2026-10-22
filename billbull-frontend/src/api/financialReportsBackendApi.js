@@ -1,6 +1,6 @@
 // src/api/financialReportsBackendApi.js
 // API calls for server-side financial report endpoints (Phase 2 backend)
-import api from "./axiosConfig";
+import api from "@billbull/shared/api/axiosConfig";
 
 // ==================== FINANCIAL REPORTS ====================
 

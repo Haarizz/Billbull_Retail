@@ -1,4 +1,4 @@
-import { usePermissions } from '../context/PermissionContext';
+import { usePermissions } from '@billbull/shared/context/PermissionContext';
 
 /**
  * Custom hook for module-specific permission checks.

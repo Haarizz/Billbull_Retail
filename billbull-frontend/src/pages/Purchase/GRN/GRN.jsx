@@ -59,16 +59,16 @@ import {
   getZoneLocators,
   getLocatorBins
 } from '../../../api/warehouseApi';
-import { getProductById, searchProductByBarcode } from '../../../api/productsApi';
+import { getProductById, searchProductByBarcode } from '@billbull/shared/api/productsApi';
 import ProductSelector from '../../../components/ProductSelector';
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import LocationSelector from '../../../components/common/LocationSelector';
 import DateFilter from '../../../components/common/DateFilter';
 import VendorSelector from '../../../components/VendorSelector';
-import { getImageUrl } from '../../../utils/urlUtils';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../../utils/unitPricing';
-import { formatDisplayDate } from '../../../utils/dateUtils';
-import { useBranch } from '../../../context/BranchContext';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 // QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
 import InlineProductSearchCell from '../../../components/InlineProductSearchCell';
@@ -77,16 +77,16 @@ import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 import SerialEntryModal from '../../../components/purchase/SerialEntryModal';
 import BatchLotEntryModal from '../../../components/purchase/BatchLotEntryModal';
-import { useCompany } from '../../../context/CompanyContext';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
 
 // SHORTCUTS HOOK
 import useShortcuts from '../../../hooks/useShortcuts';
 
 // Printing Utilities
-import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../../utils/printGenerator';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '@billbull/shared/utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
-import billBullLogo from '../../../assets/billBullLogo.png';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 import toast from 'react-hot-toast';
 import {
   buildGrnPrintData,
@@ -94,9 +94,9 @@ import {
   resolvePurchasePrintTemplate
 } from '../../../utils/purchasePrintUtils';
 import ExportDropdown from '../../../components/common/ExportDropdown';
-import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
-import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../../utils/countryCurrencyOptions';
-import CurrencyAmount from '../../../components/CurrencyAmount';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '@billbull/shared/utils/countryCurrencyOptions';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import { getListSerialNumber } from '../../../utils/serialNumbering';
 import TableSkeleton from '../../../components/common/TableSkeleton';
 import GrnPreviewSplitView from '../components/GrnPreviewSplitView';
@@ -175,7 +175,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onDownlo
             <h3 className="text-sm font-semibold text-slate-700">Goods Receipt Notes</h3>
           </div>
           <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
-            <DateFilter onChange={(range) => setDateRange(range)} />
+            <DateFilter loading={isLoading} onChange={(range) => setDateRange(range)} />
             <div className="relative w-full sm:w-auto flex-1 sm:flex-none">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
               <input
@@ -1929,7 +1929,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                         {grnType === "Against LPO" || grnType === "Against Direct Purchase" ? "Select a document to load items or type above." : "Type above to add an item."}
                       </td>
                     </tr>
-                  ) : [...items].reverse().map((item, index) => (
+                  ) : items.map((item, index) => (
                     <React.Fragment key={item.id}>
                       <tr className="hover:bg-slate-50 group">
                         <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>

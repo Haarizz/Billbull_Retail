@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { Search, X, Plus, Check, Phone, Mail, MapPin, ChevronDown, Store } from 'lucide-react';
 import { createVendor } from '../api/vendorsApi';
-import { useBranch } from '../context/BranchContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import toast from 'react-hot-toast';
 
 // ==========================================

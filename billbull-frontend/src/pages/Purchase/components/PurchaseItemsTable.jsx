@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Package, Box } from 'lucide-react';
-import CurrencyAmount from '../../../components/CurrencyAmount';
-import { getImageUrl } from '../../../utils/urlUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 
 // Shared items table for purchase money-documents (LPO / Purchase Invoice). The
 // caller passes a `totals` object describing the footer rows so LPO (advance/

@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../../utils/printGenerator';
-import { computeLineTaxTotals } from '../../../utils/vatMath';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '@billbull/shared/utils/printGenerator';
+import { computeLineTaxTotals } from '@billbull/shared/utils/vatMath';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
-import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { buildSalesReturnThermalHtml } from '../POS/posPrintUtils';
-import { useCompany } from '../../../context/CompanyContext';
-import { useBranch } from '../../../context/BranchContext';
-import billBullLogo from '../../../assets/billBullLogo.png';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { buildSalesReturnThermalHtml } from '@billbull/shared/pages/Sales/POS/posPrintUtils';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 import {
    RotateCcw,
    Undo2,
@@ -40,19 +40,19 @@ import {
    Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
-import CreditVoucherModal from './components/CreditVoucherModal';
-import { getCreditVoucherByReturn } from '../../../api/creditVoucherApi';
-import { getPosPrinters } from '../../../api/posPrinterApi';
-import { printCreditVoucher } from '../../../utils/salesReturnPrint';
+import CreditVoucherModal from '@billbull/shared/pages/Sales/SalesReturn/components/CreditVoucherModal';
+import { getCreditVoucherByReturn } from '@billbull/shared/api/creditVoucherApi';
+import { getPosPrinters } from '@billbull/shared/api/posPrinterApi';
+import { printCreditVoucher } from '@billbull/shared/utils/salesReturnPrint';
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import DateFilter from '../../../components/common/DateFilter';
 import ReversalModal from './components/ReversalModal';
-import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
-import { generateDocFilename } from '../../../utils/filenameUtils';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import { generateDocFilename } from '@billbull/shared/utils/filenameUtils';
 import { usePrintDocument } from '../../../hooks/usePrintDocument';
-import CurrencyAmount from '../../../components/CurrencyAmount';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 
 // ✅ DYNAMIC UI COMPONENTS
 
@@ -68,16 +68,16 @@ import {
    updateSalesReturnStatus,
    reverseSalesReturn,
    getReturnableBatches
-} from '../../../api/salesReturnApi';
-import { getAllSalesInvoices } from '../../../api/salesInvoiceApi';
-import { getSalesSettings } from '../../../api/salesSettingsApi';
+} from '@billbull/shared/api/salesReturnApi';
+import { getAllSalesInvoices } from '@billbull/shared/api/salesInvoiceApi';
+import { getSalesSettings } from '@billbull/shared/api/salesSettingsApi';
 import { isAutoNumberingEnabled } from '../../../utils/salesNumbering';
 import TableSkeleton from '../../../components/common/TableSkeleton';
 
 // §24/§26 — the shared Sales Return workflow. This page hosts it for the
 // Customer & Sales entry point; POS → Actions → Return renders the very same component.
-import SalesReturnScreen from './SalesReturnScreen';
-import { ENTRY_POINT, FALLBACK_CONDITIONS, FALLBACK_REASONS, FALLBACK_REFUND_METHODS } from './constants';
+import SalesReturnScreen from '@billbull/shared/pages/Sales/SalesReturn/SalesReturnScreen';
+import { ENTRY_POINT, FALLBACK_CONDITIONS, FALLBACK_REASONS, FALLBACK_REFUND_METHODS } from '@billbull/shared/pages/Sales/SalesReturn/constants';
 
 /** Enum code → display label, falling back to the raw value for codes that predate the vocabulary. */
 const labelFor = (options, code) =>
@@ -1008,7 +1008,7 @@ const SalesReturn = () => {
                      <div className="mb-6">
                         <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><Filter size={16} /> Filters</h3>
                         <div className="flex items-center gap-3 mb-3">
-                           <DateFilter onChange={(range) => { setDateRange(range); setReturnsPage(0); }} />
+                           <DateFilter loading={isLoading} onChange={(range) => { setDateRange(range); setReturnsPage(0); }} />
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
                            <div className="md:col-span-2 relative">

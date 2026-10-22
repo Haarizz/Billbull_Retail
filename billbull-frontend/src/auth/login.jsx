@@ -1,9 +1,9 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { login } from "../api/auth";
-import { useCompany } from "../context/CompanyContext";
+import { describeLoginError, login, persistLoginSession } from "@billbull/shared/api/auth";
+import { useCompany } from "@billbull/shared/context/CompanyContext";
 import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
-import billBullLogo from "../assets/billBullLogo.png";
+import billBullLogo from "@billbull/shared/assets/billBullLogo.png";
 import { clientConfig } from "../config/clientConfig";
 
 const Login = () => {
@@ -40,11 +40,7 @@ const Login = () => {
       const data = await login(formData.username, formData.password);
 
       // ✅ Store Auth Data
-      sessionStorage.setItem("token", data.token);
-      sessionStorage.setItem("role", data.primaryRole || data.role);
-      sessionStorage.setItem("primaryRole", data.primaryRole || data.role);
-      sessionStorage.setItem("user", data.username);
-      sessionStorage.setItem("fullName", data.fullName || data.username);
+      persistLoginSession(data);
 
       // Every login starts with the sidebar collapsed, regardless of how the
       // previous session left it. Toggling it during the session still persists.
@@ -68,22 +64,7 @@ const Login = () => {
       navigate(clientConfig.landing.defaultRoute || roleRedirects[primaryRole] || "/");
     } catch (err) {
       console.error(err);
-      if (err.response?.status === 429) {
-        // Brute-force lockout / rate limit. Surface the advised wait time so the user knows how
-        // long to hold off (Retry-After header or retryAfterSeconds in the body). Message stays
-        // generic — the backend never reveals whether the username exists.
-        const waitSeconds =
-          Number(err.response.headers?.["retry-after"]) ||
-          Number(err.response.data?.retryAfterSeconds) ||
-          0;
-        setError(
-          waitSeconds > 0
-            ? `Too many login attempts. Please wait ${waitSeconds} seconds before trying again.`
-            : "Too many login attempts. Please wait a moment before trying again."
-        );
-      } else {
-        setError("Invalid username or password");
-      }
+      setError(describeLoginError(err));
     } finally {
       setIsLoading(false);
     }

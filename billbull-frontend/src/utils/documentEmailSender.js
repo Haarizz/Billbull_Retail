@@ -12,10 +12,10 @@
 //       toEmail, subject, htmlBody: html, inlineAttachments
 //   });
 
-import { getTemplatesByCategory } from '../api/printTemplateApi';
-import { generateEmailHtml } from './printGenerator';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { generateEmailHtml } from '@billbull/shared/utils/printGenerator';
 import { buildEmailBody } from './emailImageInliner';
-import billBullLogo from '../assets/billBullLogo.png';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 
 /**
  * Renders the email body for a designed document.

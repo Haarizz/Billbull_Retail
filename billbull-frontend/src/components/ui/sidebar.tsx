@@ -6,10 +6,10 @@ import { VariantProps, cva } from "class-variance-authority";
 import { PanelLeftIcon } from "lucide-react";
 
 import { useIsMobile } from "./use-mobile";
-import { cn } from "./utils";
-import { Button } from "./button";
-import { Input } from "./input";
-import { Separator } from "./separator";
+import { cn } from "@billbull/shared/components/ui/utils";
+import { Button } from "@billbull/shared/components/ui/button";
+import { Input } from "@billbull/shared/components/ui/input";
+import { Separator } from "@billbull/shared/components/ui/separator";
 import {
   Sheet,
   SheetContent,
@@ -23,7 +23,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "./tooltip";
+} from "@billbull/shared/components/ui/tooltip";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;

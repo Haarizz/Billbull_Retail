@@ -1,0 +1,57 @@
+[
+  {
+    "file": "escpos-receipt-80mm-qr.bin",
+    "protocol": "escpos",
+    "source": "escPosReceipt.buildEscPosReceipt (80mm, native QR)"
+  },
+  {
+    "file": "escpos-receipt-58mm.bin",
+    "protocol": "escpos",
+    "source": "escPosReceipt.buildEscPosReceipt (58mm, no QR)"
+  },
+  {
+    "file": "escpos-plain-text.bin",
+    "protocol": "escpos",
+    "source": "escPosReceipt.buildEscPosFromPlainText (layaway / reports)"
+  },
+  {
+    "file": "escpos-voucher-barcode.bin",
+    "protocol": "escpos",
+    "source": "escPosReceipt.buildEscPosDocument (credit voucher, Code 39)"
+  },
+  {
+    "file": "escpos-canvas-raster.bin",
+    "protocol": "escpos",
+    "source": "escPosReceipt.buildEscPosDocumentFromCanvas (Arabic/canvas receipt; raster spells ESC p, ^XA, ~JR)"
+  },
+  {
+    "file": "zpl-product-100x75.zpl",
+    "protocol": "zpl",
+    "source": "zebraZpl.buildZplBatch (BarcodePrinter, every field)"
+  },
+  {
+    "file": "zpl-product-38x25-batch.zpl",
+    "protocol": "zpl",
+    "source": "zebraZpl.buildZplBatch (38x25, three units)"
+  },
+  {
+    "file": "zpl-product-hostile-text.zpl",
+    "protocol": "zpl",
+    "source": "zebraZpl.buildZplBatch (names carrying ^, ~, _, \\, Arabic, control chars)"
+  },
+  {
+    "file": "zpl-legacy-fields.zpl",
+    "protocol": "zpl",
+    "source": "zebraZpl.buildZplBatch (legacy flat fields)"
+  },
+  {
+    "file": "zpl-employee.zpl",
+    "protocol": "zpl",
+    "source": "EmployeeBarcodeCard.buildEmployeeLabelZpl"
+  },
+  {
+    "file": "zpl-test-label.zpl",
+    "protocol": "zpl",
+    "source": "zplText.buildZplTestLabel (POS → Devices → Test, label printer)"
+  }
+]

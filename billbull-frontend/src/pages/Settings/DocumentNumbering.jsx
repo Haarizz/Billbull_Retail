@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronRight, Hash, Save, ShoppingCart, Truck } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getSalesSettings, saveSalesSettings } from '../../api/salesSettingsApi';
+import { getSalesSettings, saveSalesSettings } from '@billbull/shared/api/salesSettingsApi';
 import { getPurchaseSettings, savePurchaseSettings } from '../../api/purchaseSettingsApi';
 
 const PAGE_BG = 'bg-[#F5F7FA]';

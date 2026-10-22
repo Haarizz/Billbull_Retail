@@ -31,19 +31,19 @@ vi.mock('../../../api/usersApi', () => ({
   },
 }));
 
-vi.mock('../../../api/auth', () => ({ hasRole: () => true }));
+vi.mock('@billbull/shared/api/auth', () => ({ hasRole: () => true }));
 vi.mock('../../../api/warehouseApi', () => ({ getWarehouses: vi.fn(() => Promise.resolve([])) }));
 
-vi.mock('../../../context/PermissionContext', () => ({
+vi.mock('@billbull/shared/context/PermissionContext', () => ({
   usePermissions: () => ({
     canView: () => true, canCreate: () => true, canEdit: () => true, canApprove: () => true,
   }),
 }));
-vi.mock('../../../context/CompanyContext', () => ({
+vi.mock('@billbull/shared/context/CompanyContext', () => ({
   default: React.createContext({ company: { currency: 'AED' } }),
   useCompany: () => ({ company: { currency: 'AED' } }),
 }));
-vi.mock('../../../context/BranchContext', () => ({
+vi.mock('@billbull/shared/context/BranchContext', () => ({
   useBranch: () => ({ branches: [{ id: 1, name: 'Dubai' }], activeBranch: { id: 1, name: 'Dubai' } }),
 }));
 

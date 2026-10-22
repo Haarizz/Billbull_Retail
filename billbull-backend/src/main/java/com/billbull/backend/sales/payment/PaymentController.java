@@ -53,12 +53,11 @@ public class PaymentController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String fromDate,
             @RequestParam(required = false) String toDate) {
-        java.util.List<Payment> all = (fromDate != null || toDate != null)
-                ? paymentService.getAllByDateRange(
-                        fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1),
-                        toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now())
-                : paymentService.getAllPayments();
-        return com.billbull.backend.util.PaginationUtil.paginate(all, page, size, search, status);
+        boolean ranged = fromDate != null || toDate != null;
+        return paymentService.getPage(
+                ranged ? (fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1)) : null,
+                ranged ? (toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now()) : null,
+                page, size, search, status);
     }
 
     // ==========================================

@@ -2,12 +2,12 @@ import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
-vi.mock('../../../api/employeeTargetsApi', () => ({ saveEmployeeTargetsBulk: vi.fn() }));
+vi.mock('@billbull/shared/api/employeeTargetsApi', () => ({ saveEmployeeTargetsBulk: vi.fn() }));
 vi.mock('react-hot-toast', () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }));
 
-import { saveEmployeeTargetsBulk } from '../../../api/employeeTargetsApi';
+import { saveEmployeeTargetsBulk } from '@billbull/shared/api/employeeTargetsApi';
 import toast from 'react-hot-toast';
 import SetTargetsModal from '../Emp_Role.jsx/SetTargetsModal';
 

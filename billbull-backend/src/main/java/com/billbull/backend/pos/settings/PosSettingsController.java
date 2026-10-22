@@ -1,37 +1,69 @@
 package com.billbull.backend.pos.settings;
 
+import com.billbull.backend.pos.auth.PosTillPermission;
+import com.billbull.backend.security.ModulePermissionService;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
+/**
+ * POS settings, one row per branch.
+ *
+ * <p>Reading is for the till ({@code sales.pos}) or a POS settings administrator
+ * ({@code pos.settings} view). Saving is administration: {@code pos.settings} edit, for a branch
+ * the caller may act on; supervisor and voucher-expiry fields additionally keep the supervisor
+ * role check in {@link PosSettingsService#save}. Reading another branch's settings needs that
+ * branch to be reachable. The PIN and supervisor-credential checks serve only the till, so they
+ * need the till permission.
+ */
 @RestController
 @RequestMapping("/api/pos/settings")
 @CrossOrigin
 public class PosSettingsController {
 
-    private final PosSettingsService service;
+    static final String SETTINGS_ADMIN = "pos.settings";
+    private static final String LABEL = "POS settings";
 
-    public PosSettingsController(PosSettingsService service) {
+    private final PosSettingsService service;
+    private final ModulePermissionService modulePermissionService;
+    private final BranchAccessService branchAccessService;
+
+    public PosSettingsController(PosSettingsService service, ModulePermissionService modulePermissionService,
+                                 BranchAccessService branchAccessService) {
         this.service = service;
+        this.modulePermissionService = modulePermissionService;
+        this.branchAccessService = branchAccessService;
+    }
+
+    private void requireReader() {
+        modulePermissionService.requireCanViewAny(PosTillPermission.MODULE, SETTINGS_ADMIN);
     }
 
     @GetMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosSettings> get() {
+        requireReader();
         return ResponseEntity.ok(service.getForCurrentBranch());
     }
 
     @GetMapping("/branch/{branchId}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosSettings> getForBranch(@PathVariable Long branchId) {
+        requireReader();
+        branchAccessService.assertTransactionBranchAccessible(branchId, LABEL);
         return ResponseEntity.ok(service.getForBranch(branchId));
     }
 
     @PostMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosSettings> save(@RequestBody PosSettings settings) {
+        // Before the row is locked or written. A save without a branchId lands on the caller's
+        // active branch (see PosSettingsService.save), which is reachable by definition.
+        modulePermissionService.requireCanEdit(SETTINGS_ADMIN);
+        branchAccessService.assertTransactionBranchAccessible(settings != null ? settings.getBranchId() : null, LABEL);
         System.out.println("SAVE REQUEST RECEIVED. maxTerminalsPerBranch=" + settings.getMaxTerminalsPerBranch());
         return ResponseEntity.ok(service.save(settings));
     }
@@ -43,6 +75,7 @@ public class PosSettingsController {
     @PostMapping("/verify-pin")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Boolean>> verifyPin(@RequestBody VerifyPinRequest request) {
+        modulePermissionService.requireCanView(PosTillPermission.MODULE);
         boolean valid = service.verifyPin(request == null ? null : request.getPin());
         return ResponseEntity.ok(Map.of("valid", valid));
     }
@@ -55,6 +88,7 @@ public class PosSettingsController {
     @PostMapping("/supervisor-auth")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Object>> supervisorAuth(@RequestBody SupervisorAuthRequest request) {
+        modulePermissionService.requireCanView(PosTillPermission.MODULE);
         if (request == null) {
             return ResponseEntity.ok(Map.of("valid", false, "reason", "Invalid request."));
         }

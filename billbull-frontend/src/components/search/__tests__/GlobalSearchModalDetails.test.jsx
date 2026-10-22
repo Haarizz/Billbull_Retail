@@ -7,7 +7,7 @@ import { MemoryRouter } from 'react-router-dom';
 // --- Module mocks ------------------------------------------------------------
 
 const canViewMock = vi.fn(() => true);
-vi.mock('../../../context/PermissionContext', () => ({
+vi.mock('@billbull/shared/context/PermissionContext', () => ({
   usePermissions: () => ({ canView: canViewMock }),
 }));
 
@@ -29,7 +29,7 @@ vi.mock('../../../api/globalSearchApi', async (importOriginal) => {
 // The transport is stubbed at the axios boundary, so entityDetailApi's own shaping —
 // which URL it calls, which field it reads — is exercised for real here.
 const apiGetMock = vi.fn();
-vi.mock('../../../api/axiosConfig', () => ({
+vi.mock('@billbull/shared/api/axiosConfig', () => ({
   default: { get: (...args) => apiGetMock(...args) },
 }));
 

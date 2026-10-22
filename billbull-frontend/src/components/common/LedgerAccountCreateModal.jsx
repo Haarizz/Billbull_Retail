@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { PlusCircle, Save, X } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { createAccount } from '../../api/ledgerApi';
+import { createAccount } from '@billbull/shared/api/ledgerApi';
 import { generateNextAccountCode } from '../../utils/accountCodeGenerator';
 
 const ACCOUNT_GROUPS = ['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity'];

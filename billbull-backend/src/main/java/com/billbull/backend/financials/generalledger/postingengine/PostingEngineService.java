@@ -71,6 +71,7 @@ public class PostingEngineService {
         public static final String ACC_VAT_INPUT           = "1310";  // VAT Input Tax
         public static final String ACC_ACCOUNTS_PAYABLE    = "2001";  // Accounts Payable Control
         public static final String ACC_GRN_CLEARING        = "2002";  // GRN Clearing
+        public static final String ACC_AP_PDC              = "2150";  // AP – Post-Dated Cheques (cheques issued, not yet cleared)
         public static final String ACC_CUSTOMER_ADVANCE    = "2060";  // Customer Advances Received
         public static final String ACC_CREDIT_VOUCHER      = "2061";  // Credit Vouchers Issued (store-credit liability)
         public static final String ACC_DEFERRED_REVENUE    = "2051";  // Deferred Revenue
@@ -797,7 +798,12 @@ public class PostingEngineService {
                 // continue to post the same way.
                 String payCode = ACC_BANK;
                 String payName = "Bank/Cash";
-                if (expense.getPaymentAccountId() != null && !expense.getPaymentAccountId().isBlank()) {
+                if (isChequeMode(expense.getPaymentMode())) {
+                        // Paid by cheque: the bank moves only when the cheque is paid in Pay Cheques
+                        // (Dr 2150 / Cr Bank). Until then the amount is owed on a post-dated cheque.
+                        payCode = ACC_AP_PDC;
+                        payName = "AP – Post-Dated Cheques";
+                } else if (expense.getPaymentAccountId() != null && !expense.getPaymentAccountId().isBlank()) {
                         Account payAccount = accountRepository.findById(expense.getPaymentAccountId()).orElse(null);
                         if (payAccount != null) {
                                 payCode = payAccount.getCode();
@@ -1560,6 +1566,87 @@ public class PostingEngineService {
         // =========================================================
         // PDC (Post-Dated Cheque)
         // =========================================================
+
+        // ── Outgoing cheques (Financials → Pay Cheques) ──────────────────────────
+        //
+        //   ISSUED  → Dr Accounts Payable (2001) / Vendor Advances (1105)  Cr AP–PDC (2150)  Ref CHQ-ISS-{id}
+        //   PAID    → Dr AP–PDC (2150)  Cr the cheque book's bank ledger                     Ref CHQ-PAID-{id}
+        //   CANCEL of an issued cheque → reverse ISSUED                                      Ref CHQ-CXL-{id}
+        // Each is keyed by the cheque id, so a retry returns the existing entry.
+
+        /** One vendor payment on an issued cheque. {@code vendorAdvance} debits 1105 instead of AP. */
+        public record ChequeIssueLine(String voucherNumber, BigDecimal amount, boolean vendorAdvance) {}
+
+        private static boolean isChequeMode(String paymentMode) {
+                return paymentMode != null && "CHEQUE".equalsIgnoreCase(paymentMode.trim());
+        }
+
+        @Transactional
+        public JournalEntry createJournalFromChequeIssue(Long chequeId, String chequeNumber, String payee,
+                        LocalDate date, List<ChequeIssueLine> lines,
+                        com.billbull.backend.settings.branch.Branch branch) {
+                String ref = "CHQ-ISS-" + chequeId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+                JournalEntry entry = createBaseEntry(date, ref,
+                                "Cheque " + chequeNumber + " issued to " + payee, TX_PAYMENT_VOUCHER, branch);
+                BigDecimal total = BigDecimal.ZERO;
+                for (ChequeIssueLine l : lines) {
+                        addLine(entry, l.vendorAdvance() ? "Vendor Advances Paid" : "Accounts Payable",
+                                        l.vendorAdvance() ? ACC_VENDOR_ADVANCES : ACC_ACCOUNTS_PAYABLE,
+                                        "Payment - " + l.voucherNumber() + " (cheque " + chequeNumber + ")",
+                                        l.amount(), BigDecimal.ZERO);
+                        total = total.add(l.amount());
+                }
+                addLine(entry, "AP – Post-Dated Cheques", ACC_AP_PDC,
+                                "Cheque " + chequeNumber + " - " + payee, BigDecimal.ZERO, total);
+                return post(entry);
+        }
+
+        @Transactional
+        public JournalEntry createJournalFromChequePaid(Long chequeId, String chequeNumber, String payee,
+                        LocalDate paidDate, BigDecimal amount, String bankCode, String bankName,
+                        com.billbull.backend.settings.branch.Branch branch) {
+                String ref = "CHQ-PAID-" + chequeId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+                String code = bankCode != null && !bankCode.isBlank() ? bankCode : ACC_BANK;
+                JournalEntry entry = createBaseEntry(paidDate, ref,
+                                "Cheque " + chequeNumber + " paid - " + payee, TX_PAYMENT_VOUCHER, branch);
+                addLine(entry, "AP – Post-Dated Cheques", ACC_AP_PDC,
+                                "Cheque " + chequeNumber + " cleared", amount, BigDecimal.ZERO);
+                addLine(entry, bankName != null ? bankName : "Bank", code,
+                                "Cheque " + chequeNumber + " - " + payee, BigDecimal.ZERO, amount);
+                return post(entry);
+        }
+
+        @Transactional
+        public JournalEntry reverseJournalFromChequeIssue(Long chequeId, String chequeNumber, String payee,
+                        LocalDate date, List<ChequeIssueLine> lines,
+                        com.billbull.backend.settings.branch.Branch branch) {
+                String ref = "CHQ-CXL-" + chequeId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+                JournalEntry entry = createBaseEntry(date, ref,
+                                "Cheque " + chequeNumber + " cancelled - " + payee, TX_PAYMENT_VOUCHER, branch);
+                BigDecimal total = BigDecimal.ZERO;
+                for (ChequeIssueLine l : lines) {
+                        addLine(entry, l.vendorAdvance() ? "Vendor Advances Paid" : "Accounts Payable",
+                                        l.vendorAdvance() ? ACC_VENDOR_ADVANCES : ACC_ACCOUNTS_PAYABLE,
+                                        "Reverse payment - " + l.voucherNumber() + " (cheque " + chequeNumber + " cancelled)",
+                                        BigDecimal.ZERO, l.amount());
+                        total = total.add(l.amount());
+                }
+                addLine(entry, "AP – Post-Dated Cheques", ACC_AP_PDC,
+                                "Cheque " + chequeNumber + " cancelled", total, BigDecimal.ZERO);
+                return post(entry);
+        }
+
+        /** True when the journal with this reference has a credit line on {@code accountCode}. */
+        @Transactional(readOnly = true)
+        public boolean journalCreditsAccount(String reference, String accountCode) {
+                JournalEntry entry = findDuplicate(reference);
+                return entry != null && entry.getLines() != null && entry.getLines().stream()
+                                .anyMatch(l -> accountCode.equals(l.getAccountCode())
+                                                && l.getCredit() != null && l.getCredit().signum() > 0);
+        }
 
         /**
          * PDC GL posting (PDF §11 / Phase 4.5).

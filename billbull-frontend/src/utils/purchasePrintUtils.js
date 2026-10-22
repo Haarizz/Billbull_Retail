@@ -4,8 +4,8 @@ import {
     parsePrintTemplateObject,
     sanitizeTemplateColumns,
     sanitizeTemplateDisplayOptions
-} from './printTemplateConfig';
-import { summarizePurchaseItems } from './documentSummaryUtils';
+} from '@billbull/shared/utils/printTemplateConfig';
+import { summarizePurchaseItems } from '@billbull/shared/utils/documentSummaryUtils';
 
 const PURCHASE_TEMPLATE_TERMS = {
     "Local Purchase Order": `1. Delivery: Goods must be delivered within the specified time frame.

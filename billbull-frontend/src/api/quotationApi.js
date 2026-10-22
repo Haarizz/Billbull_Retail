@@ -1,4 +1,4 @@
-import api from "./axiosConfig";
+import api from "@billbull/shared/api/axiosConfig";
 
 const BASE_URL = "/api/sales/quotations";
 
@@ -172,7 +172,7 @@ export const getItemPriceHistory = async (itemCode) => {
 // designed in Print & Email Templates (same renderer as Print).
 export const sendQuotationEmail = async (
   id,
-  { toEmail = "", subject = "", htmlBody = "", inlineAttachments = [] } = {}
+  { toEmail = "", subject = "", htmlBody = "", inlineAttachments = [], pdfHtml } = {}
 ) => {
   try {
     const res = await api.post(`${BASE_URL}/${id}/send-email`, {
@@ -180,12 +180,12 @@ export const sendQuotationEmail = async (
       subject,
       htmlBody,
       inlineAttachments,
+      pdfHtml,
     });
     return res.data;
   } catch (err) {
-    const message =
-      err?.response?.data ||
-      "Failed to send email";
-    throw new Error(message);
+    // Plain-text bodies from the send-email handler; JSON { message } from the global handler.
+    const data = err?.response?.data;
+    throw new Error((typeof data === "string" && data) || data?.message || "Failed to send email");
   }
 };

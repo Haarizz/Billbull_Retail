@@ -1,5 +1,7 @@
 package com.billbull.backend.pos.counter;
 
+import com.billbull.backend.pos.auth.PosTillPermission;
+import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -10,22 +12,47 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * POS counters.
+ *
+ * <p>Reading counters is for the till ({@code sales.pos}, which picks a counter when opening a
+ * session) or a counter administrator ({@code pos.counters} view). Adding, changing, activating
+ * and removing a counter is administration: {@code pos.counters} create, edit or delete. Every
+ * call is limited to counters of a branch the caller may act on, judged on the stored counter;
+ * a new counter always goes to the caller's own branch.
+ */
 @RestController
 @RequestMapping("/api/pos/counters")
 @CrossOrigin
 public class PosCounterController {
 
+    static final String COUNTER_ADMIN = "pos.counters";
+    private static final String LABEL = "Counter";
+
     private final PosCounterService service;
     private final BranchAccessService branchAccessService;
+    private final ModulePermissionService modulePermissionService;
 
-    public PosCounterController(PosCounterService service, BranchAccessService branchAccessService) {
+    public PosCounterController(PosCounterService service, BranchAccessService branchAccessService,
+                                ModulePermissionService modulePermissionService) {
         this.service = service;
         this.branchAccessService = branchAccessService;
+        this.modulePermissionService = modulePermissionService;
+    }
+
+    private void requireReader() {
+        modulePermissionService.requireCanViewAny(PosTillPermission.MODULE, COUNTER_ADMIN);
+    }
+
+    private void requireCounterInScope(Long id) {
+        branchAccessService.assertTransactionBranchAccessible(service.getById(id).getBranchId(), LABEL);
     }
 
     @GetMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<PosCounter>> list(@RequestParam(required = false) Long branchId) {
+        requireReader();
+        branchAccessService.assertTransactionBranchAccessible(branchId, LABEL);
         Long bid = branchId != null ? branchId : branchAccessService.getRequiredCurrentUserBranch().getId();
         return ResponseEntity.ok(service.listForBranch(bid));
     }
@@ -33,6 +60,8 @@ public class PosCounterController {
     @GetMapping("/active")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<PosCounter>> listActive(@RequestParam(required = false) Long branchId) {
+        requireReader();
+        branchAccessService.assertTransactionBranchAccessible(branchId, LABEL);
         Long bid = branchId != null ? branchId : branchAccessService.getRequiredCurrentUserBranch().getId();
         return ResponseEntity.ok(service.listActiveForBranch(bid));
     }
@@ -40,12 +69,15 @@ public class PosCounterController {
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Object>> getById(@PathVariable Long id) {
+        requireReader();
+        requireCounterInScope(id);
         return ResponseEntity.ok(service.getWithMetrics(id));
     }
 
     @PostMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosCounter> create(@RequestBody Map<String, Object> body) {
+        modulePermissionService.requireCanCreate(COUNTER_ADMIN);
         var branch = branchAccessService.getRequiredCurrentUserBranch();
         String counterCode = text(body, "counterCode");
         String counterName = text(body, "counterName");
@@ -63,6 +95,8 @@ public class PosCounterController {
     @PutMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosCounter> update(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        modulePermissionService.requireCanEdit(COUNTER_ADMIN);
+        requireCounterInScope(id);
         String counterName = text(body, "counterName");
         String description = text(body, "description");
         String cashDrawer = text(body, "defaultCashDrawer");
@@ -74,6 +108,8 @@ public class PosCounterController {
     @PatchMapping("/{id}/status")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosCounter> setStatus(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        modulePermissionService.requireCanEdit(COUNTER_ADMIN);
+        requireCounterInScope(id);
         PosCounterStatus status = PosCounterStatus.valueOf(body.getOrDefault("status", "ACTIVE").toString().toUpperCase());
         return ResponseEntity.ok(service.setStatus(id, status));
     }
@@ -81,6 +117,8 @@ public class PosCounterController {
     @DeleteMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
+        modulePermissionService.requireCanDelete(COUNTER_ADMIN);
+        requireCounterInScope(id);
         service.delete(id);
         return ResponseEntity.noContent().build();
     }

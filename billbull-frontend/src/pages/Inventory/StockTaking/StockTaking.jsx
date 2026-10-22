@@ -10,10 +10,10 @@ import {
     PlusCircle, MinusCircle, Activity
 } from 'lucide-react';
 import ExportDropdown from '../../../components/common/ExportDropdown';
-import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
-import CurrencyAmount from '../../../components/CurrencyAmount';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
 
 // ==========================================
@@ -32,15 +32,15 @@ const STOCK_TAKING_COLUMNS = [
     { header: 'Variance Qty', key: 'totalVarianceQty', width: 15 },
     { header: 'Variance Value', key: 'totalVarianceValue', width: 15 }
 ];
-import { getImageUrl } from '../../../utils/urlUtils';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import ExcelJS from 'exceljs';
 import { useNavigate } from 'react-router-dom';
 import { getWarehouses, getWarehouseStock, getWarehouseProductStock, getWarehouseBins, getWarehouseStockSummary } from '../../../api/warehouseApi';
-import { searchExactProducts, searchProductByBarcode } from '../../../api/productsApi';
-import { getDepartments } from '../../../api/departmentsApi';
-import { getBrands } from '../../../api/brandsApi';
+import { searchExactProducts, searchProductByBarcode } from '@billbull/shared/api/productsApi';
+import { getDepartments } from '@billbull/shared/api/departmentsApi';
+import { getBrands } from '@billbull/shared/api/brandsApi';
 import ProductSelector from '../../../components/ProductSelector';
-import { useBranch } from '../../../context/BranchContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import {
     createStockTakeSession,
     getStockTakeSessions,

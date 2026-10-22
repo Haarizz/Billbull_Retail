@@ -15,9 +15,9 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import SearchableDropdown from '../../components/SearchableDropdown';
-import { getCompanyProfile, updateCompanyProfile, uploadCompanyLogo, uploadCompanyStamp } from '../../api/companyProfileApi';
-import { useCompany } from '../../context/CompanyContext';
-import { getImageUrl } from '../../utils/urlUtils';
+import { getCompanyProfile, updateCompanyProfile, uploadCompanyLogo, uploadCompanyStamp } from '@billbull/shared/api/companyProfileApi';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import {
   getCountryOptions,
   getCurrencyOptions,
@@ -25,7 +25,7 @@ import {
   normalizeCountryValue,
   normalizeCurrencyValue,
   withFallbackOption
-} from '../../utils/countryCurrencyOptions';
+} from '@billbull/shared/utils/countryCurrencyOptions';
 
 const EMPTY_FORM = {
   companyName: '',

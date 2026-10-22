@@ -81,6 +81,12 @@ class PosLayawayServiceTest {
                 settingsMock);
         org.springframework.test.util.ReflectionTestUtils.setField(
                 service, "cashMovementService", cashMovementService);
+        // Branch scope is covered by PosBranchIsolationTest; here every branch is reachable.
+        com.billbull.backend.settings.branch.BranchAccessService branchAccess =
+                org.mockito.Mockito.mock(com.billbull.backend.settings.branch.BranchAccessService.class);
+        org.mockito.Mockito.lenient().when(branchAccess.canAccessTransactionBranch(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(true);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "branchAccessService", branchAccess);
         lenient().when(branchTaxResolutionService.resolveSalesTaxRateForProduct(any(), any()))
                 .thenReturn(java.math.BigDecimal.ZERO);
         // save() returns the same entity with ids assigned, so the reserve loop can run.

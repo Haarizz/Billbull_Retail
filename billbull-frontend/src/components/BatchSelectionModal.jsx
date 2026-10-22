@@ -8,13 +8,13 @@ import {
 import {
   clearSalesOrderBatchSelection,
   saveSalesOrderBatchSelection
-} from '../api/salesorderApi';
+} from '@billbull/shared/api/salesorderApi';
 import {
   clearSalesInvoiceBatchSelection,
   saveSalesInvoiceBatchSelection
-} from '../api/salesInvoiceApi';
+} from '@billbull/shared/api/salesInvoiceApi';
 
-import { formatDisplayDate } from '../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 
 const formatDate = (value) => formatDisplayDate(value);
 

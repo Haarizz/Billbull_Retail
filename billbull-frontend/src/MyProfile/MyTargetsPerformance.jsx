@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Target, BarChart2, Loader2, Info } from 'lucide-react';
-import CurrencyAmount from '../components/CurrencyAmount';
-import { getMyPerformance } from '../api/employeeTargetsApi';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { getMyPerformance } from '@billbull/shared/api/employeeTargetsApi';
 import { monthKey, monthLabel, recentMonths } from '../pages/HR/Emp_Role.jsx/useEmployeePerformance';
 
 const DASH = '—';

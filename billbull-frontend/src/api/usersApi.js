@@ -1,4 +1,4 @@
-import api from "./axiosConfig";
+import api from "@billbull/shared/api/axiosConfig";
 
 /**
  * User management API — ADMIN only (except getEmployeeAccess which is also admin-only).

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box } from 'lucide-react';
-import { getImageUrl } from '../../../utils/urlUtils';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 
 const ProductCard = ({ product }) => {
     if (!product) return null;
