@@ -559,8 +559,8 @@ describe('cross-feature orchestration handlers', () => {
  * the commit message.
  */
 describe('shape counters (update deliberately)', () => {
-  it('declares 232 top-level useState pairs (+2: the invoice template family and the reprint sheet format; +1 P3: checkoutQuickCash)', () => {
-    expect(topLevel(/^ {2}const \[/)).toHaveLength(232);
+  it('declares 233 top-level useState pairs (+2: the invoice template family and the reprint sheet format; +1 P3: checkoutQuickCash; +1: showCloseDayConfirm)', () => {
+    expect(topLevel(/^ {2}const \[/)).toHaveLength(233);
   });
 
   it('declares 18 top-level refs (+1: productEntryBlockedRef, the overlay gate on product entry; +1 P3: quickCashSeqRef)', () => {

@@ -226,6 +226,7 @@ import { isClosureWorkflowError } from './POS/features/session/sessionWorkflowEr
 import SessionInvalidatedOverlay from './POS/features/session/SessionInvalidatedOverlay';
 import IdleLockOverlay from './POS/features/session/IdleLockOverlay';
 import CloseDayVarianceDialog from './POS/features/session/CloseDayVarianceDialog';
+import CloseDayConfirmDialog from './POS/features/session/CloseDayConfirmDialog';
 import RangeExclusionConfirmDialog from './POS/features/session/RangeExclusionConfirmDialog';
 import LockPosDialog from './POS/features/session/LockPosDialog';
 import CashDropDialog from './POS/features/session/CashDropDialog';
@@ -484,6 +485,7 @@ export default function POSSales() {
   const clearCheckoutQuickCash = useCallback(() => setCheckoutQuickCash(null), []);
   const [showCashDropDialog, setShowCashDropDialog] = useState(false);
   const [closeDayVariance, setCloseDayVariance] = useState(null);
+  const [showCloseDayConfirm, setShowCloseDayConfirm] = useState(false);
   // Live Session quick-view — dashboard tile that pops the current session's
   // sales/cash figures without navigating away (X-Report is the full page version).
   const [showLiveSessionDialog, setShowLiveSessionDialog] = useState(false);
@@ -5617,12 +5619,19 @@ export default function POSSales() {
               </div>
 
               <button
-                onClick={() => { if (window.confirm(`Close business day ${zReportDate}? This will finalize all sessions for the day.`)) handleCloseDay(); }}
+                onClick={() => setShowCloseDayConfirm(true)}
                 disabled={zReportLoading || !zReportData || zReportData?.isDayClosed || isDayCloseBlocked}
                 title={isDayCloseBlocked ? "Resolve all pending actions in the Validation Checklist before closing the day." : undefined}
                 className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed text-[#1E293B] font-bold shadow-sm text-sm px-6 py-2.5 rounded-lg flex items-center gap-2 transition-all">
                 <Lock className="h-4 w-4" />{zReportData?.isDayClosed ? 'Day Closed' : 'Close Day'}
               </button>
+              <CloseDayConfirmDialog
+                open={showCloseDayConfirm}
+                onOpenChange={setShowCloseDayConfirm}
+                businessDate={zReportDate}
+                onCancel={() => setShowCloseDayConfirm(false)}
+                onConfirm={() => { setShowCloseDayConfirm(false); handleCloseDay(); }}
+              />
             </div>
           </div>
         </div>
