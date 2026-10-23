@@ -135,14 +135,14 @@ function ChequePreview({ cheque }) {
                 </div>
                 <div className="text-right">
                     <p className="text-[10px] text-white/50">A/C No.</p>
-                    <p className="text-xs font-mono font-bold text-white">{book.accountNumber || "—"}</p>
+                    <p className="text-xs tabular-nums font-bold text-white">{book.accountNumber || "—"}</p>
                 </div>
             </div>
             <div className="px-5 py-4">
                 <div className="flex justify-between items-start mb-4">
                     <div>
                         <p className="text-[9px] uppercase tracking-widest text-slate-500">Cheque No.</p>
-                        <p className="font-mono font-bold text-base text-slate-800">{cheque.chequeNumber || "—"}</p>
+                        <p className="tabular-nums font-bold text-base text-slate-800">{cheque.chequeNumber || "—"}</p>
                     </div>
                     <div className="text-right">
                         <p className="text-[9px] uppercase tracking-widest text-slate-500">Date</p>
@@ -165,7 +165,7 @@ function ChequePreview({ cheque }) {
                     </div>
                     <div className="border-2 border-slate-700 rounded-lg px-3 py-1.5 text-right shrink-0 bg-white min-w-[140px]">
                         <p className="text-[9px] uppercase text-slate-500">{currency}</p>
-                        <p className="font-bold text-lg font-mono text-slate-800">
+                        <p className="font-bold text-lg tabular-nums text-slate-800">
                             {(Number(cheque.amount) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </p>
                     </div>
@@ -173,7 +173,7 @@ function ChequePreview({ cheque }) {
                 <div className="flex justify-between items-end">
                     <div>
                         <p className="text-[9px] text-slate-500">{book.accountName || ""}</p>
-                        {book.iban && <p className="text-[9px] font-mono text-slate-500">IBAN: {book.iban}</p>}
+                        {book.iban && <p className="text-[9px] tabular-nums text-slate-500">IBAN: {book.iban}</p>}
                     </div>
                     <div className="border-b-2 border-dashed border-slate-700 w-40 text-center pb-0.5">
                         <p className="text-[9px] text-slate-500">Authorised Signatory</p>
@@ -446,7 +446,7 @@ function ChequeFormModal({ existing, books, onClose, onSaved }) {
                                                         <input type="checkbox" checked={!!selected[rowKey(r)]}
                                                             onChange={e => setSelected(s => ({ ...s, [rowKey(r)]: e.target.checked }))} />
                                                     </td>
-                                                    <td className="px-2 py-2 font-mono">
+                                                    <td className="px-2 py-2 tabular-nums">
                                                         {r.sourceNumber}
                                                         {r.date && <div className="text-[10px] text-slate-400 font-sans">{formatDisplayDate(r.date)}</div>}
                                                         {r.postsGl === false && <div className="text-[9px] font-sans font-bold text-slate-400 uppercase">already posted</div>}
@@ -455,7 +455,7 @@ function ChequeFormModal({ existing, books, onClose, onSaved }) {
                                                         {r.reference || "—"}
                                                         {r.bankLabel && <div className="text-[10px] text-slate-400">{r.bankLabel}</div>}
                                                     </td>
-                                                    <td className="px-2 py-2 text-right font-mono font-bold">{money(r.amount)}</td>
+                                                    <td className="px-2 py-2 text-right tabular-nums font-bold">{money(r.amount)}</td>
                                                 </tr>
                                             ))}
                                         </tbody>
@@ -480,7 +480,7 @@ function ChequeFormModal({ existing, books, onClose, onSaved }) {
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <Label>Cheque No.</Label>
-                                    <input value={chequeNumber} onChange={e => setChequeNumber(e.target.value)} className={`${inputCls} font-mono`} placeholder="Next in book" />
+                                    <input value={chequeNumber} onChange={e => setChequeNumber(e.target.value)} className={`${inputCls} tabular-nums`} placeholder="Next in book" />
                                 </div>
                                 <div>
                                     <Label required>Cheque Date</Label>
@@ -599,7 +599,7 @@ function Step({ title, posted, rows, note }) {
                 </span>
             </div>
             {rows.map(([l, v]) => (
-                <div key={l} className="flex justify-between"><span className="text-slate-600">{l}</span><span className="font-bold font-mono">{v}</span></div>
+                <div key={l} className="flex justify-between"><span className="text-slate-600">{l}</span><span className="font-bold tabular-nums">{v}</span></div>
             ))}
             {note && <p className="text-[10px] text-slate-400 mt-1">{note}</p>}
         </div>
@@ -720,7 +720,7 @@ function ChequeDetail({ chequeId, perms, onBack, onEdit, onPrint, onAction, refr
                             <div className="grid grid-cols-2 gap-3 text-xs">
                                 {[["Bank", book.bankName], ["Branch", book.bankBranch], ["Account", book.accountName],
                                   ["A/C No.", book.accountNumber], ["IBAN", book.iban], ["Ledger", `${book.glAccountCode || ""} ${book.glAccountName || ""}`]].map(([l, v]) => (
-                                    <div key={l}><p className="text-[10px] text-slate-500">{l}</p><p className="font-semibold font-mono mt-0.5 text-slate-800">{v || "—"}</p></div>
+                                    <div key={l}><p className="text-[10px] text-slate-500">{l}</p><p className="font-semibold tabular-nums mt-0.5 text-slate-800">{v || "—"}</p></div>
                                 ))}
                             </div>
                         </div>
@@ -736,9 +736,9 @@ function ChequeDetail({ chequeId, perms, onBack, onEdit, onPrint, onAction, refr
                                 <tbody>
                                     {cheque.allocations.map(a => (
                                         <tr key={a.id} className={`border-t border-slate-100 ${a.active ? "" : "text-slate-400 line-through"}`}>
-                                            <td className="py-2 font-mono">{a.sourceNumber}</td>
+                                            <td className="py-2 tabular-nums">{a.sourceNumber}</td>
                                             <td className="py-2">{a.reference || "—"}</td>
-                                            <td className="py-2 text-right font-mono font-bold">{money(a.amount, currency)}</td>
+                                            <td className="py-2 text-right tabular-nums font-bold">{money(a.amount, currency)}</td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -819,10 +819,10 @@ function ChequeBookModal({ book, ledgerAccounts, templates, onClose, onSaved }) 
                 <div><Label required>Bank Name</Label><input value={form.bankName} onChange={e => set("bankName", e.target.value)} className={inputCls} placeholder="Emirates NBD" /></div>
                 <div><Label>Bank Branch</Label><input value={form.bankBranch} onChange={e => set("bankBranch", e.target.value)} className={inputCls} /></div>
                 <div><Label>Account Name</Label><input value={form.accountName} onChange={e => set("accountName", e.target.value)} className={inputCls} /></div>
-                <div><Label>Account No.</Label><input value={form.accountNumber} onChange={e => set("accountNumber", e.target.value)} className={`${inputCls} font-mono`} /></div>
-                <div><Label>IBAN</Label><input value={form.iban} onChange={e => set("iban", e.target.value)} className={`${inputCls} font-mono`} /></div>
+                <div><Label>Account No.</Label><input value={form.accountNumber} onChange={e => set("accountNumber", e.target.value)} className={`${inputCls} tabular-nums`} /></div>
+                <div><Label>IBAN</Label><input value={form.iban} onChange={e => set("iban", e.target.value)} className={`${inputCls} tabular-nums`} /></div>
                 <div><Label>Currency</Label><input value={form.currency} onChange={e => set("currency", e.target.value.toUpperCase())} className={inputCls} maxLength={3} /></div>
-                <div><Label required>Next Cheque No.</Label><input value={form.nextChequeNumber} onChange={e => set("nextChequeNumber", e.target.value)} className={`${inputCls} font-mono`} /></div>
+                <div><Label required>Next Cheque No.</Label><input value={form.nextChequeNumber} onChange={e => set("nextChequeNumber", e.target.value)} className={`${inputCls} tabular-nums`} /></div>
                 <div>
                     <Label>Cheque Print Template</Label>
                     <select value={form.templateId} onChange={e => set("templateId", e.target.value)} className={inputCls}>
@@ -865,7 +865,7 @@ function BankAccountsView({ books, templates, canEdit, onAdd, onEdit, onDelete }
                             {[["Account Name", b.accountName], ["Account No.", b.accountNumber], ["IBAN", b.iban],
                               ["Ledger", `${b.glAccountCode || ""} ${b.glAccountName || ""}`], ["Next Cheque No.", b.nextChequeNumber],
                               ["Template", templateName(b.templateId)]].map(([l, v]) => (
-                                <div key={l} className="flex justify-between gap-3"><span className="text-slate-500">{l}</span><span className="font-semibold font-mono text-right text-slate-800">{v || "—"}</span></div>
+                                <div key={l} className="flex justify-between gap-3"><span className="text-slate-500">{l}</span><span className="font-semibold tabular-nums text-right text-slate-800">{v || "—"}</span></div>
                             ))}
                             <div className="pt-2 border-t border-slate-100 flex justify-between">
                                 <span className="text-slate-500">Open Cheques</span>
@@ -912,11 +912,11 @@ function BrsView({ cheques, perms, onAction, onOpen }) {
                     <tbody>
                         {items.map(c => (
                             <tr key={c.id} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => onOpen(c)}>
-                                <td className="px-4 py-3 font-mono font-bold">{c.chequeNumber}</td>
+                                <td className="px-4 py-3 tabular-nums font-bold">{c.chequeNumber}</td>
                                 <td className="px-4 py-3">{formatDisplayDate(c.chequeDate)}</td>
                                 <td className="px-4 py-3">{c.chequeBook?.bankName}</td>
                                 <td className="px-4 py-3 font-semibold">{c.payeeName}</td>
-                                <td className="px-4 py-3 font-mono font-bold text-teal-700">{money(c.amount, c.chequeBook?.currency)}</td>
+                                <td className="px-4 py-3 tabular-nums font-bold text-teal-700">{money(c.amount, c.chequeBook?.currency)}</td>
                                 <td className="px-4 py-3"><StatusBadge status={c.status} /></td>
                                 <td className="px-4 py-3">{c.paidDate ? formatDisplayDate(c.paidDate) : "—"}</td>
                                 <td className="px-4 py-3">{c.reconciledDate ? formatDisplayDate(c.reconciledDate) : "—"}</td>
@@ -1072,7 +1072,7 @@ export default function PayCheques() {
 
     if (openId) {
         return (
-            <div className="flex flex-col bg-[#F7F7FA]" style={{ height: "calc(100vh - 64px)" }}>
+            <div className="flex flex-col h-full bg-[#F7F7FA]">
                 <ChequeDetail chequeId={openId} perms={perms} refreshKey={detailKey}
                     onBack={() => setOpenId(null)}
                     onEdit={(c) => setForm({ existing: c })}
@@ -1173,7 +1173,7 @@ export default function PayCheques() {
                                         const refs = c.allocations.filter(a => a.active).map(a => a.reference || a.sourceNumber);
                                         return (
                                             <tr key={c.id} onClick={() => setOpenId(c.id)} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer group">
-                                                <td className="px-3 py-3 font-mono font-bold text-slate-800">{c.chequeNumber}</td>
+                                                <td className="px-3 py-3 tabular-nums font-bold text-slate-800">{c.chequeNumber}</td>
                                                 <td className="px-3 py-3 text-slate-600 whitespace-nowrap">{formatDisplayDate(c.chequeDate)}</td>
                                                 <td className="px-3 py-3">
                                                     <p className="font-semibold text-slate-800">{c.chequeBook?.bankName}</p>
@@ -1181,8 +1181,8 @@ export default function PayCheques() {
                                                 </td>
                                                 <td className="px-3 py-3 font-semibold text-slate-800">{c.payeeName}</td>
                                                 <td className="px-3 py-3"><TypeBadge type={c.paymentType} /></td>
-                                                <td className="px-3 py-3 font-mono text-[10px] text-slate-500 max-w-[180px] truncate" title={refs.join(", ")}>{refs.join(", ") || "—"}</td>
-                                                <td className="px-3 py-3 font-mono font-bold text-teal-700 whitespace-nowrap">{money(c.amount, c.chequeBook?.currency)}</td>
+                                                <td className="px-3 py-3 tabular-nums text-[10px] text-slate-500 max-w-[180px] truncate" title={refs.join(", ")}>{refs.join(", ") || "—"}</td>
+                                                <td className="px-3 py-3 tabular-nums font-bold text-teal-700 whitespace-nowrap">{money(c.amount, c.chequeBook?.currency)}</td>
                                                 <td className="px-3 py-3"><StatusBadge status={c.status} /></td>
                                                 <td className="px-3 py-3 text-slate-500">{c.createdBy || "—"}</td>
                                                 <td className="px-3 py-3 text-[10px] text-slate-500 whitespace-nowrap">{c.printedAt ? String(c.printedAt).slice(0, 10) : "—"}</td>
