@@ -46,7 +46,18 @@ export function buildInvoiceTimeline(invoice, payments = [], auditEvents = []) {
 
     (auditEvents || []).forEach((e) => events.push(e));
 
+    // Newest first. Payment dates are date-only (no time recorded), so they sort as the
+    // end of their day — otherwise a same-day payment lands below the invoice it paid.
     return events
         .filter((e) => e.date)
-        .sort((a, b) => new Date(a.date) - new Date(b.date));
+        .sort((a, b) => sortTime(b.date) - sortTime(a.date));
+}
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+function sortTime(date) {
+    if (typeof date === 'string' && DATE_ONLY.test(date)) {
+        return new Date(`${date}T23:59:59.999`).getTime();
+    }
+    return new Date(date).getTime();
 }

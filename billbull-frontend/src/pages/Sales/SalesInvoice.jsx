@@ -3863,6 +3863,7 @@ const SalesInvoice = () => {
                             onPrint={(inv, template) => handlePrintClick(inv, template)}
                             onDownload={(inv) => handleDownloadClick(inv)}
                             onOpenEmailModal={(inv) => { handleLoadInvoice(inv); setIsEmailModalOpen(true); }}
+                            onWhatsApp={(inv) => handleWhatsAppClick(inv)}
                             onRecordPayment={(inv) => setSettlementInvoice(inv)}
                             onPrintVoucher={(receipt, inv) => handlePrintReceipt(receipt, inv)}
                         />
