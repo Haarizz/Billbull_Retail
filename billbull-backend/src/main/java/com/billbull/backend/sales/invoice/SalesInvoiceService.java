@@ -329,6 +329,15 @@ public class SalesInvoiceService {
             invoice.setReturnCredited(existing.getReturnCredited());
         }
 
+        // A POS Pro-forma Invoice out for delivery is finalized only by Delivery Settlement, which
+        // converts it on the settlement date and session and releases its stock hold. Editing or
+        // confirming it here would post a sale behind that workflow's back. The PI markers
+        // themselves belong to the POS workflow, never to a save payload.
+        assertNotPendingProforma(existing);
+        invoice.setPosProformaPending(existing != null ? existing.getPosProformaPending() : null);
+        invoice.setPosProformaIssuedAt(existing != null ? existing.getPosProformaIssuedAt() : null);
+        invoice.setPosProformaConvertedAt(existing != null ? existing.getPosProformaConvertedAt() : null);
+
         // History: snapshot the diff BEFORE the mutations below (branch snapshot, totals
         // recalculation, numbering) rewrite `invoice`. `existing` is a separately-loaded
         // instance, so it still holds the persisted values at this point. The events
@@ -700,6 +709,74 @@ public class SalesInvoiceService {
         }
 
         return getById(saved.getId());
+    }
+
+    /**
+     * The advance still open (received, not yet applied to any invoice) on a Sales Order —
+     * what a POS checkout of that order must not collect a second time.
+     */
+    @Transactional(readOnly = true)
+    public BigDecimal openSalesOrderAdvance(String soNumber) {
+        if (soNumber == null || soNumber.isBlank()) return BigDecimal.ZERO;
+        com.billbull.backend.sales.salesorder.SalesOrder so =
+                salesOrderRepository.findBySoNumber(soNumber).orElse(null);
+        if (so == null) return BigDecimal.ZERO;
+        java.util.List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> soAdvances =
+                receiptVoucherRepo.findBySalesOrderIdOrderByDateDesc(so.getId());
+        BigDecimal open = BigDecimal.ZERO;
+        java.util.Map<String, java.util.List<com.billbull.backend.sales.advance.AdvanceApplicationService.AdvanceBalance>> byCustomer =
+                new java.util.HashMap<>();
+        for (com.billbull.backend.financials.receiptvoucher.ReceiptVoucher rv : soAdvances) {
+            if (rv.getSalesInvoiceId() != null || rv.getCustomerCode() == null) continue;
+            open = open.add(byCustomer
+                    .computeIfAbsent(rv.getCustomerCode(), advanceApplicationService::findOpenAdvances)
+                    .stream()
+                    .filter(a -> a.receiptId().equals(rv.getId()))
+                    .map(com.billbull.backend.sales.advance.AdvanceApplicationService.AdvanceBalance::openBalance)
+                    .findFirst()
+                    .orElse(BigDecimal.ZERO));
+        }
+        return open.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Completes the Sales Order side of an invoice that was posted outside {@link #save} — the POS
+     * checkout and the PI Flow conversion post through {@link #updateStatus}, which (unlike save)
+     * knows nothing about a linked order. Mirrors what save() does for a newly finalized invoice
+     * with a linked Sales Order: the order becomes INVOICED, its batch reservations are released
+     * (the invoice's own delivery consumed the real batches), the order's quotation is stamped
+     * INVOICED, and any advance received on the order is applied to the invoice's balance so the
+     * customer is not asked for it twice.
+     *
+     * <p>No-op for an invoice that is not linked to a Sales Order, or is still DRAFT/CANCELLED.
+     */
+    @Transactional
+    public void completeSalesOrderConversion(Long invoiceId) {
+        SalesInvoice invoice = invoiceRepo.findById(invoiceId).orElse(null);
+        if (invoice == null || invoice.getLinkedSalesOrder() == null || invoice.getLinkedSalesOrder().isBlank()) {
+            return;
+        }
+        if (invoice.getStatus() == SalesInvoiceStatus.DRAFT || invoice.getStatus() == SalesInvoiceStatus.CANCELLED) {
+            return;
+        }
+        com.billbull.backend.sales.salesorder.SalesOrder so =
+                salesOrderRepository.findBySoNumber(invoice.getLinkedSalesOrder()).orElse(null);
+        if (so == null) return;
+
+        so.setStatus(com.billbull.backend.sales.salesorder.SalesOrderStatus.INVOICED);
+        salesOrderRepository.save(so);
+        batchSelectionService.releaseSalesOrder(so.getId());
+        if (so.getLinkedQuotation() != null && !so.getLinkedQuotation().isBlank()) {
+            quotationRepository.updateStatusByQtnNo(
+                    so.getLinkedQuotation(),
+                    com.billbull.backend.sales.quotation.QuotationStatus.INVOICED);
+        }
+
+        BigDecimal outstanding = invoice.getBalance() != null ? invoice.getBalance() : BigDecimal.ZERO;
+        if (outstanding.compareTo(new BigDecimal("0.01")) > 0) {
+            applyCustomerAdvances(invoice,
+                    receiptVoucherRepo.findBySalesOrderIdOrderByDateDesc(so.getId()), outstanding);
+        }
     }
 
     /**
@@ -1441,9 +1518,28 @@ public class SalesInvoiceService {
     // ----------------------------
     // DELETE
     // ----------------------------
+    /**
+     * Refuses a back-office change to a POS Pro-forma Invoice still out for delivery — see
+     * {@link #save}. Public so the controller can apply the same rule to its status and payment
+     * endpoints; the POS conversion itself posts through {@link #updateStatus} directly.
+     */
+    public void assertNotPendingProforma(SalesInvoice existing) {
+        if (existing != null && Boolean.TRUE.equals(existing.getPosProformaPending())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    existing.getInvoiceNumber() + " is a POS Pro-forma Invoice out for delivery. It becomes the"
+                            + " sales invoice when it is settled or returned in POS → Delivery Settlement.");
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public void assertNotPendingProforma(Long id) {
+        if (id != null) assertNotPendingProforma(invoiceRepo.findById(id).orElse(null));
+    }
+
     @Transactional
     public void delete(Long id) {
         SalesInvoice existing = getById(id);
+        assertNotPendingProforma(existing);
         if (existing != null && dayCloseRepository.existsByBranchIdAndCloseDate(existing.getBranchId(), existing.getInvoiceDate())) {
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.FORBIDDEN,

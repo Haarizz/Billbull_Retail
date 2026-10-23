@@ -70,6 +70,9 @@ export function useCheckout({
   customerCtx,    // { selectedCustomerData, customerOptions }
   sessionCtx,     // { currentSession, currentTerminal, posSettings }
   layaway,        // { activeLayawayId, activeLayawayDeposit, setActiveLayawayId, setActiveLayawayDeposit }
+  salesOrder,     // { activeSalesOrder, activeSalesOrderAdvance, clearActiveSalesOrder } - the Sales
+                  //   Order this cart was opened from (POS → Orders). Optional: absent means an
+                  //   ordinary sale. Its advance is pre-credited tender, like a layaway deposit.
   shipping,       // { shippingCharge, shippingAddress, deliveryAddress, deliveryDriver, deliveryNotes }
   salesperson,    // { salespersonPayload, resetSalesperson } - attribution of the sale to an
                   //   employee, which is NOT the cashier: the cashier stays the session owner.
@@ -220,7 +223,9 @@ export function useCheckout({
       // Shipping is an untaxed flat add on top of the product total (not a cart line).
       const shippingChargeNum = Number(shippingCharge) || 0;
       const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
-      const depositSnapshot = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
+      const salesOrderSnapshot = salesOrder?.activeSalesOrder || null;
+      const depositSnapshot = (activeLayawayDeposit > 0 ? activeLayawayDeposit : 0)
+        + (salesOrder?.activeSalesOrderAdvance > 0 ? salesOrder.activeSalesOrderAdvance : 0);
       const effectiveDueAmt = Math.max(0, grandTotal - depositSnapshot);
 
       // Every payment figure comes from the cashier's allocations — one projection, so the
@@ -295,6 +300,9 @@ export function useCheckout({
         supervisorOverridePin: overrideCreds?.pin || undefined,
         supervisorOverrideEmail: overrideCreds?.email || undefined,
         supervisorOverridePassword: overrideCreds?.password || undefined,
+        // Taking up a Sales Order: the server links the invoice, closes the order and applies
+        // its advance. Only present for such a sale, so an ordinary payload is unchanged.
+        ...(salesOrderSnapshot?.soNumber ? { linkedSalesOrder: salesOrderSnapshot.soNumber } : {}),
       };
       payload.checkoutKey = checkoutKeyFor(payload);
 
@@ -376,6 +384,7 @@ export function useCheckout({
       // reset sequence as contiguous source text.
       salesperson?.resetSalesperson?.();
       if (layawayIdSnapshot) { setActiveLayawayId(null); setActiveLayawayDeposit(0); }
+      if (salesOrderSnapshot) salesOrder?.clearActiveSalesOrder?.();
       // Transition the checkout overlay to the "complete" screen in-place.
       // Deferred to a separate React commit (queueMicrotask) so the state
       // resets above (clearInvoice, clearLines, etc.) are committed

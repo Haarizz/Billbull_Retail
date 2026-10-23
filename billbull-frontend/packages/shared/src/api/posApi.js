@@ -482,7 +482,25 @@ export const getPosCustomerHistory = async (customerCode) => {
 
 // ── Delivery orders ────────────────────────────────────────────────────────
 
-/** List pending delivery orders (CONFIRMED / PARTIALLY_PAID) for the given branch. */
+// ── POS → Orders (Sales Orders the till can take up) ──────────────────────
+
+/**
+ * Sales Orders the till can open into the cart. `source` 'SALES' (default) lists orders confirmed
+ * in Customers & Sales → Sales Orders; 'SAVED' lists draft orders such as the till's own "Save as
+ * Order". Orders already invoiced or out for delivery are not returned. Each row is the order as
+ * the Sales Order API returns it plus `openAdvance` (advance received, not yet applied) and
+ * `deliveryOrder` (fulfilled by delivery rather than a checkout).
+ */
+export const getPosSalesOrders = async (source = 'SALES') => {
+  const res = await api.get(`${BASE}/sales-orders`, { params: { source } });
+  return Array.isArray(res.data) ? res.data : [];
+};
+
+/**
+ * List pending delivery orders (CONFIRMED / PARTIALLY_PAID, plus PI Flow Pro-forma Invoices
+ * still DRAFT) for the given branch. A PI row carries `posProformaPending: true` and, when it was
+ * taken up from a Sales Order with an advance, `posProformaAdvance` — already paid, in effect.
+ */
 export const getDeliveryOrders = async (branchId) => {
   const res = await api.get(`${BASE}/checkout/deliveries`, { params: { branchId } });
   return res.data;

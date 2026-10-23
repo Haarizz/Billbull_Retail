@@ -253,7 +253,57 @@ export const buildPosCheckoutItems = (items, posSettings = null) =>
     batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
     serialNumber: item.isVoided ? null : (item.serialNumber || null),
     voided: !!item.isVoided,
+    ...salesOrderLineFields(item),
   }));
+
+/**
+ * The Sales Order link of a cart line opened from POS → Orders, or nothing. A till line always
+ * sells in 'Each', but an order line carries the unit it was ordered in (a Box of 12 is priced per
+ * box), so that unit travels with it — otherwise stock and price would be read per piece. Spread
+ * into the line payload only when present, so an ordinary sale's payload is unchanged.
+ */
+export const salesOrderLineFields = (item) => (item?.salesOrderItemId
+  ? { salesOrderItemId: item.salesOrderItemId, ...(item.unit ? { unit: item.unit } : {}) }
+  : {});
+
+/**
+ * Projects a Sales Order (as POS → Orders lists it) into cart lines. Each line keeps its order
+ * line id so the invoice can be linked back to the order, and its ordered unit.
+ */
+export const mapSalesOrderItemsToCart = (order, posSettings = null) =>
+  (order?.items || []).map(it => {
+    const price = toNumber(it.price, 0);
+    const quantity = toNumber(it.quantity, 0);
+    const discount = toNumber(it.discount, 0);
+    return {
+      id: it.itemCode,
+      productId: it.itemCode,
+      name: it.description || it.productName || it.itemCode || '',
+      barcode: it.barcode || it.itemCode,
+      code: it.itemCode,
+      image: null,
+      price,
+      quantity,
+      discount,
+      taxRate: it.taxRate != null
+        ? toNumber(it.taxRate, 0)
+        : (posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0)),
+      total: price * quantity * (1 - discount / 100),
+      unit: it.unit || null,
+      salesOrderItemId: it.id ?? null,
+      serialNumber: it.serialNumber || null,
+      isVoided: false,
+    };
+  }).filter(line => line.code && line.quantity > 0);
+
+/** True when a Sales Order is fulfilled by delivery (Process Delivery → Delivery Settlement)
+ *  rather than a checkout. Only an explicit "Delivery" counts: the Sales Order editor always saves
+ *  a type, while the till's own "Save as Order" saves none and is a counter sale. */
+export const isDeliverySalesOrder = (order) => {
+  if (!order) return false;
+  if (typeof order.deliveryOrder === 'boolean') return order.deliveryOrder;
+  return String(order.deliveryType || '').trim().toLowerCase() === 'delivery';
+};
 
 export const getPosVatLabel = (currentInvoice, posSettings) => {
   if (!currentInvoice || !currentInvoice.items) return currentInvoice?.taxInclusive ? 'VAT incl.' : 'VAT';

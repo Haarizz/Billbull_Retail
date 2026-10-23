@@ -97,7 +97,12 @@ export function useDelivery({
         person: inv.posDriverName || '',
         invoiceAmt: toNumber(inv.invoiceTotal) - toNumber(inv.deliveryCharge),
         deliveryCharge: toNumber(inv.deliveryCharge),
-        paidAmt: toNumber(inv.amountPaid),
+        // A PI Flow Pro-forma Invoice taken up from a Sales Order absorbs the order's advance
+        // when it is converted, so that advance already counts as paid here.
+        paidAmt: toNumber(inv.amountPaid) + toNumber(inv.posProformaAdvance),
+        // PI Flow: still a Pro-forma Invoice (Draft); settling or returning it converts it.
+        proforma: !!inv.posProformaPending,
+        linkedSalesOrder: inv.linkedSalesOrder || null,
         // Sold lines, for the return panel line picker. Voided lines are dropped here rather
         // than in the panel: they were struck off before the driver left, so there is nothing
         // of them in the van to bring back, and showing them invites returning thin air.

@@ -86,7 +86,7 @@ describe('Checkout opens the scan modal itself', () => {
     // The orders list has its own Checkout button; it is a POS sale like any other and cannot be a
     // way around the scan. It no longer carries its own copy of the condition — it calls the one
     // shared handler, so there is a single place the gate can be got wrong.
-    const ordersHandler = POS_SALES.slice(POS_SALES.indexOf('const handleOpenOrderAndCheckout = async () => {'));
+    const ordersHandler = POS_SALES.slice(POS_SALES.indexOf('const handleOpenOrderAndCheckout = () => {'));
     expect(ordersHandler.slice(0, 600)).toContain('handleCheckout();');
   });
 

@@ -77,7 +77,7 @@ function OriginalCheckoutMarkup({
   tplStampDataUrl, USE_NEW_POS_PRINT_TEMPLATE, tplInvoiceShowStamp, printHtml, buildInvoiceSheetHtml,
   buildThermalReceiptArtifacts, printThermalReceiptWithConfiguredPrinter, setShowReprintModal,
   receiptShareChannel, receiptShareInitialValue, handleReceiptShareSend,
-  shippingCharge, currentInvoice, activeLayawayDeposit, checkoutEffectiveDue, previewInvoiceNo,
+  shippingCharge, currentInvoice, activeLayawayDeposit, activeSalesOrderAdvance = 0, checkoutEffectiveDue, previewInvoiceNo,
   checkoutPayment, checkoutCompatibility, showA4CheckoutPreview, checkoutA4Html, checkoutA4BlobUrl,
   checkoutPreviewBlobUrl, PaymentAllocationPanel,
   loadPosCustomers, selectedCustomer, selectedCustomerData, checkoutOnlineBankAccounts,
@@ -188,7 +188,7 @@ function OriginalCheckoutMarkup({
 
         const shippingChargeNum = Number(shippingCharge) || 0;
         const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
-        const depositAmt = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
+        const depositAmt = (activeLayawayDeposit > 0 ? activeLayawayDeposit : 0) + activeSalesOrderAdvance;
         // Owned by the Payment Manager (checkoutEffectiveDue) so the screen and the manager
         // measure every allocation against exactly the same amount due.
         const effectiveDue = checkoutEffectiveDue;
@@ -838,6 +838,11 @@ function CheckoutHarness({ base, log, initial = {} }) {
   const setCheckoutRemarks = logged('setCheckoutRemarks', rawCheckoutRemarks);
   const cancelCheckoutTenders = () => { log.push(['cancelCheckoutTenders']); base.cancelCheckoutTenders(); };
   const { handleOpenOrder } = base;
+  // POSSales' orders-dialog opener: loads the order into the cart and returns its customer, or
+  // null when the order could not be taken up.
+  const openIntoCart = handleOpenOrder;
+  // The Sales Order the cart was opened from; a Delivery order is refused by handleCheckout.
+  const activeSalesOrder = initial.activeSalesOrder ?? null;
   // Salesperson verification, as POSSales sees it. Both default to the feature being OFF, which
   // is what keeps every existing case in this file exercising the unchanged checkout path.
   const salespersonRequired = initial.salespersonRequired ?? false;
@@ -876,6 +881,17 @@ function CheckoutHarness({ base, log, initial = {} }) {
       openSalespersonScanModal();
       return false;
     }
+    // A Sales Order whose delivery type is Delivery is never checked out at the counter: it goes
+    // out through Process Delivery and is paid (or returned) at Delivery Settlement. Pickup and
+    // Courier orders check out like any sale.
+    if (activeSalesOrder?.deliveryOrder) {
+      alert({
+        tone: 'warning',
+        title: 'Delivery order — no checkout',
+        message: `${activeSalesOrder.soNumber} is a Delivery order. Use Delivery to send it out; the payment is collected at Delivery Settlement.`,
+      });
+      return false;
+    }
     setCheckoutPhase('payment');
     setShowPaymentDialog(true);
     // The Payment Manager starts with no allocations — the cashier picks a method and
@@ -885,13 +901,13 @@ function CheckoutHarness({ base, log, initial = {} }) {
     setCheckoutQuickCash(checkoutQuickCashRequest(opts, quickCashSeqRef.current));
     return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal]);
+  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal, activeSalesOrder]);
   // HANDLE-CHECKOUT-END
 
   const ordersListCheckout = (() => {
     // ORDERS-CHECKOUT-START
-    const handleOpenOrderAndCheckout = async () => {
-      await handleOpenOrder();
+    const handleOpenOrderAndCheckout = () => {
+      if (!openIntoCart()) return;
       // Delegates to the SAME shared entry point as the main Checkout button rather than
       // opening the payment dialog itself: an order picked straight into settlement is still a
       // POS sale and still needs its salesperson scanned. The order is loaded into the cart
@@ -948,7 +964,7 @@ function CheckoutHarness({ base, log, initial = {} }) {
 
 const renderHarness = (initial = {}, baseOverrides = {}) => {
   const log = [];
-  const base = makeProps({ handleOpenOrder: vi.fn(async () => {}), ...baseOverrides });
+  const base = makeProps({ handleOpenOrder: vi.fn(() => ({ id: 'walk-in' })), ...baseOverrides });
   const view = render(<CheckoutHarness base={base} log={log} initial={initial} />);
   return { ...view, log, base, root: () => screen.getByTestId('checkout-slot').firstElementChild };
 };
@@ -1640,13 +1656,26 @@ describe('16. openers', () => {
     expect(screen.queryByText('SI-POS-000123')).toBeNull();
   });
 
-  it('the orders-list opener awaits handleOpenOrder before opening', async () => {
-    const open = deferred();
-    const { root } = renderHarness({ showPaymentDialog: false, checkoutPhase: 'payment' }, { handleOpenOrder: vi.fn(() => open.promise) });
-    fireEvent.click(screen.getByTestId('orders-list-checkout'));
+  it('the orders-list opener does not open settlement when the order could not be taken up', async () => {
+    // openIntoCart returns null when the cashier declines to replace the cart, or the order's
+    // customer is not available at this till — settlement must stay closed.
+    const { root, log } = renderHarness({ showPaymentDialog: false, checkoutPhase: 'payment' }, { handleOpenOrder: vi.fn(() => null) });
+    await act(async () => { fireEvent.click(screen.getByTestId('orders-list-checkout')); });
     expect(root()).toBeNull();
-    await act(async () => { open.resolve(); });
-    expect(cls(root())).toBe(PAYMENT_ROOT_CLASS);
+    expect(log).toEqual([]);
+  });
+
+  it('a Delivery Sales Order in the cart is refused at Checkout — it goes out through Process Delivery', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { root, log } = renderHarness({
+      showPaymentDialog: false, checkoutPhase: 'payment',
+      activeSalesOrder: { soNumber: 'SO-0120', deliveryOrder: true },
+    });
+    fireEvent.click(screen.getByTestId('open-checkout'));
+    expect(root()).toBeNull();
+    expect(log).toEqual([]);
+    expect(alertSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Delivery order — no checkout' }));
+    alertSpy.mockRestore();
   });
 });
 
@@ -1809,8 +1838,8 @@ describe('18. source anchors — the copy', () => {
   it.each([
     ['SHARE-INITIAL', '  const receiptShareInitialValue = useMemo(() => {', '\n  }, [lastPaidInvoice, receiptShareChannel]);'],
     ['HANDLE-CHECKOUT', '  const quickCashSeqRef = useRef(0);\n  const handleCheckout = useCallback((opts) => {',
-      '\n  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal]);'],
-    ['ORDERS-CHECKOUT', '        const handleOpenOrderAndCheckout = async () => {', '\n        };'],
+      '\n  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal, activeSalesOrder]);'],
+    ['ORDERS-CHECKOUT', '        const handleOpenOrderAndCheckout = () => {', '\n        };'],
     ['TICK', '  useEffect(() => {\n    const isActive = currentSession?.status === \'OPEN\'', '\n  }, [currentSession?.id, currentSession?.openedAt, currentSession?.status]);'],
   ])('harness block %s is identical to POSSales', (marker, start, end) => {
     const copy = between(SELF, `// ${marker}-START\n`, `// ${marker}-END`);

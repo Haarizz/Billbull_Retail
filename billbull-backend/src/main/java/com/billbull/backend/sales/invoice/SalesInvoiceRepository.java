@@ -712,7 +712,9 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         @Query("SELECT DISTINCT s FROM SalesInvoice s LEFT JOIN FETCH s.items " +
                "WHERE s.salesChannel IN ('POS', 'Retail_POS', 'Retail_Delivery') " +
                "AND s.posDriverName IS NOT NULL AND s.posDriverName <> '' " +
-               "AND s.status IN ('CONFIRMED', 'PARTIALLY_PAID') " +
+               // A PI Flow delivery order is a DRAFT Pro-forma Invoice until settlement converts it.
+               "AND (s.status IN ('CONFIRMED', 'PARTIALLY_PAID') " +
+               "     OR (s.status = 'DRAFT' AND s.posProformaPending = TRUE)) " +
                // Orders whose goods came back and which owe nothing afterwards. Excluded here
                // rather than by status, because the status still describes the sale correctly —
                // what ended is the delivery, not the invoice. A return that leaves a balance
@@ -722,6 +724,16 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                "AND (:branchId IS NULL OR s.branchId = :branchId) " +
                "ORDER BY s.createdAt DESC")
         List<SalesInvoice> findPendingDeliveryOrders(@Param("branchId") Long branchId);
+
+        /**
+         * Which of the given Sales Orders already have a live (not cancelled) invoice — posted, or
+         * a POS Pro-forma Invoice still out for delivery. Such an order has been taken up and must
+         * not be offered to the POS a second time.
+         */
+        @Query("SELECT DISTINCT s.linkedSalesOrder FROM SalesInvoice s " +
+               "WHERE s.linkedSalesOrder IN :soNumbers " +
+               "AND s.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED")
+        List<String> findLinkedSalesOrdersWithLiveInvoice(@Param("soNumbers") java.util.Collection<String> soNumbers);
 
         /**
          * Persist ONLY the archived ZATCA receipt QR for an invoice, as a single-column

@@ -14,7 +14,15 @@ export const DOCUMENT_TITLES = {
     TAX_INVOICE: 'TAX INVOICE',
     SALES_INVOICE: 'SALES INVOICE',
     CREDIT_NOTE: 'CREDIT NOTE',
+    PROFORMA_INVOICE: 'PRO-FORMA INVOICE',
 };
+
+/**
+ * True for a POS PI Flow Pro-forma Invoice: a delivery order sent out as a Draft that becomes the
+ * sales invoice only when Delivery Settlement settles or returns it. It is not a tax invoice yet,
+ * so it never prints under one.
+ */
+export const isProformaDocument = (doc) => !!doc?.posProformaPending;
 
 /**
  * Resolve the final tax amount for a document from whichever field it was
@@ -40,6 +48,8 @@ export const isTaxInvoiceDocument = (doc) => resolveDocumentTaxAmount(doc) > 0;
  *   user) always wins, matching prior call-site behaviour.
  */
 export const getInvoiceDocumentTitle = (doc, { isReturn = false, titleOverride } = {}) => {
+    // Ahead of the template override: a configured "TAX INVOICE" header must not title a PI.
+    if (!isReturn && isProformaDocument(doc)) return DOCUMENT_TITLES.PROFORMA_INVOICE;
     if (titleOverride) return titleOverride;
     if (isReturn) return DOCUMENT_TITLES.CREDIT_NOTE;
     return isTaxInvoiceDocument(doc) ? DOCUMENT_TITLES.TAX_INVOICE : DOCUMENT_TITLES.SALES_INVOICE;

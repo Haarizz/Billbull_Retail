@@ -68,6 +68,14 @@ public class PosCheckoutRequest {
      *  unaffected. */
     private List<PosPaymentAllocation> paymentAllocations;
 
+    /** The Sales Order (by SO number) this sale takes up — set when the cashier opened the order
+     *  from POS → Orders. Links the invoice to the order (which becomes INVOICED, releases its
+     *  reservation and contributes any advance already received). Null for an ordinary sale. */
+    private String linkedSalesOrder;
+
+    public String getLinkedSalesOrder() { return linkedSalesOrder; }
+    public void setLinkedSalesOrder(String linkedSalesOrder) { this.linkedSalesOrder = linkedSalesOrder; }
+
     /** One card leg of a (possibly multi-card) Card payment. */
     public static class PosCardLeg {
         private String cardType;
@@ -98,6 +106,11 @@ public class PosCheckoutRequest {
         private String voidReason;
         /** Serial number scanned for a serialized product (Product.isSerial). */
         private String serialNumber;
+        /** The Sales Order line this cart line came from, when the sale takes up a Sales Order. */
+        private Long salesOrderItemId;
+
+        public Long getSalesOrderItemId() { return salesOrderItemId; }
+        public void setSalesOrderItemId(Long salesOrderItemId) { this.salesOrderItemId = salesOrderItemId; }
 
         public String getItemCode() { return itemCode; }
         public void setItemCode(String itemCode) { this.itemCode = itemCode; }

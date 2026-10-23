@@ -72,6 +72,8 @@ describe('beginEditSettings — draft seeding', () => {
       // Delivery Return charge policy — likewise seeded from the stored value, because the
       // draft is what the Behavior save posts back.
       deliveryReturnChargePolicy: 'WAIVE',
+      // Delivery Workflow — seeded the same way; DEFAULT_SETTLEMENT is how delivery always worked.
+      deliveryWorkflowMode: 'DEFAULT_SETTLEMENT',
       supervisorPin: '',
       voidMode: 'VOID',
       productEntryMode: 'DIRECT_ADD',

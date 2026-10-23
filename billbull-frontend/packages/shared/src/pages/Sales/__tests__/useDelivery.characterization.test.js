@@ -131,7 +131,23 @@ describe('loadDeliveryOrders', () => {
       invoiceAmt: 200,        // invoiceTotal 220 - deliveryCharge 20
       deliveryCharge: 20,
       paidAmt: 50,
+      proforma: false,        // an ordinary (DEFAULT_SETTLEMENT) delivery
+      linkedSalesOrder: null,
       items: [],              // absent on this fixture; the projection defaults it
+    });
+  });
+
+  it('flags a PI Flow Pro-forma Invoice and counts its Sales Order advance as paid', async () => {
+    // The advance is applied to the invoice when settlement converts the PI, so the settle
+    // panel must ask only for the remainder.
+    getDeliveryOrders.mockResolvedValue([order({
+      status: 'DRAFT', posProformaPending: true, posProformaAdvance: 70, linkedSalesOrder: 'SO-0120',
+    })]);
+    const { view } = setup();
+    await act(async () => { await view.result.current.loadDeliveryOrders(); });
+
+    expect(view.result.current.deliveryOrders[0]).toMatchObject({
+      proforma: true, linkedSalesOrder: 'SO-0120', paidAmt: 120, // amountPaid 50 + advance 70
     });
   });
 

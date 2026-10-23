@@ -1034,4 +1034,117 @@ class PosCheckoutControllerTest {
         verify(invoiceService).recordPayment(eq(896L), eq(195.0), eq("Visa"), eq("CARD-REF-1"),
                 any(LocalDate.class), any(), isNull(), isNull(), any(), eq(100L));
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // POS → Orders (Sales Order take-up) and the PI Flow delivery workflow
+    // ═══════════════════════════════════════════════════════════════════════
+
+    private PosCheckoutRequest cashRequest(double amount) {
+        PosCheckoutRequest req = new PosCheckoutRequest();
+        req.setPaymentMode("Cash");
+        req.setAmountTendered(amount);
+        req.setCustomerCode("C-001");
+        PosCheckoutRequest.PosCheckoutItem item = new PosCheckoutRequest.PosCheckoutItem();
+        item.setItemCode("10593");
+        item.setItemName("WATER TANK");
+        item.setQuantity(1);
+        item.setPrice(amount);
+        item.setSalesOrderItemId(7L);
+        req.setItems(List.of(item));
+        return req;
+    }
+
+    private SalesInvoice draftInvoice(Long id, String total) {
+        SalesInvoice draft = new SalesInvoice();
+        draft.setId(id);
+        draft.setInvoiceNumber("INV-" + id);
+        draft.setInvoiceTotal(new BigDecimal(total));
+        draft.setInvoiceDate(LocalDate.now());
+        draft.setStatus(SalesInvoiceStatus.DRAFT);
+        return draft;
+    }
+
+    @Test
+    void checkoutOfASalesOrderLinksTheInvoiceAndCompletesTheOrderAfterThePayment() {
+        var soService = mock(com.billbull.backend.pos.salesorder.PosSalesOrderService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "posSalesOrderService", soService);
+        SalesInvoice draft = draftInvoice(61L, "500.00");
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(61L)).thenReturn(draft);
+
+        PosCheckoutRequest req = cashRequest(500.0);
+        req.setLinkedSalesOrder(" SO-0120 ");
+        controller.checkout(req);
+
+        verify(soService).assertCanTakeUp("SO-0120", "C-001");
+        ArgumentCaptor<SalesInvoice> saved = ArgumentCaptor.forClass(SalesInvoice.class);
+        verify(invoiceService).save(saved.capture());
+        assertEquals("SO-0120", saved.getValue().getLinkedSalesOrder());
+        assertEquals(7L, saved.getValue().getItems().get(0).getSalesOrderItemId());
+        var order = org.mockito.Mockito.inOrder(invoiceService);
+        order.verify(invoiceService).recordPayment(eq(61L), eq(500.0), eq("Cash"),
+                isNull(), any(LocalDate.class), isNull(), isNull(), isNull(), any(), any());
+        order.verify(invoiceService).completeSalesOrderConversion(61L);
+    }
+
+    @Test
+    void aRefusedSalesOrderTakeUpWritesNothing() {
+        var soService = mock(com.billbull.backend.pos.salesorder.PosSalesOrderService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "posSalesOrderService", soService);
+        when(soService.assertCanTakeUp(any(), any())).thenThrow(
+                new ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT, "taken"));
+
+        PosCheckoutRequest req = cashRequest(500.0);
+        req.setLinkedSalesOrder("SO-0120");
+        assertThrows(ResponseStatusException.class, () -> controller.checkout(req));
+
+        verify(invoiceService, never()).save(any());
+    }
+
+    @Test
+    void anOrdinarySaleNeverTouchesTheSalesOrderPath() {
+        SalesInvoice draft = draftInvoice(62L, "500.00");
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(62L)).thenReturn(draft);
+
+        controller.checkout(cashRequest(500.0));
+
+        verify(invoiceService, never()).completeSalesOrderConversion(any());
+        ArgumentCaptor<SalesInvoice> saved = ArgumentCaptor.forClass(SalesInvoice.class);
+        verify(invoiceService).save(saved.capture());
+        assertEquals(null, saved.getValue().getItems().get(0).getSalesOrderItemId());
+    }
+
+    @Test
+    void settlingAPendingProformaConvertsItBeforeRecordingThePayment() {
+        PosProformaDeliveryService proforma = mock(PosProformaDeliveryService.class);
+        deliverySettlementService.setProformaDeliveryService(proforma);
+        SalesInvoice invoice = deliveryInvoice(901L, "INV-901", 300.0, 0.0);
+        invoice.setStatus(SalesInvoiceStatus.DRAFT);
+        invoice.setPosProformaPending(Boolean.TRUE);
+        when(invoiceRepository.findByIdForUpdate(901L)).thenReturn(java.util.Optional.of(invoice));
+        when(invoiceRepository.findById(901L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(true);
+        when(sessionService.getById(100L)).thenReturn(openPosSession(100L));
+
+        controller.settleDelivery(901L, deliverySettleRequest(100L));
+
+        var order = org.mockito.Mockito.inOrder(proforma, invoiceService);
+        order.verify(proforma).convert(eq(901L), eq(100L), any(LocalDate.class));
+        order.verify(invoiceService).recordPayment(eq(901L), eq(300.0), any(), any(),
+                any(LocalDate.class), any(), isNull(), isNull(), any(), eq(100L));
+    }
+
+    @Test
+    void settlingAnOrdinaryDeliveryNeverConverts() {
+        PosProformaDeliveryService proforma = mock(PosProformaDeliveryService.class);
+        deliverySettlementService.setProformaDeliveryService(proforma);
+        SalesInvoice invoice = deliveryInvoice(902L, "INV-902", 300.0, 0.0);
+        when(invoiceRepository.findByIdForUpdate(902L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(true);
+
+        controller.settleDelivery(902L, deliverySettleRequest(null));
+
+        verify(proforma, never()).convert(any(), any(), any());
+    }
 }

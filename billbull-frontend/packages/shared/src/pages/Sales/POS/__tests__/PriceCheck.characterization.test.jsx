@@ -1224,7 +1224,7 @@ describe('source contract', () => {
     // (getProductsList and AsyncSearchableDropdown later left POSSales with the SerialBatch extraction, their last POSSales user)
     expect(PARENT).not.toMatch(/\bAsyncSearchableDropdown\b/);
     expect(PARENT).toContain("import { DirhamSymbol, DenominationLabel, CurrencyAmount, DenominationAmount, renderAED, setActiveCurrency } from './POS/POSCurrency';");
-    expect(PARENT).toContain("import { toNumber, mapPosProductAggregateItem, mapPosCustomer, getPriceFloor, mergeSavedPosSettings } from './POS/posUtils';");
+    expect(PARENT).toContain("import { toNumber, mapPosProductAggregateItem, mapPosCustomer, getPriceFloor, mergeSavedPosSettings, isDeliverySalesOrder } from './POS/posUtils';");
     ['AlertCircle', 'Plus', 'Search', 'ShoppingCart', 'X'].forEach((icon) => expect(PARENT).toMatch(new RegExp(`^  ${icon},$`, 'm')));
   });
 

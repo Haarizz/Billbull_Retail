@@ -84,6 +84,8 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
 
   java.util.Optional<SalesOrder> findBySoNumber(String soNumber);
 
+  List<SalesOrder> findByStatusIn(java.util.Collection<SalesOrderStatus> statuses);
+
   boolean existsBySoNumber(String soNumber);
 
   @Query("SELECT so.soNumber FROM SalesOrder so WHERE so.soNumber LIKE CONCAT(:prefix, '%')")

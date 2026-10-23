@@ -36,6 +36,9 @@ export function usePosBehaviourSettings({ posSettings, setPosSettings, businessD
       // Seeded from the stored value for the same reason as posFunctionAccessMode: the draft is
       // what gets posted, so an absent field here would send the console's blind default back.
       deliveryReturnChargePolicy: posSettings?.deliveryReturnChargePolicy || 'WAIVE',
+      // Seeded for the same reason: DEFAULT_SETTLEMENT (the delivery is a sale when it goes out)
+      // or PI_FLOW (it goes out as a Pro-forma Invoice and becomes a sale at settlement).
+      deliveryWorkflowMode: posSettings?.deliveryWorkflowMode || 'DEFAULT_SETTLEMENT',
       // Write-only — the backend never returns the raw PIN (see supervisorPinSet on posSettings).
       supervisorPin: '',
       voidMode: posSettings?.voidMode === 'DELETE' ? 'DELETE' : 'VOID',

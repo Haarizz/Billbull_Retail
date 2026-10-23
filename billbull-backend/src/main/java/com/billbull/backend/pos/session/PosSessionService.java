@@ -2480,7 +2480,14 @@ public class PosSessionService {
         // Check for pending/failed payments for the resolved range's invoices
         List<Long> sessionIds = sessionsInRange.stream().map(PosSession::getId).toList();
         List<SalesInvoice> invoices = sessionIds.isEmpty() ? List.of() : invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(branchId, sessionIds);
-        long draftInvoices = invoices.stream().filter(i -> i.getStatus() == SalesInvoiceStatus.DRAFT).count();
+        // A PI Flow Pro-forma Invoice is DRAFT by design while its goods are out for delivery —
+        // it is not an unfinished sale of this day, and an order still on the road overnight must
+        // not block Day Close. It is converted (and re-homed onto the settling session and date)
+        // when Delivery Settlement concludes it.
+        long draftInvoices = invoices.stream()
+                .filter(i -> i.getStatus() == SalesInvoiceStatus.DRAFT)
+                .filter(i -> !Boolean.TRUE.equals(i.getPosProformaPending()))
+                .count();
         if (draftInvoices > 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot close day: " + draftInvoices + " Draft invoices exist.");
         }

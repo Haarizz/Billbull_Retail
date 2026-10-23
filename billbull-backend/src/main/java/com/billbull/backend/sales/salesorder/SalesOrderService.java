@@ -505,6 +505,25 @@ public class SalesOrderService {
         return orders;
     }
 
+    /**
+     * Orders in the given statuses, with the same branch and ownership scoping as the Sales Order
+     * list, newest first and hydrated for display. Used by POS → Orders to offer the orders a
+     * cashier can take up at the till.
+     */
+    @Transactional(readOnly = true)
+    public List<SalesOrder> getByStatuses(java.util.Collection<SalesOrderStatus> statuses) {
+        List<SalesOrder> orders = new ArrayList<>(
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScopedByBranch(
+                                orderRepo.findByStatusIn(statuses),
+                                SalesOrder::getBranch),
+                        SalesOrder::getCreatedByUserId));
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                orders, SalesOrder::getOrderDate, SalesOrder::getSoNumber, SalesOrder::getId);
+        orders.forEach(this::hydrateForList);
+        return orders;
+    }
+
     private void hydrateForList(SalesOrder order) {
         Hibernate.initialize(order.getItems());
         Hibernate.initialize(order.getWarehouse());

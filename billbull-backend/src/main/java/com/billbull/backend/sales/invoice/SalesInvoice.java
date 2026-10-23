@@ -209,6 +209,27 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
     @Column(name = "pos_delivery_return_number", length = 50)
     private String posDeliveryReturnNumber;
 
+    /** True while this invoice is a POS Pro-forma Invoice: a delivery order sent out under the
+     *  PI Flow delivery workflow, held as DRAFT (no stock movement, no GL, not in sales reports)
+     *  until Delivery Settlement converts it. Cleared at conversion; null on every other invoice.
+     *  See {@code PosProformaDeliveryService}. */
+    @Column(name = "pos_proforma_pending")
+    private Boolean posProformaPending;
+
+    /** When the Pro-forma Invoice was issued (the order went out for delivery). Kept after
+     *  conversion so the register can still show that the sale started life as a PI. */
+    @Column(name = "pos_proforma_issued_at")
+    private java.time.LocalDateTime posProformaIssuedAt;
+
+    /** When the Pro-forma Invoice was converted into this final sales invoice. */
+    @Column(name = "pos_proforma_converted_at")
+    private java.time.LocalDateTime posProformaConvertedAt;
+
+    /** Read-only view for Delivery Settlement: the Sales Order advance a pending Pro-forma Invoice
+     *  absorbs when it is converted, so the till collects only the remainder. Not persisted. */
+    @jakarta.persistence.Transient
+    private BigDecimal posProformaAdvance;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "pos_driver_employee_id", insertable = false, updatable = false)
     @com.fasterxml.jackson.annotation.JsonIgnore
@@ -672,6 +693,15 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
 
     public java.time.LocalDateTime getPosDeliveryReturnedAt() { return posDeliveryReturnedAt; }
     public void setPosDeliveryReturnedAt(java.time.LocalDateTime posDeliveryReturnedAt) { this.posDeliveryReturnedAt = posDeliveryReturnedAt; }
+
+    public Boolean getPosProformaPending() { return posProformaPending; }
+    public void setPosProformaPending(Boolean posProformaPending) { this.posProformaPending = posProformaPending; }
+    public java.time.LocalDateTime getPosProformaIssuedAt() { return posProformaIssuedAt; }
+    public void setPosProformaIssuedAt(java.time.LocalDateTime posProformaIssuedAt) { this.posProformaIssuedAt = posProformaIssuedAt; }
+    public java.time.LocalDateTime getPosProformaConvertedAt() { return posProformaConvertedAt; }
+    public void setPosProformaConvertedAt(java.time.LocalDateTime posProformaConvertedAt) { this.posProformaConvertedAt = posProformaConvertedAt; }
+    public BigDecimal getPosProformaAdvance() { return posProformaAdvance; }
+    public void setPosProformaAdvance(BigDecimal posProformaAdvance) { this.posProformaAdvance = posProformaAdvance; }
 
     public String getPosDeliveryReturnNumber() { return posDeliveryReturnNumber; }
     public void setPosDeliveryReturnNumber(String posDeliveryReturnNumber) { this.posDeliveryReturnNumber = posDeliveryReturnNumber; }

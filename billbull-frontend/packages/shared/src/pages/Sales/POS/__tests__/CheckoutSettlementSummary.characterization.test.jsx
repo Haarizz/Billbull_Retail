@@ -68,11 +68,11 @@ function OriginalSettlementSummaryMarkup({ currentInvoice, shippingChargeNum, gr
 
 // ── fixtures and helpers ────────────────────────────────────────────────────────────────
 /** The POSSales derivation (verbatim between the DERIVE markers). */
-function derive({ shippingCharge, currentInvoice, activeLayawayDeposit, checkoutEffectiveDue }) {
+function derive({ shippingCharge, currentInvoice, activeLayawayDeposit, activeSalesOrderAdvance = 0, checkoutEffectiveDue }) {
   // DERIVE-START
         const shippingChargeNum = Number(shippingCharge) || 0;
         const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
-        const depositAmt = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
+        const depositAmt = (activeLayawayDeposit > 0 ? activeLayawayDeposit : 0) + activeSalesOrderAdvance;
         // Owned by the Payment Manager (checkoutEffectiveDue) so the screen and the manager
         // measure every allocation against exactly the same amount due.
         const effectiveDue = checkoutEffectiveDue;

@@ -34,10 +34,18 @@ const TOUCH = read('../POSTouchScreen.jsx');
 const useSharedCheckoutGate = ({
   salespersonRequired, salespersonVerified, openSalespersonScanModal,
   setCheckoutPhase, setShowPaymentDialog,
-  setCheckoutQuickCash = () => {}, quickCashSeqRef,
+  setCheckoutQuickCash = () => {}, quickCashSeqRef, activeSalesOrder = null,
 }) => useCallback((opts) => {
   if (salespersonRequired && !salespersonVerified) {
     openSalespersonScanModal();
+    return false;
+  }
+  if (activeSalesOrder?.deliveryOrder) {
+    alert({
+      tone: 'warning',
+      title: 'Delivery order — no checkout',
+      message: `${activeSalesOrder.soNumber} is a Delivery order. Use Delivery to send it out; the payment is collected at Delivery Settlement.`,
+    });
     return false;
   }
   setCheckoutPhase('payment');
@@ -46,7 +54,7 @@ const useSharedCheckoutGate = ({
   setCheckoutQuickCash(checkoutQuickCashRequest(opts, quickCashSeqRef.current));
   return true;
 }, [salespersonRequired, salespersonVerified, openSalespersonScanModal,
-  setCheckoutPhase, setShowPaymentDialog, setCheckoutQuickCash, quickCashSeqRef]);
+  setCheckoutPhase, setShowPaymentDialog, setCheckoutQuickCash, quickCashSeqRef, activeSalesOrder]);
 
 const codeLines = (src) => src
   .split('\n')
@@ -220,11 +228,21 @@ describe('every other checkout trigger delegates to the same gate', () => {
   it('pinsPosSalesGuard — the copy above is still POSSales.handleCheckout', () => {
     const source = POS_SALES.slice(
       POS_SALES.indexOf('const handleCheckout = useCallback((opts) => {'),
-      POS_SALES.indexOf('}, [salespersonRequired, salespersonVerified, openSalespersonScanModal]);'));
+      POS_SALES.indexOf('}, [salespersonRequired, salespersonVerified, openSalespersonScanModal, activeSalesOrder]);'));
     expect(codeLines(source)).toEqual(codeLines([
       'const handleCheckout = useCallback((opts) => {',
       "if (salespersonRequired && !salespersonVerified) {",
       'openSalespersonScanModal();',
+      'return false;',
+      '}',
+      // A Delivery Sales Order goes out through Process Delivery, never a checkout. Runs after
+      // the salesperson gate, so it never changes what that gate does.
+      'if (activeSalesOrder?.deliveryOrder) {',
+      'alert({',
+      "tone: 'warning',",
+      "title: 'Delivery order — no checkout',",
+      'message: `${activeSalesOrder.soNumber} is a Delivery order. Use Delivery to send it out; the payment is collected at Delivery Settlement.`,',
+      '});',
       'return false;',
       '}',
       "setCheckoutPhase('payment');",
@@ -236,7 +254,7 @@ describe('every other checkout trigger delegates to the same gate', () => {
   });
 
   it('the saved-orders Checkout calls the shared gate instead of re-implementing it', () => {
-    const handler = POS_SALES.slice(POS_SALES.indexOf('const handleOpenOrderAndCheckout = async () => {'));
+    const handler = POS_SALES.slice(POS_SALES.indexOf('const handleOpenOrderAndCheckout = () => {'));
     const body = handler.slice(0, handler.indexOf('};') + 2);
     expect(body).toContain('handleCheckout();');
     // It must not open the dialog itself, and must not carry its own copy of the condition.
