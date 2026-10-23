@@ -226,7 +226,11 @@ public class SalesOrderService {
         }
 
         BigDecimal tax2 = tax.setScale(2, RoundingMode.HALF_UP);
-        BigDecimal total = subTotal.subtract(billDiscAmt).add(tax2).setScale(2, RoundingMode.HALF_UP);
+        // Delivery charge: a flat, untaxed add-on on top of the goods, exactly as on the invoice it
+        // becomes. Negative input is treated as none.
+        BigDecimal deliveryCharge = nz(order.getDeliveryCharge()).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+        order.setDeliveryCharge(deliveryCharge.signum() > 0 ? deliveryCharge : null);
+        BigDecimal total = subTotal.subtract(billDiscAmt).add(tax2).add(deliveryCharge).setScale(2, RoundingMode.HALF_UP);
         BigDecimal advance = nz(order.getAdvanceAmount());
 
         order.setSubTotal(subTotal);
