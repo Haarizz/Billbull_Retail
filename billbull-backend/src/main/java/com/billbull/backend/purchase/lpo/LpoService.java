@@ -456,8 +456,8 @@ public class LpoService {
         }
     }
 
-    private BigDecimal resolveItemPurchaseTax(Product product) {
-        return purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(product);
+    private BigDecimal resolveItemPurchaseTax(Product product, Long branchId) {
+        return purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(product, branchId);
     }
 
     private void calculateTotals(Lpo lpo) {
@@ -467,7 +467,7 @@ public class LpoService {
 
         for (LpoItem item : lpo.getItems()) {
             BigDecimal lineTotal = item.getLineTotal() != null ? item.getLineTotal() : BigDecimal.ZERO;
-            BigDecimal taxPercent = resolveItemPurchaseTax(item.getProduct());
+            BigDecimal taxPercent = resolveItemPurchaseTax(item.getProduct(), lpo.getBranchId());
             BigDecimal lineTax = lineTotal.multiply(taxPercent).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
             subtotal = subtotal.add(lineTotal);
             taxTotal = taxTotal.add(lineTax);
@@ -558,7 +558,8 @@ public class LpoService {
 
         List<LpoItemResponse> itemResponses = lpo.getItems().stream()
                 .map(item -> {
-                    LpoItemResponse itemDto = new LpoItemResponse(item);
+                    LpoItemResponse itemDto = new LpoItemResponse(item,
+                            resolveItemPurchaseTax(item.getProduct(), lpo.getBranchId()));
                     itemDto.setReceivedQuantity(fulfilledMap.getOrDefault(itemDto.getProductId(), 0));
                     itemDto.setImage(imageMap.get(itemDto.getProductId()));
                     if (itemDto.getBarcode() == null || itemDto.getBarcode().isBlank()) {

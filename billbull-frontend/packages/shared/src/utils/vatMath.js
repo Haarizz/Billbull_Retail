@@ -86,3 +86,33 @@ export const resolveLineTaxRate = (product, branchDefaultVatRate, taxEnabled = t
     }
     return fallback;
 };
+
+/**
+ * Resolve the Purchase Tax % for a purchasing line (LPO / GRN / Purchase
+ * Invoice). Frontend mirror of the backend PurchaseTaxResolutionService —
+ * keep the two in sync.
+ *
+ * Precedence:
+ *   1. product.purchaseTax — only when explicitly set (a deliberate 0 is
+ *      honoured; null/undefined/'' mean "not set").
+ *   2. branchDefaultPurchaseTaxRate — the branch's Default Purchase Tax Rate.
+ *   3. 0% — internal system fallback only.
+ *
+ * Unlike resolveLineTaxRate there is no Tax Enabled kill switch (it governs
+ * sales tax only) and no fallback to the product's Sales Tax.
+ *
+ * @param {object} product
+ * @param {number|string|null} branchDefaultPurchaseTaxRate
+ */
+export const resolvePurchaseTaxRate = (product, branchDefaultPurchaseTaxRate) => {
+    const raw = product?.purchaseTax;
+    if (raw !== null && raw !== undefined && raw !== '') {
+        const parsed = parseFloat(raw);
+        if (Number.isFinite(parsed)) return parsed;
+    }
+    if (branchDefaultPurchaseTaxRate !== null && branchDefaultPurchaseTaxRate !== undefined) {
+        const parsedDefault = parseFloat(branchDefaultPurchaseTaxRate);
+        if (Number.isFinite(parsedDefault)) return parsedDefault;
+    }
+    return 0;
+};

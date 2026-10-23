@@ -93,6 +93,13 @@ public class BranchTaxConfigurationService {
         target.setTaxEnabled(request.getTaxEnabled() != null ? request.getTaxEnabled() : true);
         target.setTaxInclusive(request.getTaxInclusive() != null ? request.getTaxInclusive() : false);
         target.setBranchDefaultVatRate(request.getBranchDefaultVatRate() != null ? request.getBranchDefaultVatRate() : 0.0);
+        // Absent = keep what's stored, so a client that only sends the sales fields can't
+        // silently wipe a configured purchase default.
+        if (request.getBranchDefaultPurchaseTaxRate() != null) {
+            target.setBranchDefaultPurchaseTaxRate(request.getBranchDefaultPurchaseTaxRate());
+        } else if (target.getBranchDefaultPurchaseTaxRate() == null) {
+            target.setBranchDefaultPurchaseTaxRate(0.0);
+        }
     }
 
     private BranchTaxConfiguration defaultConfig(Long branchId) {

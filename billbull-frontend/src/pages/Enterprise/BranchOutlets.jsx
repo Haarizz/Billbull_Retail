@@ -66,7 +66,7 @@ const TABS = [
     { id: 'assets', label: 'Assets' },
 ];
 
-const EMPTY_TAX_CONFIG = { taxEnabled: true, taxInclusive: false, branchDefaultVatRate: 0 };
+const EMPTY_TAX_CONFIG = { taxEnabled: true, taxInclusive: false, branchDefaultVatRate: 0, branchDefaultPurchaseTaxRate: 0 };
 
 const FILTERS = ['All', 'Headquarters', 'Branch', 'Outlet', 'Showroom', 'Warehouse'];
 
@@ -208,6 +208,7 @@ const BranchOutlets = () => {
                     taxEnabled: cfg?.taxEnabled !== false,
                     taxInclusive: !!cfg?.taxInclusive,
                     branchDefaultVatRate: cfg?.branchDefaultVatRate ?? 0,
+                    branchDefaultPurchaseTaxRate: cfg?.branchDefaultPurchaseTaxRate ?? 0,
                 });
             })
             .catch(() => {
@@ -299,6 +300,7 @@ const BranchOutlets = () => {
                     taxEnabled: !!taxConfig.taxEnabled,
                     taxInclusive: !!taxConfig.taxInclusive,
                     branchDefaultVatRate: Number(taxConfig.branchDefaultVatRate) || 0,
+                    branchDefaultPurchaseTaxRate: Number(taxConfig.branchDefaultPurchaseTaxRate) || 0,
                 });
             } else if (editId && taxConfigLoadFailed) {
                 toast.error('Branch saved, but Tax Configuration could not be updated — it failed to load. Reopen this branch and retry.');
@@ -1229,6 +1231,21 @@ const BranchOutlets = () => {
                                                     </div>
                                                     <p className="mt-1 text-[11px] text-slate-400">Used only when a product has no Sales Tax configured.</p>
                                                 </div>
+                                            </div>
+
+                                            {/* ── Purchasing ── outside the Calculation block on purpose: the Tax Enabled
+                                                switch governs sales tax only, so this stays editable when it is off. */}
+                                            <div className="pt-4 border-t border-slate-100">
+                                                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">Purchasing</h4>
+                                                <label className="block text-xs font-medium text-slate-600 mb-1">Branch Default Purchase Tax Rate</label>
+                                                <div className="relative w-40">
+                                                    <input type="number" min="0" max="100" step="0.01"
+                                                        value={taxConfig.branchDefaultPurchaseTaxRate}
+                                                        onChange={e => setTaxConfig(c => ({ ...c, branchDefaultPurchaseTaxRate: e.target.value }))}
+                                                        className={`${inputCls} pr-7`} />
+                                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+                                                </div>
+                                                <p className="mt-1 text-[11px] text-slate-400">Used on LPO, GRN and Purchase Invoice lines only when a product has no Purchase Tax configured.</p>
                                             </div>
 
                                             {/* ── Coming Soon placeholders — no backend fields or logic yet ── */}

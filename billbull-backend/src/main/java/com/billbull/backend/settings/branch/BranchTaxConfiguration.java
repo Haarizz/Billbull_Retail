@@ -42,6 +42,12 @@ public class BranchTaxConfiguration extends BaseEntity {
     @Column(name = "branch_default_vat_rate")
     private Double branchDefaultVatRate = 0.0;
 
+    /** Branch Default Purchase Tax Rate — used only when a product has no Purchase Tax configured
+     *  (LPO / GRN / Purchase Invoice). */
+    @JsonProperty("branchDefaultPurchaseTaxRate")
+    @Column(name = "branch_default_purchase_tax_rate")
+    private Double branchDefaultPurchaseTaxRate = 0.0;
+
     public Long getBranchId() { return branchId; }
     public void setBranchId(Long branchId) { this.branchId = branchId; }
 
@@ -53,4 +59,7 @@ public class BranchTaxConfiguration extends BaseEntity {
 
     public Double getBranchDefaultVatRate() { return branchDefaultVatRate; }
     public void setBranchDefaultVatRate(Double branchDefaultVatRate) { this.branchDefaultVatRate = branchDefaultVatRate; }
+
+    public Double getBranchDefaultPurchaseTaxRate() { return branchDefaultPurchaseTaxRate; }
+    public void setBranchDefaultPurchaseTaxRate(Double branchDefaultPurchaseTaxRate) { this.branchDefaultPurchaseTaxRate = branchDefaultPurchaseTaxRate; }
 }

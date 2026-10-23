@@ -323,7 +323,7 @@ public class GrnService {
                     }
                     BigDecimal taxPercent = item.getPurchaseTax() != null
                             ? item.getPurchaseTax()
-                            : purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(item.getProduct());
+                            : purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(item.getProduct(), grn.getBranchId());
                     return lineTotal.multiply(taxPercent).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
                 })
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
@@ -677,7 +677,7 @@ public class GrnService {
                         i.getRemarks(),
                         i.getPurchaseTax() != null
                                 ? i.getPurchaseTax()
-                                : purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(i.getProduct()),
+                                : purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(i.getProduct(), g.getBranchId()),
                         i.getProduct().getDetailedDesc(),
                         i.getProduct().isExpiryEnabled(),
                         i.getProduct().isFefoEnabled(),

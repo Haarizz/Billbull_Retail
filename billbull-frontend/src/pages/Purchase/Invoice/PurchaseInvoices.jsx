@@ -112,6 +112,8 @@ import { getGrns, getGrnById } from "../../../api/grnApi";
 
 // SHORTCUTS HOOK
 import useShortcuts from '../../../hooks/useShortcuts';
+import useBranchPurchaseTaxDefault from '../../../hooks/useBranchPurchaseTaxDefault';
+import { resolvePurchaseTaxRate } from '@billbull/shared/utils/vatMath';
 import { useBranch } from '@billbull/shared/context/BranchContext';
 
 // WAREHOUSE API IMPORTS
@@ -1033,7 +1035,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     return "";
   };
 
-  const { defaultBranch } = useBranch();
+  const { defaultBranch, activeBranch } = useBranch();
+  // Products without their own Purchase Tax fall back to this document's branch default.
+  const branchDefaultPurchaseTaxRate = useBranchPurchaseTaxDefault(editInvoice?.branchId ?? activeBranch?.id ?? defaultBranch?.id);
 
   useEffect(() => {
     if (!editInvoice && defaultBranch?.defaultWarehouseId) {
@@ -1545,7 +1549,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       uom: defaultUnit,
       qty: 1,
       cost: resolvedCost,
-      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 0, // Default tax
+      tax: resolvePurchaseTaxRate(product, branchDefaultPurchaseTaxRate),
       taxAmt: 0,
       taxAmount: 0,
       disc: product.maxDiscount || 0,
@@ -1603,7 +1607,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       uom: defaultUnit,
       qty,
       cost: price,
-      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 0,
+      tax: resolvePurchaseTaxRate(product, branchDefaultPurchaseTaxRate),
       taxAmt: 0,
       taxAmount: 0,
       disc,

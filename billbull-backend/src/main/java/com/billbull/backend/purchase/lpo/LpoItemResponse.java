@@ -30,7 +30,9 @@ public class LpoItemResponse {
     @JsonProperty("isBatchTracked")
     private boolean isBatchTracked;
 
-    public LpoItemResponse(LpoItem item) {
+    /** {@code purchaseTax} is the effective rate resolved by {@code PurchaseTaxResolutionService}
+     *  (product, else branch default, else 0) — resolved by the caller since this DTO has no Spring context. */
+    public LpoItemResponse(LpoItem item, java.math.BigDecimal purchaseTax) {
         this.productId = item.getProduct().getId();
         this.itemCode = item.getItemCode();
         this.itemName = item.getItemName();
@@ -48,12 +50,7 @@ public class LpoItemResponse {
         this.focUnit = item.getFocUnit();
         this.remarks = item.getRemarks();
         this.image = null;
-        // Mirrors PurchaseTaxResolutionService (product tax, else 0% — no hardcoded default).
-        // This is a plain response DTO built outside Spring's context, so the logic is
-        // duplicated inline rather than injected; keep both in sync if either changes.
-        this.purchaseTax = (item.getProduct().getTax() != null && item.getProduct().getTax().getPurchaseTax() != null)
-                ? item.getProduct().getTax().getPurchaseTax()
-                : java.math.BigDecimal.ZERO;
+        this.purchaseTax = purchaseTax;
         this.detailedDesc = item.getProduct().getDetailedDesc();
         this.isSerial = item.getProduct().isSerial();
         this.isBatchTracked = item.getProduct().isBatch();

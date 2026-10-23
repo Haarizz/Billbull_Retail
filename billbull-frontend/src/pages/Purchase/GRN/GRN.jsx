@@ -81,6 +81,8 @@ import { useCompany } from '@billbull/shared/context/CompanyContext';
 
 // SHORTCUTS HOOK
 import useShortcuts from '../../../hooks/useShortcuts';
+import useBranchPurchaseTaxDefault from '../../../hooks/useBranchPurchaseTaxDefault';
+import { resolvePurchaseTaxRate } from '@billbull/shared/utils/vatMath';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
@@ -632,7 +634,9 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   // FIX 5: Lock UI on POSTED
   const isLocked = formData.status === GRN_STATUS.POSTED;
 
-  const { defaultBranch } = useBranch();
+  const { defaultBranch, activeBranch } = useBranch();
+  // Products without their own Purchase Tax fall back to this document's branch default.
+  const branchDefaultPurchaseTaxRate = useBranchPurchaseTaxDefault(initialData?.branchId ?? activeBranch?.id ?? defaultBranch?.id);
 
   useEffect(() => {
     if (!initialData && defaultBranch?.defaultWarehouseId) {
@@ -1095,6 +1099,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       unitConversions: product.unitConversions,
       fallbackAmount: product.cost ?? product.salesPrice ?? 0
     });
+    const taxPercent = resolvePurchaseTaxRate(product, branchDefaultPurchaseTaxRate);
     const newItem = {
       id: Date.now(),
       productId: product.id,
@@ -1114,8 +1119,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       lpoPrice: 0,
       disc: product.maxDiscount || 0,
       netCost: unitCost,
-      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 0,
-      taxAmt: unitCost * ((parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 0) / 100),
+      tax: taxPercent,
+      taxAmt: unitCost * (taxPercent / 100),
       total: unitCost,
       variance: 1, // Received 1 without LPO
       batch: Boolean(product.isBatch ?? product.batch),
@@ -1178,7 +1183,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       cost: raw.pricing?.cost ?? null,
       salesPrice: raw.pricing?.retailPrice ?? null,
       maxDiscount: p.maxDiscount ?? 0,
-      purchaseTax: raw.tax?.purchaseTax ?? raw.tax?.salesTax ?? null,
+      purchaseTax: raw.tax?.purchaseTax ?? null,
       taxRate: raw.tax?.salesTax ?? null,
       availableUnits: raw.availableUnits,
       unitConversions: raw.unitConversions,
@@ -1246,6 +1251,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     const defaultUnit = getDefaultProductUnit(product);
     const unitCost = price;
     const netCost = unitCost * (1 - disc / 100);
+    const taxPercent = resolvePurchaseTaxRate(product, branchDefaultPurchaseTaxRate);
     const newItem = {
       id: Date.now(),
       productId: product.id,
@@ -1265,8 +1271,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       lpoPrice: 0,
       disc,
       netCost,
-      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 0,
-      taxAmt: netCost * ((parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 0) / 100),
+      tax: taxPercent,
+      taxAmt: netCost * (taxPercent / 100),
       total: netCost * qty,
       variance: qty,
       batch: Boolean(product.isBatch ?? product.batch),
