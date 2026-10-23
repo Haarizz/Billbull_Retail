@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import {
     X, Edit, Printer, Download, Mail, DollarSign, Copy, Clock, History,
-    User, MessageSquare, Receipt,
+    User, MessageSquare, MessageCircle, Receipt,
     Building2, Link2, CheckCircle2, AlertCircle, MoreHorizontal, ChevronDown,
 } from 'lucide-react';
 import RecordPreviewShell from './RecordPreviewShell';
@@ -10,6 +10,7 @@ import PrintTemplateMenu from './PrintTemplateMenu';
 import InvoiceHistoryModal from './InvoiceHistoryModal';
 import InvoiceItemsTable from './InvoiceItemsTable';
 import { getSalesInvoiceById } from '@billbull/shared/api/salesInvoiceApi';
+import { getSalesInvoiceHistory } from '../../../api/salesInvoiceHistoryApi';
 import { getInvoicePaymentSummaries } from '@billbull/shared/api/salesPaymentApi';
 import { buildPaymentBlockFromRecords } from '@billbull/shared/pages/Sales/POS/payments/paymentPresentation';
 import PaymentDetailsPanel from '../../Sales/POS/payments/PaymentDetailsPanel';
@@ -147,6 +148,7 @@ export default function TransactionPreview({
     onPrint,
     onDownload,
     onOpenEmailModal,
+    onWhatsApp,
     onRecordPayment,
     onPrintVoucher,
     isPrinting = false,
@@ -203,7 +205,27 @@ export default function TransactionPreview({
 
     const { payments, loading: paymentsLoading, error: paymentsError, refetch: refetchPayments } = useInvoicePaymentHistory(invoice);
 
-    const timeline = useMemo(() => buildInvoiceTimeline(invoice, payments), [invoice, payments]);
+    // Who created the invoice. SalesInvoice keeps only createdByUserId, so the username comes
+    // from the history trail's CREATED event (null for invoices that predate that table).
+    const [createdBy, setCreatedBy] = useState(null);
+    const historyInvoiceId = invoice?.id;
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- clear the previous invoice's creator
+        setCreatedBy(null);
+        if (!historyInvoiceId) return undefined;
+        let cancelled = false;
+        getSalesInvoiceHistory(historyInvoiceId).then((events) => {
+            if (cancelled || !Array.isArray(events)) return;
+            const created = events.find((e) => e.eventType === 'CREATED' && e.username);
+            setCreatedBy(created?.username || null);
+        }).catch(() => {});
+        return () => { cancelled = true; };
+    }, [historyInvoiceId]);
+
+    const timeline = useMemo(
+        () => buildInvoiceTimeline(invoice && { ...invoice, createdBy: invoice.createdBy || createdBy }, payments),
+        [invoice, payments, createdBy]
+    );
 
     const customer = useMemo(
         () => (invoice ? resolveCustomer({ customerCode: invoice.customerCode, customerName: invoice.customerName }, customersList) : null),
@@ -257,6 +279,19 @@ export default function TransactionPreview({
 
     const notes = invoice?.customerNotes || invoice?.notes || '';
     const shippingAddress = invoice?.shippingAddress || (customer ? resolveDefaultShippingAddress(customer) : '');
+    // Contact details the server resolved onto the invoice win over the cached customer list,
+    // which may not be loaded (or may not contain this customer).
+    const customerPhone = invoice?.customerPhone || customer?.mobile || customer?.phone || '';
+    const customerEmail = invoice?.customerEmail || customer?.email || '';
+    const customerTrn = invoice?.customerTrn || customer?.trn || '';
+    const branchLabel = invoice?.branchName || invoice?.branch || '';
+
+    // The employee the sale is attributed to. The legacy `salesperson` text falls back to the
+    // logged-in username when nobody was picked, so on its own it names whoever keyed the
+    // invoice (e.g. "admin") — shown only when it is not simply the creator's username.
+    const salespersonLabel = invoice?.salespersonName
+        ? (invoice.salespersonEmployeeCode ? `${invoice.salespersonName} (${invoice.salespersonEmployeeCode})` : invoice.salespersonName)
+        : (invoice?.salesperson && invoice.salesperson !== createdBy ? invoice.salesperson : '');
 
     // ── Section 1: Transaction header — identity + the single action toolbar ──
     // Toolbar responsiveness:
@@ -267,6 +302,7 @@ export default function TransactionPreview({
     const secondaryActions = (
         <>
             {canEmail && <MenuItem onClick={() => onOpenEmailModal?.(invoice)} icon={Mail}>Email</MenuItem>}
+            {canEmail && onWhatsApp && <MenuItem onClick={() => onWhatsApp(invoice)} icon={MessageCircle}>WhatsApp</MenuItem>}
             {canEditInvoice && <MenuItem onClick={() => onEdit?.(invoice)} icon={Edit}>Edit</MenuItem>}
             {canRecordPayment && <MenuItem onClick={() => onRecordPayment?.(invoice)} icon={DollarSign} danger>Record Payment</MenuItem>}
             <MenuItem onClick={() => setHistoryOpen(true)} icon={History}>History</MenuItem>
@@ -293,8 +329,8 @@ export default function TransactionPreview({
                         <span className="text-slate-300">•</span>
                         <span className="flex items-center gap-1 whitespace-nowrap"><Clock size={11} className="text-slate-400" /> {formatDisplayDate(invoice.invoiceDate)}</span>
                         {invoice.dueDate && <><span className="text-slate-300">•</span><span className="whitespace-nowrap">Due {formatDisplayDate(invoice.dueDate)}</span></>}
-                        {invoice.branch && <><span className="text-slate-300">•</span><span className="truncate max-w-55" title={invoice.branch}>{invoice.branch}</span></>}
-                        {invoice.salesperson && <><span className="text-slate-300">•</span><span className="truncate max-w-45" title={invoice.salesperson}>{invoice.salesperson}</span></>}
+                        {branchLabel && <><span className="text-slate-300">•</span><span className="truncate max-w-55" title={branchLabel}>{branchLabel}</span></>}
+                        {salespersonLabel && <><span className="text-slate-300">•</span><span className="truncate max-w-45" title={`Salesperson: ${salespersonLabel}`}>{salespersonLabel}</span></>}
                         {(paymentBlock?.summaryLabel || invoice.paymentMode) && <><span className="text-slate-300">•</span><span className="border border-slate-200 px-1.5 py-0.5 rounded text-[10px] bg-slate-50 text-slate-600 whitespace-nowrap">{paymentBlock?.summaryLabel || invoice.paymentMode}</span></>}
                     </div>
                 </div>
@@ -326,6 +362,11 @@ export default function TransactionPreview({
                         {canEmail && (
                             <button onClick={() => onOpenEmailModal?.(invoice)} title="Email invoice" className="h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center gap-1.5 text-xs font-medium">
                                 <Mail size={13} /> Email
+                            </button>
+                        )}
+                        {canEmail && onWhatsApp && (
+                            <button onClick={() => onWhatsApp(invoice)} title="Send invoice on WhatsApp" className="h-8 px-3 border border-emerald-300 rounded-md bg-white hover:bg-emerald-50 text-emerald-700 flex items-center gap-1.5 text-xs font-medium">
+                                <MessageCircle size={13} /> WhatsApp
                             </button>
                         )}
                         {canEditInvoice && (
@@ -443,7 +484,7 @@ export default function TransactionPreview({
                         onRetry={refetchPayments}
                         currency={currency}
                         invoiceNumber={invoice.invoiceNumber}
-                        customerPhone={customer?.mobile || customer?.phone}
+                        customerPhone={customerPhone}
                         onPrintVoucher={(receipt) => onPrintVoucher?.(receipt, invoice)}
                         onDownloadPdf={() => onDownload?.(invoice)}
                         onEmailVoucher={() => onOpenEmailModal?.(invoice)}
@@ -495,19 +536,21 @@ export default function TransactionPreview({
                 <div className="divide-y divide-slate-50">
                     <InfoRow label="Name" value={invoice.customerName} />
                     <InfoRow label="Code" value={invoice.customerCode} copyable copyLabel="Customer Code" />
-                    <InfoRow label="Phone" value={customer?.phone || customer?.mobile} />
-                    <InfoRow label="Email" value={customer?.email} />
-                    <InfoRow label="VAT / TRN" value={customer?.trn} copyable copyLabel="TRN" />
+                    <InfoRow label="Phone" value={customerPhone} />
+                    <InfoRow label="Email" value={customerEmail} />
+                    <InfoRow label="VAT / TRN" value={customerTrn} copyable copyLabel="TRN" />
                     <InfoRow label="Shipping" value={shippingAddress} />
                 </div>
             </RailCard>
 
             <RailCard title="Branch & Terms" icon={Building2} collapsible defaultOpen={false}>
                 <div className="divide-y divide-slate-50">
-                    <InfoRow label="Branch" value={invoice.branch} />
-                    <InfoRow label="Salesperson" value={invoice.salesperson} />
+                    <InfoRow label="Branch" value={branchLabel} />
+                    <InfoRow label="Salesperson" value={salespersonLabel || 'Unassigned'} />
+                    <InfoRow label="Created By" value={createdBy} />
                     <InfoRow label="Payment Terms" value={invoice.paymentTerms} />
-                    <InfoRow label="Reference" value={invoice.reference} copyable copyLabel="Reference" />
+                    <InfoRow label="Payment Mode" value={paymentBlock?.summaryLabel || invoice.paymentMode} />
+                    {invoice.posCounterName && <InfoRow label="POS Counter" value={invoice.posCounterName} />}
                 </div>
             </RailCard>
 
@@ -547,6 +590,11 @@ export default function TransactionPreview({
             {canEmail && (
                 <button onClick={() => onOpenEmailModal?.(invoice)} aria-label="Email" className="h-10 w-10 border border-slate-300 rounded-md bg-white text-slate-700 flex items-center justify-center">
                     <Mail size={15} />
+                </button>
+            )}
+            {canEmail && onWhatsApp && (
+                <button onClick={() => onWhatsApp(invoice)} aria-label="WhatsApp" className="h-10 w-10 border border-emerald-300 rounded-md bg-white text-emerald-700 flex items-center justify-center">
+                    <MessageCircle size={15} />
                 </button>
             )}
             {canEditInvoice && (

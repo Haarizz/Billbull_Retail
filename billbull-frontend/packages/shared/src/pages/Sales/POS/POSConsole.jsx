@@ -914,6 +914,7 @@ const POSConsole = React.memo((props) => {
               supervisorApprovalMode: posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN',
               requirePriceOverrideApproval: !!posSettings?.requirePriceOverrideApproval,
               deliveryReturnChargePolicy: posSettings?.deliveryReturnChargePolicy || 'WAIVE',
+              deliveryWorkflowMode: posSettings?.deliveryWorkflowMode || 'DEFAULT_SETTLEMENT',
               posFunctionAccessMode: posSettings?.posFunctionAccessMode || 'ALL_USERS',
               // Write-only field — the backend never returns the raw PIN (see supervisorPinSet below).
               supervisorPin: '',
@@ -1097,6 +1098,78 @@ const POSConsole = React.memo((props) => {
                       {d.voidMode===val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              {/* Delivery Workflow — when a delivery order becomes a sale. Both options send the
+                  goods out and end at Delivery Settlement (settle by pay mode, or return); they
+                  differ only in whether the order is a sale from dispatch or a Pro-forma Invoice
+                  until it is settled. The backend reads it per branch at dispatch time. */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Truck className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                  Delivery Workflow
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">Configure how delivery orders are processed and settled in POS Sales.</p>
+                <div className="grid grid-cols-1 gap-3">
+                  {[
+                    {
+                      val: 'DEFAULT_SETTLEMENT',
+                      label: 'Default Settlement',
+                      Icon: CheckCircle,
+                      desc: <>Delivery orders are settled <b>directly</b> as delivery sales. When the customer pays the delivery person, the cashier settles it in Delivery Settlement — the sale is recorded in sales reports and the sales list from the moment the order goes out.</>,
+                      steps: ['Process Delivery → Out for Delivery', 'Collect Payment → Settle in Delivery Settlement', 'Posted to Sales Reports at dispatch'],
+                    },
+                    {
+                      val: 'PI_FLOW',
+                      label: 'PI Flow (Pro-forma Invoice)',
+                      Icon: FileText,
+                      desc: <>When an order is processed for out-delivery, a <b>Pro-forma Invoice (PI)</b> is printed and saved as a <b>Draft</b> in the Sales Invoice list. The sale is <i>not yet</i> posted to sales reports. Once the delivery is settled (by pay mode or marked as return), the PI is converted to the final sales invoice and reflected in the sales reports and sales list.</>,
+                      steps: ['Process Delivery → Creates PI Draft', 'PI visible in Sales Invoices (Draft)', 'Settle → Converts PI to Invoice', 'Reflects in Sales Reports on Settlement'],
+                    },
+                  ].map(({ val, label, Icon, desc, steps }) => {
+                    const active = d.deliveryWorkflowMode === val;
+                    return (
+                      <button key={val} type="button" onClick={() => patch({ deliveryWorkflowMode: val })}
+                        className={`p-4 rounded-xl border-2 text-left transition-all flex gap-3 ${active ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 hover:border-[#F5C742]/40'}`}>
+                        <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${active ? 'bg-[#F5C742]/30' : 'bg-gray-100'}`}>
+                          <Icon className={`h-4 w-4 ${active ? 'text-[#b8920e]' : 'text-gray-400'}`} />
+                        </div>
+                        <div className="min-w-0">
+                          <p className={`text-sm font-bold flex items-center gap-2 ${active ? 'text-[#1E293B]' : 'text-gray-700'}`}>
+                            {label}
+                            {active && <span className="px-2 py-0.5 rounded-full bg-[#F5C742] text-[10px] font-bold text-[#1E293B]">Active</span>}
+                          </p>
+                          <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">{desc}</p>
+                          <div className="flex flex-wrap gap-1.5 mt-2">
+                            {steps.map(step => (
+                              <span key={step} className="px-2 py-0.5 rounded-md bg-gray-50 border border-gray-200 text-[10px] text-gray-500">{step}</span>
+                            ))}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mt-3 p-3 rounded-xl bg-[#FFF8E7] border border-[#FDE6A9]">
+                  {d.deliveryWorkflowMode === 'PI_FLOW' ? (
+                    <>
+                      <p className="text-[11px] font-bold text-[#b8920e]">PI Flow is active</p>
+                      <p className="text-[11px] text-gray-600 mt-0.5">
+                        "Process Delivery" prints a Pro-forma Invoice and saves a Draft in Customers &amp; Sales → Sales Invoices. Its stock is held while the
+                        goods are out. Settling the delivery (by pay mode or return) converts it to the final invoice, dated the day it is settled, and it
+                        then appears in the sales reports and sales list. Orders already out for delivery keep the workflow they left under.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-[11px] font-bold text-[#b8920e]">Default Settlement is active</p>
+                      <p className="text-[11px] text-gray-600 mt-0.5">
+                        Delivery orders are posted as sales when they go out for delivery. Delivery Settlement collects the payment (or returns the goods);
+                        the sale is already in the sales reports and sales list.
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
 

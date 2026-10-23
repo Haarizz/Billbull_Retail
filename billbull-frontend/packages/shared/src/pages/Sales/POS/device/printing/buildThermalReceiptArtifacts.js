@@ -19,7 +19,7 @@
 // discount and payment display, QR/barcode behaviour, paper-width quirks, the hasTax
 // routing, the Template-1/Template-2 split and the ESC/POS build-failure fallback (which
 // still only console.warns and returns a null payload so callers fall back to text/HTML).
-import { isTaxInvoiceDocument } from '../../../../../utils/documentTaxType';
+import { isProformaDocument, isTaxInvoiceDocument, DOCUMENT_TITLES } from '../../../../../utils/documentTaxType';
 import { buildEscPosReceiptBase64 } from '../../../../../utils/escPosReceipt';
 import { buildQrContent } from '../../../../../utils/printGenerator';
 import { buildPosPrintData, buildThermalReceiptText } from '../../posPrintUtils';
@@ -170,8 +170,11 @@ export async function buildThermalReceiptArtifacts({
     const resolvedShowCreditBalance = showCreditBalanceOverride != null
       ? showCreditBalanceOverride
       : (hasTax ? tplInvoiceShowBankDetails : tplReceiptShowBankDetails);
-    const activeHeader = hasTax ? tplInvoiceHeader : tplReceiptHeader;
-    const activeHeaderAr = hasTax ? tplInvoiceHeaderAr : tplReceiptHeaderAr;
+    // A PI Flow Pro-forma Invoice prints under its own title whatever the tab header says, and
+    // without the e-invoice QR: it is not a tax invoice until settlement converts it.
+    const isProforma = isProformaDocument(full);
+    const activeHeader = isProforma ? DOCUMENT_TITLES.PROFORMA_INVOICE : (hasTax ? tplInvoiceHeader : tplReceiptHeader);
+    const activeHeaderAr = isProforma ? 'فاتورة مبدئية' : (hasTax ? tplInvoiceHeaderAr : tplReceiptHeaderAr);
     const activeFooter = hasTax ? tplInvoiceFooter : tplReceiptFooter;
     // A no-tax sale never shows TRN/VAT summary, regardless of the (disabled)
     // POS Receipt tab toggle state — these aren't just defaulted off, they're
@@ -183,7 +186,7 @@ export async function buildThermalReceiptArtifacts({
     const activeShowLogo = hasTax ? tplInvoiceShowLogo : tplReceiptShowLogo;
     const activeShowCompanyDetails = hasTax ? tplInvoiceShowCompanyDetails : tplReceiptShowCompanyDetails;
     const activeShowCustomerDetails = hasTax ? tplInvoiceShowCustomerDetails : tplReceiptShowCustomerDetails;
-    const activeShowQRCode = hasTax ? tplInvoiceShowQRCode : tplReceiptShowQRCode;
+    const activeShowQRCode = isProforma ? false : (hasTax ? tplInvoiceShowQRCode : tplReceiptShowQRCode);
     const activeShowPaymentDetails = hasTax ? tplInvoiceColDiscount : tplReceiptColDiscount;
     const activeShowLoyaltyPoints = hasTax ? tplInvoiceShowNotes : tplReceiptShowNotes;
     const activeT2 = hasTax

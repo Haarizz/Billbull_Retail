@@ -123,6 +123,8 @@ import {
 
 // SHORTCUTS HOOK
 import useShortcuts from '../../../hooks/useShortcuts';
+import useBranchPurchaseTaxDefault from '../../../hooks/useBranchPurchaseTaxDefault';
+import { resolvePurchaseTaxRate } from '@billbull/shared/utils/vatMath';
 import { useBranch } from '@billbull/shared/context/BranchContext';
 
 // ==========================================
@@ -1044,7 +1046,9 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   const [binList, setBinList] = useState([]);
   const [locationError, setLocationError] = useState(null);
 
-  const { defaultBranch } = useBranch();
+  const { defaultBranch, activeBranch } = useBranch();
+  // Products without their own Purchase Tax fall back to this document's branch default.
+  const branchDefaultPurchaseTaxRate = useBranchPurchaseTaxDefault(initialData?.branchId ?? activeBranch?.id ?? defaultBranch?.id);
 
   useEffect(() => {
     if (!initialData && defaultBranch?.defaultWarehouseId) {
@@ -1186,7 +1190,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       disc: product.maxDiscount || 0,
       foc: 0,
       focUnit: defaultUnit,
-      tax: parseFloat(product.purchaseTax) || 0,
+      tax: resolvePurchaseTaxRate(product, branchDefaultPurchaseTaxRate),
       taxAmt: 0,
       remarks: product.detailedDesc || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || null,
@@ -1236,7 +1240,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       disc,
       foc: 0,
       focUnit: defaultUnit,
-      tax: parseFloat(product.purchaseTax) || 0,
+      tax: resolvePurchaseTaxRate(product, branchDefaultPurchaseTaxRate),
       taxAmt: 0,
       remarks: product.detailedDesc || '',
       image: product.primaryImage || product.image || null,

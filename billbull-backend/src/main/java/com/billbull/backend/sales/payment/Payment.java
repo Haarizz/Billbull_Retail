@@ -92,6 +92,23 @@ public class Payment  implements com.billbull.backend.common.ownership.OwnedEnti
     @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     private Long posSessionId;
 
+    /** No save path ever set createdBy, so every payment read "Received by System" in the
+     *  back office. Stamped once, from the authenticated user, when nothing set it already. */
+    @PrePersist
+    void stampCreated() {
+        if (createdBy == null || createdBy.isBlank()) {
+            org.springframework.security.core.Authentication auth =
+                    org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+            if (auth != null && auth.getName() != null && !auth.getName().isBlank()
+                    && !"anonymousUser".equals(auth.getName())) {
+                createdBy = auth.getName();
+            }
+        }
+        if (createdDate == null) {
+            createdDate = LocalDate.now();
+        }
+    }
+
     /* ===== GETTERS & SETTERS ===== */
 
     public Long getId() {

@@ -9,6 +9,12 @@ const BADGE_BASE = 'px-2 py-0.5 rounded text-[10px] font-bold';
 export function getInvoiceStatusBadge(statusVal, inv = null) {
     const s = String(statusVal || '').toUpperCase();
 
+    // POS PI Flow: a delivery order out as a Pro-forma Invoice. Stored as DRAFT, but it is not a
+    // draft anyone here should finish — Delivery Settlement converts it.
+    if (inv?.posProformaPending && s === 'DRAFT') {
+        return { label: 'PI · Draft', colorClasses: `bg-indigo-100 text-indigo-700 ${BADGE_BASE}` };
+    }
+
     // Overdue is computed, not a stored status: confirmed/partially-paid with
     // an outstanding balance past its due date.
     if (inv && (s === 'CONFIRMED' || s === 'PARTIALLY_PAID') && inv.dueDate && (inv.balance ?? 0) > 0) {

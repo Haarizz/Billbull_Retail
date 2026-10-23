@@ -68,6 +68,17 @@ public class BranchTaxResolutionService {
         return branchDefaultVatRate(getConfig(branchId));
     }
 
+    /**
+     * The configured Branch Default Purchase Tax Rate, or 0 when unset (never null). Purchase-side
+     * counterpart of {@link #getBranchDefaultVatRate}; purchasing flows consume it only through
+     * {@link PurchaseTaxResolutionService}, which owns the purchase priority order.
+     */
+    public BigDecimal getBranchDefaultPurchaseTaxRate(Long branchId) {
+        BranchTaxConfiguration config = getConfig(branchId);
+        Double rate = config != null ? config.getBranchDefaultPurchaseTaxRate() : null;
+        return rate != null ? BigDecimal.valueOf(rate) : BigDecimal.ZERO;
+    }
+
     /** Whether tax calculations are enabled for the branch. Defaults to true when unconfigured. */
     public boolean isTaxEnabled(Long branchId) {
         return isEnabled(getConfig(branchId));

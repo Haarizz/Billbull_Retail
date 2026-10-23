@@ -269,7 +269,7 @@ public class PurchaseInvoiceService {
             BigDecimal unitCost = i.getUnitPrice() != null ? i.getUnitPrice() : BigDecimal.ZERO;
             d.setUnitCost(unitCost);
 
-            BigDecimal taxPercent = purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(i.getProduct());
+            BigDecimal taxPercent = purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(i.getProduct(), lpo.getBranchId());
             
             BigDecimal base = unitCost.multiply(BigDecimal.valueOf(i.getQuantity() != null ? i.getQuantity() : 0));
             
@@ -391,7 +391,7 @@ public class PurchaseInvoiceService {
 
             BigDecimal taxPercent = i.getPurchaseTax() != null
                     ? i.getPurchaseTax()
-                    : purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(i.getProduct());
+                    : purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(i.getProduct(), grn.getBranchId());
             BigDecimal taxAmount = i.getTaxAmount() != null
                     ? i.getTaxAmount()
                     : netLineBase

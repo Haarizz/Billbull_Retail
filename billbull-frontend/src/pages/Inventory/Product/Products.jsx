@@ -156,9 +156,9 @@ const INITIAL_FORM_STATE = {
   maxPrice: '',
   onlinePrice: '',
   defaultDiscount: 0,
-  // Left blank by default — an unset Purchase/Sales Tax resolves to 0% at
-  // calculation time (Purchase Tax has no branch-level default, unlike Sales
-  // Tax). Only an explicit value (including 0) overrides it.
+  // Left blank by default — an unset Purchase/Sales Tax falls back to the
+  // branch's Default Purchase Tax / Default VAT Rate at calculation time. Only
+  // an explicit value (including 0) overrides it.
   purchaseTax: '',
   salesTax: '',
   taxCategory: 'Standard',
@@ -328,9 +328,8 @@ const buildProductPayload = (formData) => {
       defaultDiscount: formData.defaultDiscount || 0
     },
     tax: {
-      // Blank means "not configured" -> resolves to 0% at calculation time; an
-      // explicit 0 is sent through the same way (both are stored as null vs 0
-      // distinctly, but 0% is the system fallback either way for Purchase Tax).
+      // Blank means "not configured" -> falls back to the branch's Default
+      // Purchase Tax Rate; an explicit 0 is sent through as "no purchase tax".
       purchaseTax: formData.purchaseTax === '' || formData.purchaseTax === null || formData.purchaseTax === undefined
         ? null
         : Number(formData.purchaseTax),
@@ -1317,8 +1316,8 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Purchase Tax %</label>
-                    <input type="number" placeholder="0 (none)" value={formData.purchaseTax} onChange={(e) => handleInputChange('purchaseTax', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
-                    <p className="text-[10px] text-slate-400">Leave blank if not applicable; no branch-level default applies to Purchase Tax.</p>
+                    <input type="number" placeholder="Branch default" value={formData.purchaseTax} onChange={(e) => handleInputChange('purchaseTax', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                    <p className="text-[10px] text-slate-400">Leave blank to use the branch's Default Purchase Tax Rate. Enter 0 for no purchase tax.</p>
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Sales Tax %</label>

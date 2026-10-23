@@ -403,6 +403,10 @@ const SalesOrders = () => {
 
   // Delivery
   const [deliveryType, setDeliveryType] = useState('Delivery');
+  // Flat, untaxed delivery charge, part of the order total. A Pickup order has nothing to
+  // deliver, so its charge counts as zero even if one was typed before switching type.
+  const [deliveryCharge, setDeliveryCharge] = useState(0);
+  const effectiveDeliveryCharge = deliveryType === 'Pickup' ? 0 : Math.max(0, Number(deliveryCharge) || 0);
   const [expectedDelivery, setExpectedDelivery] = useState('2026-01-16');
   const [shippingAddress, setShippingAddress] = useState('');
   const [deliveryInstructions, setDeliveryInstructions] = useState('');
@@ -674,8 +678,8 @@ const SalesOrders = () => {
         billDiscountType,
         billDiscount: billDiscountType === 'percent' ? billDiscount : 0,
         billDiscountAmount: billDiscountType === 'amount' ? billDiscount : 0,
-      }, {}, vatMode)
-      : summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), {}, vatMode);
+      }, { deliveryCharge: effectiveDeliveryCharge }, vatMode)
+      : summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge: effectiveDeliveryCharge }, vatMode);
     const grossTotal = itemSummary.grossTotal;
     const totalDiscount = itemSummary.itemDiscountTotal;
     const subTotal = itemSummary.subTotal;
@@ -1087,6 +1091,8 @@ const SalesOrders = () => {
           // QA-032: carry the SO advance so the destination invoice can
           // pre-fill amountCollected and surface the advance to the user.
           advanceAmount: Number(advanceAmount) || 0,
+          // The order's delivery charge carries onto the invoice's own Delivery Charge.
+          deliveryCharge: effectiveDeliveryCharge,
           items: items
             .filter(i => i.code && i.qty > 0)
             .map(i => ({
@@ -1169,6 +1175,7 @@ const SalesOrders = () => {
         taxableAmount: itemSummary.taxableTotal,
         tax: totalTax,
         grandTotal: orderTotal,
+        deliveryCharge: effectiveDeliveryCharge,
         currency: company?.currencySymbol || company?.currency || 'AED',
         billDiscount: billDiscountType === 'percent' ? Number(billDiscount) || 0 : 0,
         billDiscountAmount: (totalDiscount || 0) + (billDiscountAmount || 0),
@@ -1342,6 +1349,7 @@ const SalesOrders = () => {
       paymentMethod: overrides.overridePaymentMethod !== undefined ? overrides.overridePaymentMethod : paymentMethod,
       paymentReference: overrides.overridePaymentRef !== undefined ? overrides.overridePaymentRef : paymentRef,
       deliveryType,
+      deliveryCharge: effectiveDeliveryCharge,
       expectedDeliveryDate: expectedDelivery,
       shippingAddress,
       deliveryInstructions,
@@ -1623,6 +1631,7 @@ const SalesOrders = () => {
     setPaymentMethod(order.paymentMethod || 'Cash');
     setPaymentRef(order.paymentReference || '');
     setDeliveryType(order.deliveryType || 'Delivery');
+    setDeliveryCharge(Number(order.deliveryCharge) || 0);
     setExpectedDelivery(order.expectedDeliveryDate || '');
     setShippingAddress(order.shippingAddress || '');
     setDeliveryInstructions(order.deliveryInstructions || '');
@@ -1698,6 +1707,7 @@ const SalesOrders = () => {
     setPaymentMethod('Cash');
     setPaymentRef('');
     setDeliveryType('Delivery');
+    setDeliveryCharge(0);
     setExpectedDelivery('');
     setShippingAddress('');
     setDeliveryInstructions('');
@@ -2455,6 +2465,8 @@ const SalesOrders = () => {
               onShippingChange={setShippingAddress}
               deliveryType={deliveryType}
               onDeliveryTypeChange={setDeliveryType}
+              deliveryCharge={deliveryCharge}
+              onDeliveryChargeChange={setDeliveryCharge}
               expectedDispatch={expectedDelivery}
               onExpectedDispatchChange={setExpectedDelivery}
               isReadOnly={isLocked}
@@ -2896,6 +2908,12 @@ const SalesOrders = () => {
                   <span>Tax</span>
                   <CurrencyAmount value={totalTax} currency={orderCurrency} />
                 </div>
+                {effectiveDeliveryCharge > 0 && (
+                  <div className="flex justify-between text-slate-600">
+                    <span>Delivery Charge</span>
+                    <CurrencyAmount value={effectiveDeliveryCharge} currency={orderCurrency} />
+                  </div>
+                )}
                 <div className="flex justify-between text-slate-800 text-sm font-bold border-t border-slate-100 pt-2">
                   <span>Order Total</span>
                   <CurrencyAmount value={orderTotal} currency={orderCurrency} />

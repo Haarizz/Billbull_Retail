@@ -335,6 +335,7 @@ public class SalesInvoiceController {
     public ResponseEntity<Void> updateStatus(
             @PathVariable Long id,
             @RequestParam SalesInvoiceStatus status) {
+        service.assertNotPendingProforma(id);
         service.updateStatus(id, status);
         return ResponseEntity.ok().build();
     }
@@ -344,6 +345,7 @@ public class SalesInvoiceController {
     public SalesInvoice recordPayment(
             @PathVariable Long id,
             @RequestBody Map<String, Double> payload) {
+        service.assertNotPendingProforma(id);
         Double amount = payload.get("amount");
         return service.recordPayment(id, amount, null, null, null);
     }
@@ -353,6 +355,7 @@ public class SalesInvoiceController {
     public SalesInvoice recordDetailedPayment(
             @PathVariable Long id,
             @RequestBody Map<String, Object> payload) {
+        service.assertNotPendingProforma(id);
         Double amount = payload.get("amount") != null
                 ? Double.valueOf(payload.get("amount").toString())
                 : null;

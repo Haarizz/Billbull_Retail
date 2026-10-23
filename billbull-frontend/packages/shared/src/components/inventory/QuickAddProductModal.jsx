@@ -242,7 +242,8 @@ const QuickAddProductModal = ({
                 },
                 // Blank means "not configured" -> Sales falls back to the branch's Default VAT
                 // Rate; an explicit 0 is sent through as a zero-rated item. No Purchase Tax input
-                // here, so it stays unset (Purchase flows fall back to 0%).
+                // here, so it stays unset (Purchase flows fall back to the branch's Default
+                // Purchase Tax Rate).
                 tax: {
                     salesTax: form.taxRate === '' ? null : Number(form.taxRate),
                     purchaseTax: null,

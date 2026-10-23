@@ -55,6 +55,12 @@ public class PosSettings extends BaseEntity {
     @Column(name = "delivery_return_charge_policy", length = 20)
     private String deliveryReturnChargePolicy = PosDeliveryReturnChargePolicy.WAIVE.name();
 
+    /** When a POS delivery order becomes a sale — at dispatch, or as a Pro-forma Invoice that is
+     *  converted at settlement. See {@link PosDeliveryWorkflowMode}. Stored as the enum name;
+     *  defaults to DEFAULT_SETTLEMENT, which is how every delivery worked before the setting. */
+    @Column(name = "delivery_workflow_mode", length = 30)
+    private String deliveryWorkflowMode = PosDeliveryWorkflowMode.DEFAULT_SETTLEMENT.name();
+
     // Void behavior
     @Column(name = "void_mode", length = 20)
     private String voidMode = "VOID"; // VOID = strikethrough, DELETE = remove
@@ -314,6 +320,15 @@ public class PosSettings extends BaseEntity {
     @com.fasterxml.jackson.annotation.JsonIgnore
     public PosDeliveryReturnChargePolicy resolvedDeliveryReturnChargePolicy() {
         return PosDeliveryReturnChargePolicy.fromCode(deliveryReturnChargePolicy);
+    }
+
+    public String getDeliveryWorkflowMode() { return deliveryWorkflowMode; }
+    public void setDeliveryWorkflowMode(String deliveryWorkflowMode) { this.deliveryWorkflowMode = deliveryWorkflowMode; }
+
+    /** The workflow as an enum, never null — unknown or unset values resolve to DEFAULT_SETTLEMENT. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public PosDeliveryWorkflowMode resolvedDeliveryWorkflowMode() {
+        return PosDeliveryWorkflowMode.fromCode(deliveryWorkflowMode);
     }
 
     // ARCHFIX S5: never serialize the supervisor PIN (now a BCrypt hash) to the client. The setter

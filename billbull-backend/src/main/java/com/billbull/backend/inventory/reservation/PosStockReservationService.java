@@ -12,8 +12,8 @@ import java.util.List;
 
 /**
  * Soft warehouse-level stock reservation for non-batch products, the counterpart to
- * {@code BatchSelectionService} for batch-controlled products. Currently only POS
- * layaways/holds create reservations here. Never touches StockMovement/on-hand — a
+ * {@code BatchSelectionService} for batch-controlled products. POS layaways/holds and
+ * PI Flow Pro-forma Invoices out for delivery create reservations here. Never touches StockMovement/on-hand — a
  * reservation only affects the derived available = onHand - reserved computation
  * (see {@code WarehouseStockService}).
  */
@@ -29,6 +29,9 @@ public class PosStockReservationService {
         this.repo = repo;
     }
 
+    /** A POS Pro-forma Invoice out for delivery (PI Flow) — held until settlement converts it. */
+    public static final String DOC_TYPE_POS_PROFORMA = "POS_PROFORMA";
+
     /** Reserve a non-batch layaway line against the given warehouse. */
     public PosStockReservation reserveForLayawayLine(
             Long layawayId, Long lineId, Long productId, String productCode,
@@ -36,6 +39,24 @@ public class PosStockReservationService {
         if (layawayId == null || lineId == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Saved layaway and item are required");
         }
+        return reserveForSourceLine(DOC_TYPE_POS_LAYAWAY, layawayId, lineId, productId, productCode,
+                warehouseId, quantity);
+    }
+
+    /** Reserve a non-batch Pro-forma Invoice line against the given warehouse. */
+    public PosStockReservation reserveForProformaLine(
+            Long invoiceId, Long lineId, Long productId, String productCode,
+            Long warehouseId, int quantity) {
+        if (invoiceId == null || lineId == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Saved pro-forma invoice and item are required");
+        }
+        return reserveForSourceLine(DOC_TYPE_POS_PROFORMA, invoiceId, lineId, productId, productCode,
+                warehouseId, quantity);
+    }
+
+    private PosStockReservation reserveForSourceLine(
+            String sourceDocumentType, Long sourceDocumentId, Long lineId, Long productId, String productCode,
+            Long warehouseId, int quantity) {
         if (warehouseId == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "No warehouse resolved for branch — cannot reserve stock for " + productCode);
@@ -45,8 +66,8 @@ public class PosStockReservationService {
         }
 
         PosStockReservation reservation = new PosStockReservation();
-        reservation.setSourceDocumentType(DOC_TYPE_POS_LAYAWAY);
-        reservation.setSourceDocumentId(layawayId);
+        reservation.setSourceDocumentType(sourceDocumentType);
+        reservation.setSourceDocumentId(sourceDocumentId);
         reservation.setSourceLineId(lineId);
         reservation.setProductId(productId);
         reservation.setProductCode(productCode);

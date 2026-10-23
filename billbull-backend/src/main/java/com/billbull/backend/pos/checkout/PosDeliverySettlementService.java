@@ -83,6 +83,15 @@ public class PosDeliverySettlementService {
         this.invoiceCustomerContactService = invoiceCustomerContactService;
     }
 
+    /** PI Flow conversion. Setter-injected so the existing constructor (and every test that
+     *  builds this service by hand) is unchanged; only reached for a pending Pro-forma Invoice. */
+    private PosProformaDeliveryService proformaDeliveryService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setProformaDeliveryService(PosProformaDeliveryService proformaDeliveryService) {
+        this.proformaDeliveryService = proformaDeliveryService;
+    }
+
     /**
      * Settles (collects payment for) a pending delivery order. Lock acquisition,
      * authorization, session/branch validation, balance recomputation and the payment
@@ -144,6 +153,17 @@ public class PosDeliverySettlementService {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                         "Cannot settle a delivery against a session belonging to a different branch.");
             }
+        }
+
+        // PI Flow: the order went out as a Pro-forma Invoice (DRAFT, nothing posted). Settling it
+        // is what makes it a sale, so convert it first — inside this transaction and under this
+        // lock, so a payment that fails below rolls the conversion back with it. Conversion can
+        // also apply an advance held on the order's Sales Order, which is why the balance below
+        // is read only afterwards.
+        if (Boolean.TRUE.equals(invoice.getPosProformaPending())) {
+            proformaDeliveryService.convert(id, req.getSessionId(), settlementBusinessDate);
+            invoice = invoiceRepository.findById(id)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Invoice not found"));
         }
 
         // Balance is re-derived from the row this transaction now holds locked — never

@@ -526,7 +526,7 @@ const COMPONENT = readSource('../features/checkout/CheckoutRemarks.jsx');
 const DERIVE = [
   '        const shippingChargeNum = Number(shippingCharge) || 0;',
   '        const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;',
-  '        const depositAmt = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;',
+  '        const depositAmt = (activeLayawayDeposit > 0 ? activeLayawayDeposit : 0) + activeSalesOrderAdvance;',
   '        // Owned by the Payment Manager (checkoutEffectiveDue) so the screen and the manager',
   '        // measure every allocation against exactly the same amount due.',
   '        const effectiveDue = checkoutEffectiveDue;',
@@ -549,7 +549,7 @@ const PARENT_LOCALS = [
   'checkoutPhase', 'lastPaidInvoice', 'customerOptions', 'loadPosCustomers', 'selectedCustomer', 'selectedCustomerData',
   'checkoutOnlineBankAccounts', 'checkoutOnlineBankAccountsLoading', 'checkoutRemarks', 'setCheckoutRemarks',
   'showA4CheckoutPreview', 'checkoutA4Html', 'checkoutA4BlobUrl', 'checkoutPreviewBlobUrl', 'checkoutThermalHtml',
-  'shippingCharge', 'activeLayawayDeposit', 'previewInvoiceNo',
+  'shippingCharge', 'activeLayawayDeposit', 'activeSalesOrderAdvance', 'previewInvoiceNo',
 ];
 const readsOf = (src) => PARENT_LOCALS.filter((id) => new RegExp(`\\b${id}\\b`).test(src));
 

@@ -81,6 +81,15 @@ public class PosDeliveryReturnService {
     @Autowired
     private BranchAccessService branchAccessService;
 
+    @Autowired
+    private PosProformaDeliveryService proformaDeliveryService;
+
+    /** Back-office/legacy entry point with no settling business date: a PI is converted onto the
+     *  Business Day clock's date. */
+    public PosDeliveryReturnResponse returnDelivery(Long invoiceId, PosDeliveryReturnRequest req) {
+        return returnDelivery(invoiceId, req, null);
+    }
+
     /**
      * Returns an unpaid delivery order goods and closes the order out when nothing is left to
      * collect.
@@ -91,9 +100,19 @@ public class PosDeliveryReturnService {
      * already correct. The close-out that follows is a two-column update on the invoice, applied
      * once the return has committed — see {@link #closeOutOrder}.
      *
+     * <p><b>PI Flow.</b> A Pro-forma Invoice is converted into the final sales invoice first, so the
+     * return credits a real sale and both reach the sales reports — the refused order reads as a
+     * sale and its credit note, exactly as a returned DEFAULT_SETTLEMENT delivery does. The
+     * conversion commits on its own before the return is raised (this method is deliberately
+     * non-transactional, see above). If the return is then refused — most often because it needs
+     * supervisor sign-off — the order is left as an ordinary unpaid delivery, still in the list,
+     * and the retry returns it like any other.
+     *
+     * @param settlementBusinessDate the till session's business date; dates a PI's conversion
      * @return what happened, for the till to show and print
      */
-    public PosDeliveryReturnResponse returnDelivery(Long invoiceId, PosDeliveryReturnRequest req) {
+    public PosDeliveryReturnResponse returnDelivery(Long invoiceId, PosDeliveryReturnRequest req,
+                                                    java.time.LocalDate settlementBusinessDate) {
         // Fetch-joined, not findById: this method is deliberately non-transactional (see above)
         // and spring.jpa.open-in-view is off, so the returned entity is detached the moment the
         // repository call ends. buildReturnLines/isFullReturn both walk invoice.getItems(), which
@@ -106,6 +125,27 @@ public class PosDeliveryReturnService {
         // loads the order directly, so it checks here, before anything is written.
         branchAccessService.assertTransactionBranchAccessible(invoice.getBranchId(), "Delivery order");
         assertReturnableDeliveryOrder(invoice);
+
+        if (Boolean.TRUE.equals(invoice.getPosProformaPending())) {
+            // Checked before converting, not after: an order whose Sales Order advance would be
+            // applied on conversion has money to refund, and must not be converted only to be
+            // refused here a moment later.
+            BigDecimal advance = proformaDeliveryService.pendingSalesOrderAdvance(invoice);
+            if (advance.signum() > 0) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "Delivery order " + invoice.getInvoiceNumber() + " carries an advance of " + advance
+                                + " received on Sales Order " + invoice.getLinkedSalesOrder()
+                                + ". Settle it here, then return it from Customer and Sales to Sales Return,"
+                                + " where the advance can be refunded.");
+            }
+            proformaDeliveryService.convert(invoiceId, req.getSessionId(), settlementBusinessDate);
+            invoice = invoiceRepository.findByIdWithItems(invoiceId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                            "Delivery order not found."));
+            // Converting can apply an advance held on the order's Sales Order, after which there
+            // is money to refund — the full Sales Return screen's job, not this one.
+            assertReturnableDeliveryOrder(invoice);
+        }
 
         List<SalesReturnItem> lines = buildReturnLines(invoice, req);
         if (lines.isEmpty()) {

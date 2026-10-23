@@ -315,6 +315,56 @@ class PosSettingsServiceTest {
         assertEquals("RETAIN", service.save(incoming).getDeliveryReturnChargePolicy());
     }
 
+    // Delivery Workflow (DEFAULT_SETTLEMENT / PI_FLOW) — same partial-POST and normalisation
+    // contract as the delivery-return charge policy above.
+
+    @Test
+    void deliveryWorkflowModeIsPersistedAndNormalisedOnAnExistingRow() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_ADMIN");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setDeliveryWorkflowMode(" pi_flow ");
+
+        assertEquals("PI_FLOW", service.save(incoming).getDeliveryWorkflowMode());
+    }
+
+    @Test
+    void anAbsentDeliveryWorkflowModeLeavesTheStoredOneUntouched() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        existing.setDeliveryWorkflowMode("PI_FLOW");
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_ADMIN");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setDeliveryWorkflowMode(null);
+
+        assertEquals("PI_FLOW", service.save(incoming).getDeliveryWorkflowMode());
+    }
+
+    @Test
+    void anUnknownDeliveryWorkflowModeFallsBackToDefaultSettlementOnANewRow() {
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.empty());
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_ADMIN");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setDeliveryWorkflowMode("SOMETHING_ELSE");
+
+        assertEquals("DEFAULT_SETTLEMENT", service.save(incoming).getDeliveryWorkflowMode());
+    }
+
     @Test
     void nonSupervisorCanStillSaveUnrelatedSettings() {
         PosSettings existing = new PosSettings();

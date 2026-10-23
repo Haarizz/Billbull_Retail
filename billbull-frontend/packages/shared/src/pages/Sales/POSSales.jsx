@@ -148,7 +148,7 @@ import {
 // ─── POS sub-modules ──────────────────────────────────────────────────────────
 import { DirhamSymbol, DenominationLabel, CurrencyAmount, DenominationAmount, renderAED, setActiveCurrency } from './POS/POSCurrency';
 import { WALK_IN_CUSTOMER, STATUS_ENUM_TO_LABEL } from './POS/posConstants';
-import { toNumber, mapPosProductAggregateItem, mapPosCustomer, getPriceFloor, mergeSavedPosSettings } from './POS/posUtils';
+import { toNumber, mapPosProductAggregateItem, mapPosCustomer, getPriceFloor, mergeSavedPosSettings, isDeliverySalesOrder } from './POS/posUtils';
 import InvoicePreviewItems from './POS/features/customers/InvoicePreviewItems';
 import {
   buildZatcaTlvBase64, buildThermalReceiptHtml, buildLayawayReceiptHtml, buildLayawayReceiptText,
@@ -211,6 +211,7 @@ import useSalesperson from './POS/features/sales/useSalesperson';
 import { usePosBehaviourSettings } from './POS/features/settings/usePosBehaviourSettings';
 import { useHeldSales } from './POS/features/heldSales/useHeldSales';
 import { useLayaway } from './POS/features/layaway/useLayaway';
+import { usePosSalesOrders } from './POS/features/salesOrders/usePosSalesOrders';
 import { useDelivery } from './POS/features/delivery/useDelivery';
 import { usePosPrinting } from './POS/device/printing/usePosPrinting';
 import { useTemplateSettings } from './POS/features/templateSettings/useTemplateSettings';
@@ -225,6 +226,7 @@ import { isClosureWorkflowError } from './POS/features/session/sessionWorkflowEr
 import SessionInvalidatedOverlay from './POS/features/session/SessionInvalidatedOverlay';
 import IdleLockOverlay from './POS/features/session/IdleLockOverlay';
 import CloseDayVarianceDialog from './POS/features/session/CloseDayVarianceDialog';
+import CloseDayConfirmDialog from './POS/features/session/CloseDayConfirmDialog';
 import RangeExclusionConfirmDialog from './POS/features/session/RangeExclusionConfirmDialog';
 import LockPosDialog from './POS/features/session/LockPosDialog';
 import CashDropDialog from './POS/features/session/CashDropDialog';
@@ -483,6 +485,7 @@ export default function POSSales() {
   const clearCheckoutQuickCash = useCallback(() => setCheckoutQuickCash(null), []);
   const [showCashDropDialog, setShowCashDropDialog] = useState(false);
   const [closeDayVariance, setCloseDayVariance] = useState(null);
+  const [showCloseDayConfirm, setShowCloseDayConfirm] = useState(false);
   // Live Session quick-view — dashboard tile that pops the current session's
   // sales/cash figures without navigating away (X-Report is the full page version).
   const [showLiveSessionDialog, setShowLiveSessionDialog] = useState(false);
@@ -1035,15 +1038,27 @@ export default function POSSales() {
     setConfirmAction, syncPosDataRef,
   });
 
+  // ── POS → Orders: Sales Orders taken up at the till ─────────────────────────
+  // Implementation lives in POS/features/salesOrders/usePosSalesOrders.js. Declared here, next
+  // to useLayaway, for the same reason: the order's advance feeds checkoutEffectiveDue below.
+  const {
+    activeSalesOrder, clearActiveSalesOrder, takeUpSalesOrder, activeSalesOrderAdvance,
+    ordersSource, setOrdersSource, salesOrderRows, salesOrderRowsLoading, loadSalesOrderRows,
+  } = usePosSalesOrders({
+    posSettings, recalculateInvoice, setCurrentInvoice, customerOptions, setSelectedCustomer,
+    cartItemCount: currentInvoice.items.length,
+  });
+
   // ══ Checkout Payment Manager ═══════════════════════════════════════════════
-  // Amount the cashier has to collect: cart total + shipping, less any layaway deposit
-  // already taken. Every payment figure on the checkout screen is measured against this.
+  // Amount the cashier has to collect: cart total + shipping, less any layaway deposit or
+  // Sales Order advance already taken. Every payment figure on the checkout screen is
+  // measured against this.
   const checkoutEffectiveDue = useMemo(() => {
     const shippingChargeNum = Number(shippingCharge) || 0;
     const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
-    const depositAmt = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
+    const depositAmt = (activeLayawayDeposit > 0 ? activeLayawayDeposit : 0) + activeSalesOrderAdvance;
     return Math.max(0, grandTotal - depositAmt);
-  }, [currentInvoice.total, shippingCharge, activeLayawayDeposit]);
+  }, [currentInvoice.total, shippingCharge, activeLayawayDeposit, activeSalesOrderAdvance]);
 
   // Sole owner of checkout payment state. POSSales no longer computes the remaining balance,
   // allocated amount, change, payment summary or settlement readiness — it reads them from
@@ -1100,9 +1115,10 @@ export default function POSSales() {
   const checkoutPaymentFields = useMemo(
     () => buildCheckoutPaymentFields(checkoutPayment.paymentLines, {
       effectiveDue: checkoutEffectiveDue,
-      layawayDeposit: activeLayawayDeposit,
+      // A Sales Order advance is pre-credited tender exactly like a layaway deposit.
+      layawayDeposit: activeLayawayDeposit + activeSalesOrderAdvance,
     }),
-    [checkoutPayment.paymentLines, checkoutEffectiveDue, activeLayawayDeposit],
+    [checkoutPayment.paymentLines, checkoutEffectiveDue, activeLayawayDeposit, activeSalesOrderAdvance],
   );
 
 
@@ -1335,7 +1351,7 @@ export default function POSSales() {
         })),
       };
 
-      const previewDeposit = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
+      const previewDeposit = (activeLayawayDeposit > 0 ? activeLayawayDeposit : 0) + activeSalesOrderAdvance;
       const previewGrand = (currentInvoice.total || 0) + previewShipping;
 
       const previewHeader = previewHasTax ? tplInvoiceHeader : tplReceiptHeader;
@@ -1455,7 +1471,7 @@ export default function POSSales() {
       console.warn('Checkout Thermal preview failed:', e);
       return '';
     }
-  }, [checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, activeLayawayDeposit, shippingCharge,
+  }, [checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, activeLayawayDeposit, activeSalesOrderAdvance, shippingCharge,
     checkoutPayment, checkoutPaymentFields, currentTerminal, cashierDisplayName, activeCurrency,
     tplInvoiceHeader, tplInvoiceHeaderAr, tplInvoiceFooter, tplOutletName, effectiveOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
@@ -2793,9 +2809,15 @@ export default function POSSales() {
         ].filter(Boolean).join(' | ') || null,
         deliveryCharge: toNumber(deliveryCharge, 0) || null,
         items: cartItemsToPayload(currentInvoice.items),
+        // Sending out a Sales Order taken up from POS → Orders links the delivery to the order.
+        ...(activeSalesOrder?.soNumber ? { linkedSalesOrder: activeSalesOrder.soNumber } : {}),
       };
 
       const savedInvoice = await posCheckout(payload);
+      // PI Flow: the branch's Delivery Workflow made this a Pro-forma Invoice — a Draft that
+      // becomes the sale only when Delivery Settlement settles or returns it. The slip printed
+      // below is titled PRO-FORMA INVOICE from the same flag.
+      const issuedAsProforma = !!savedInvoice?.posProformaPending;
 
       try {
         if (isSheetPaper(paperForSale(savedInvoice))) {
@@ -2830,7 +2852,7 @@ export default function POSSales() {
             full: savedInvoice,
             text,
             escPosBase64,
-            title: `Delivery ${savedInvoice.invoiceNumber || ''}`.trim(),
+            title: `${issuedAsProforma ? 'Pro-forma Invoice' : 'Delivery'} ${savedInvoice.invoiceNumber || ''}`.trim(),
           });
         }
       } catch (printErr) {
@@ -2838,6 +2860,10 @@ export default function POSSales() {
         alert(`Delivery order saved, but the receipt didn't print: ${printErr?.message || 'printer error'}.`);
       }
 
+      if (issuedAsProforma) {
+        showFeedback('success', `Pro-forma Invoice ${savedInvoice.invoiceNumber || ''} saved as Draft — it posts to Sales when settled at Delivery Settlement.`);
+      }
+      clearActiveSalesOrder();
       setShowDeliveryModal(false);
       setInvoiceCounter(c => c + 1);
       clearInvoice();
@@ -2869,7 +2895,7 @@ export default function POSSales() {
   }, [currentInvoice, deliveryAddress, deliveryCustomerId, deliveryDriver, deliveryDate, deliveryTimeSlot, deliveryInstructions,
     deliveryNotes, deliveryCharge, deliveryNewName, customerOptions, currentSession,
     currentTerminal, cartItemsToPayload, clearInvoice, selectedDeliveryPerson, validateDeliveryOrder,
-    tplInvoiceShowBankDetails, paperForSale, buildInvoiceSheetHtml]);
+    tplInvoiceShowBankDetails, paperForSale, buildInvoiceSheetHtml, activeSalesOrder, clearActiveSalesOrder, showFeedback]);
 
 
   // ── Hold (persisted, session-scoped) ───────────────────────────────────────
@@ -3198,6 +3224,7 @@ export default function POSSales() {
     customerCtx: { selectedCustomerData, customerOptions },
     sessionCtx: { currentSession, currentTerminal, posSettings },
     layaway: { activeLayawayId, activeLayawayDeposit, setActiveLayawayId, setActiveLayawayDeposit },
+    salesOrder: { activeSalesOrder, activeSalesOrderAdvance, clearActiveSalesOrder },
     shipping: { shippingCharge, shippingAddress, deliveryAddress, deliveryDriver, deliveryNotes },
     // Salesperson attribution for the counter-sale payload builder (the delivery-order builder
     // spreads the same projection at its own call site). resetSalesperson runs after a completed
@@ -5592,12 +5619,19 @@ export default function POSSales() {
               </div>
 
               <button
-                onClick={() => { if (window.confirm(`Close business day ${zReportDate}? This will finalize all sessions for the day.`)) handleCloseDay(); }}
+                onClick={() => setShowCloseDayConfirm(true)}
                 disabled={zReportLoading || !zReportData || zReportData?.isDayClosed || isDayCloseBlocked}
                 title={isDayCloseBlocked ? "Resolve all pending actions in the Validation Checklist before closing the day." : undefined}
                 className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed text-[#1E293B] font-bold shadow-sm text-sm px-6 py-2.5 rounded-lg flex items-center gap-2 transition-all">
                 <Lock className="h-4 w-4" />{zReportData?.isDayClosed ? 'Day Closed' : 'Close Day'}
               </button>
+              <CloseDayConfirmDialog
+                open={showCloseDayConfirm}
+                onOpenChange={setShowCloseDayConfirm}
+                businessDate={zReportDate}
+                onCancel={() => setShowCloseDayConfirm(false)}
+                onConfirm={() => { setShowCloseDayConfirm(false); handleCloseDay(); }}
+              />
             </div>
           </div>
         </div>
@@ -7113,6 +7147,17 @@ export default function POSSales() {
       openSalespersonScanModal();
       return false;
     }
+    // A Sales Order whose delivery type is Delivery is never checked out at the counter: it goes
+    // out through Process Delivery and is paid (or returned) at Delivery Settlement. Pickup and
+    // Courier orders check out like any sale.
+    if (activeSalesOrder?.deliveryOrder) {
+      alert({
+        tone: 'warning',
+        title: 'Delivery order — no checkout',
+        message: `${activeSalesOrder.soNumber} is a Delivery order. Use Delivery to send it out; the payment is collected at Delivery Settlement.`,
+      });
+      return false;
+    }
     setCheckoutPhase('payment');
     setShowPaymentDialog(true);
     // The Payment Manager starts with no allocations — the cashier picks a method and
@@ -7121,7 +7166,7 @@ export default function POSSales() {
     quickCashSeqRef.current += 1;
     setCheckoutQuickCash(checkoutQuickCashRequest(opts, quickCashSeqRef.current));
     return true;
-  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal]);
+  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal, activeSalesOrder]);
 
   const touchScreenProps = {
     handleCheckout,
@@ -7177,6 +7222,9 @@ export default function POSSales() {
       setOrdersListSelected(null);
       setOrdersListSelectedDetail(null);
       setShowOrdersListDialog(true);
+      // The Sales Orders tab (orders from Customers & Sales) loads alongside, so switching to it
+      // is instant and an open order is never more than one click away.
+      loadSalesOrderRows();
       try {
         const result = await getSalesOrdersPage({ page: 0, size: 50 });
         setOrdersList(Array.isArray(result?.content) ? result.content : (Array.isArray(result) ? result : []));
@@ -8459,7 +8507,7 @@ export default function POSSales() {
 
         const shippingChargeNum = Number(shippingCharge) || 0;
         const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
-        const depositAmt = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
+        const depositAmt = (activeLayawayDeposit > 0 ? activeLayawayDeposit : 0) + activeSalesOrderAdvance;
         // Owned by the Payment Manager (checkoutEffectiveDue) so the screen and the manager
         // measure every allocation against exactly the same amount due.
         const effectiveDue = checkoutEffectiveDue;
@@ -9368,25 +9416,43 @@ export default function POSSales() {
         </DialogContent>
       </Dialog>
 
-      {/* Orders List Dialog */}
+      {/* Orders List Dialog — two tabs: Saved Orders (the till's own "Save as Order" drafts and
+          their history) and Sales Orders (orders confirmed in Customers & Sales → Sales Orders,
+          ready to take up). Opening an order loads its customer and lines into the cart and links
+          the cart to it; a Delivery order then goes out through Process Delivery, a Pickup or
+          Courier order checks out. See POS/features/salesOrders/usePosSalesOrders.js. */}
       {showOrdersListDialog && (() => {
-        const pendingCount = ordersList.filter(o => o.status === 'DRAFT' || o.status === 'CONFIRMED').length;
+        const isSalesTab = ordersSource === 'SALES';
+        // Confirmed orders live on the Sales Orders tab, where they can be taken up with their
+        // advance; the Saved tab keeps the till's drafts and the order history.
+        const savedRows = ordersList.filter(o => !['CONFIRMED', 'PARTIALLY_PAID', 'FULLY_PAID'].includes(o.status));
+        const pendingCount = isSalesTab ? salesOrderRows.length : savedRows.filter(o => o.status === 'DRAFT').length;
         const statusTabs = ['All', 'Pending', 'Completed', 'Cancelled'];
-        const filteredOrders = ordersList.filter(o => {
-          const matchSearch = !ordersListSearch.trim() ||
-            (o.soNumber || '').toLowerCase().includes(ordersListSearch.toLowerCase()) ||
-            (o.customerName || '').toLowerCase().includes(ordersListSearch.toLowerCase());
-          const matchStatus = ordersListStatusFilter === 'All' ||
-            (ordersListStatusFilter === 'Pending' && (o.status === 'DRAFT' || o.status === 'CONFIRMED')) ||
-            (ordersListStatusFilter === 'Completed' && (o.status === 'INVOICED' || o.status === 'DELIVERED')) ||
-            (ordersListStatusFilter === 'Cancelled' && o.status === 'CANCELLED');
-          return matchSearch && matchStatus;
-        });
+        const q = ordersListSearch.trim().toLowerCase();
+        const matchesSearch = (o) => !q
+          || (o.soNumber || '').toLowerCase().includes(q)
+          || (o.customerName || '').toLowerCase().includes(q)
+          || (o.items || []).some(it => `${it.description || ''} ${it.productName || ''} ${it.itemCode || ''}`.toLowerCase().includes(q));
+        const filteredOrders = isSalesTab
+          ? salesOrderRows.filter(matchesSearch)
+          : savedRows.filter(o => {
+            const matchStatus = ordersListStatusFilter === 'All' ||
+              (ordersListStatusFilter === 'Pending' && o.status === 'DRAFT') ||
+              (ordersListStatusFilter === 'Completed' && (o.status === 'INVOICED' || o.status === 'DELIVERED' || o.status === 'DISPATCHED' || o.status === 'PARTIALLY_DELIVERED')) ||
+              (ordersListStatusFilter === 'Cancelled' && o.status === 'CANCELLED');
+            return matchesSearch(o) && matchStatus;
+          });
         const sel = ordersListSelectedDetail;
         const selOrder = ordersListSelected;
+        const shown = sel || selOrder;
+        const canTakeUp = !!selOrder && ['DRAFT', 'CONFIRMED', 'PARTIALLY_PAID', 'FULLY_PAID'].includes(selOrder.status);
+        const selIsDelivery = !!shown && isDeliverySalesOrder(shown);
+        const piFlow = posSettings?.deliveryWorkflowMode === 'PI_FLOW';
         const statusBadge = (status) => {
           if (status === 'DRAFT') return 'bg-orange-100 text-orange-700 border-orange-200';
           if (status === 'CONFIRMED') return 'bg-blue-100 text-blue-700 border-blue-200';
+          if (status === 'PARTIALLY_PAID') return 'bg-purple-100 text-purple-700 border-purple-200';
+          if (status === 'FULLY_PAID') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
           if (status === 'INVOICED') return 'bg-green-100 text-green-700 border-green-200';
           if (status === 'DELIVERED') return 'bg-teal-100 text-teal-700 border-teal-200';
           if (status === 'CANCELLED') return 'bg-red-100 text-red-600 border-red-200';
@@ -9395,11 +9461,24 @@ export default function POSSales() {
         const statusLabel = (status) => {
           if (status === 'DRAFT') return 'Pending';
           if (status === 'CONFIRMED') return 'Confirmed';
-          return status ? status.charAt(0) + status.slice(1).toLowerCase() : '';
+          if (status === 'PARTIALLY_PAID') return 'Part. Paid';
+          if (status === 'FULLY_PAID') return 'Paid';
+          return status ? status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, ' ') : '';
+        };
+        const closeDialog = () => { setShowOrdersListDialog(false); setOrdersListSelected(null); setOrdersListSelectedDetail(null); };
+        const switchTab = (source) => {
+          if (source === ordersSource) return;
+          setOrdersSource(source);
+          setOrdersListSelected(null);
+          setOrdersListSelectedDetail(null);
+          setOrdersListSearch('');
+          if (source === 'SALES') loadSalesOrderRows();
         };
         const handleSelectOrder = async (order) => {
           setOrdersListSelected(order);
           setOrdersListSelectedDetail(null);
+          // A Sales Orders row already carries its hydrated lines and open advance.
+          if (isSalesTab) { setOrdersListSelectedDetail(order); return; }
           setOrdersListDetailLoading(true);
           try {
             const detail = await getSalesOrderById(order.id);
@@ -9418,55 +9497,89 @@ export default function POSSales() {
             setOrdersListSelectedDetail(null);
           } catch (e) { alert(e?.response?.data?.message || 'Failed to cancel order'); }
         };
-        const handleOpenOrder = async () => {
-          if (!sel) return;
-          const items = sel.items || sel.orderItems || [];
-          if (items.length === 0) { alert('Order has no items to load.'); return; }
-          const mapped = items.map(it => {
-            const price = toNumber(it.unitPrice || it.rate || it.price, 0);
-            const quantity = toNumber(it.quantity || it.qty, 1);
-            const discount = toNumber(it.discountPercent || it.discount, 0);
-            return {
-              id: it.productId || it.id || it.itemCode,
-              name: it.productName || it.itemName || it.name || '',
-              code: it.productCode || it.itemCode || it.code || '',
-              price,
-              quantity,
-              discount,
-              taxRate: toNumber(it.taxRate || it.vatRate, 0),
-              total: price * quantity * (1 - discount / 100),
-              unit: it.unit || 'Pcs',
-              batchNumber: it.batchNumber || null,
-              serialNumber: it.serialNumber || null,
-            };
-          });
-          setCurrentInvoice(recalculateInvoice(mapped));
-          setShowOrdersListDialog(false);
-          setOrdersListSelected(null);
-          setOrdersListSelectedDetail(null);
+        // Loads the order (customer + lines) into the cart and links the cart to it. Asks first
+        // when that would replace a cart the cashier is still working on.
+        const openIntoCart = () => {
+          if (!shown || !canTakeUp) return null;
+          const liveLines = currentInvoice.items.filter(i => !i.isVoided).length;
+          if (liveLines > 0 && activeSalesOrder?.soNumber !== shown.soNumber
+            && !window.confirm(`Replace the current cart (${liveLines} item${liveLines !== 1 ? 's' : ''}) with order ${shown.soNumber}?`)) {
+            return null;
+          }
+          const customer = takeUpSalesOrder(shown);
+          if (!customer) return null;
+          // The order's delivery charge is not a cart line. A Delivery order carries it — with the
+          // order's customer, address, date and instructions — into the delivery form, so it is
+          // there whether the cashier presses Process Delivery now or the Delivery button later.
+          // A Courier order collects it at checkout as the sale's shipping charge.
+          const orderCharge = Math.max(0, toNumber(shown.deliveryCharge, 0));
+          if (isDeliverySalesOrder(shown)) {
+            setShippingCharge(0);
+            setDeliveryModalTab('existing');
+            if (customer.id !== 'walk-in') setDeliveryCustomerId(String(customer.id));
+            const address = shown.shippingAddress || customer.address || '';
+            if (address) setDeliveryAddress(address);
+            if (shown.expectedDeliveryDate) setDeliveryDate(String(shown.expectedDeliveryDate).slice(0, 10));
+            if (shown.deliveryInstructions) setDeliveryInstructions(shown.deliveryInstructions);
+            setDeliveryCharge(orderCharge > 0 ? String(orderCharge) : '');
+          } else {
+            setShippingCharge(orderCharge);
+          }
+          closeDialog();
+          showFeedback('success', `Order ${shown.soNumber} loaded${shown.customerName ? ` for ${shown.customerName}` : ''}`);
+          return customer;
         };
-        const handleOpenOrderAndCheckout = async () => {
-          await handleOpenOrder();
+        const handleOpenOrder = () => { openIntoCart(); };
+        const handleOpenOrderAndCheckout = () => {
+          if (!openIntoCart()) return;
           // Delegates to the SAME shared entry point as the main Checkout button rather than
           // opening the payment dialog itself: an order picked straight into settlement is still a
           // POS sale and still needs its salesperson scanned. The order is loaded into the cart
           // either way, so a refusal leaves the cashier able to scan and settle from there.
           handleCheckout();
         };
+        // Delivery orders: open into the cart, then straight into the delivery form with the
+        // order's customer, shipping address, date and instructions — the cashier assigns the
+        // driver and slot, and Out for Delivery sends it (as a Pro-forma Invoice under PI Flow).
+        const handleProcessDelivery = () => {
+          if (!openIntoCart()) return;
+          setShowDeliveryModal(true);
+        };
+        const lineAmount = (it) => {
+          const price = toNumber(it.price, 0);
+          const qty = toNumber(it.quantity, 0);
+          const disc = toNumber(it.discount, 0);
+          return toNumber(it.lineTotal, price * qty * (1 - disc / 100));
+        };
+        const shownDiscount = shown ? toNumber(shown.billDiscountAmount, 0) : 0;
+        const shownTax = shown ? toNumber(shown.taxTotal, 0) : 0;
+        const shownAdvance = shown ? toNumber(shown.openAdvance ?? shown.advanceAmount, 0) : 0;
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/60" onClick={() => { setShowOrdersListDialog(false); setOrdersListSelected(null); setOrdersListSelectedDetail(null); }} />
-            <div className="relative w-full max-w-3xl bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: '85vh' }}>
+            <div className="absolute inset-0 bg-black/60" onClick={closeDialog} />
+            <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: '85vh' }}>
               {/* Header */}
-              <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
-                <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
-                  <Package className="h-5 w-5 text-amber-600" />
+              <div className="flex flex-wrap items-center gap-3 px-5 py-4 bg-[#F5C742]">
+                <div className="w-9 h-9 rounded-lg bg-white/40 flex items-center justify-center shrink-0">
+                  <Package className="h-5 w-5 text-[#1E293B]" />
                 </div>
-                <div>
-                  <p className="text-xs font-semibold text-amber-600 uppercase tracking-wide">SAVED ORDERS</p>
-                  <p className="text-sm text-gray-500">{pendingCount} pending · {ordersList.length} total</p>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-[#1E293B]/70 uppercase tracking-widest">POS ORDERS</p>
+                  <p className="text-sm font-black text-[#1E293B]">
+                    {isSalesTab
+                      ? `${pendingCount} sales order${pendingCount !== 1 ? 's' : ''} · from Customers & Sales`
+                      : `${pendingCount} pending · ${savedRows.length} total`}
+                  </p>
                 </div>
-                <button type="button" onClick={() => { setShowOrdersListDialog(false); setOrdersListSelected(null); setOrdersListSelectedDetail(null); }} className="ml-auto text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100 transition-colors">
+                <div className="ml-auto flex items-center gap-1 bg-white/40 rounded-xl p-1">
+                  {[['SAVED', 'Saved Orders'], ['SALES', 'Sales Orders']].map(([source, label]) => (
+                    <button key={source} type="button" onClick={() => switchTab(source)}
+                      className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${ordersSource === source ? 'bg-white text-[#1E293B] shadow-sm' : 'text-[#1E293B]/70 hover:text-[#1E293B]'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <button type="button" onClick={closeDialog} className="text-[#1E293B]/60 hover:text-[#1E293B] p-1 rounded-lg hover:bg-white/30 transition-colors">
                   <X className="h-5 w-5" />
                 </button>
               </div>
@@ -9474,7 +9587,7 @@ export default function POSSales() {
               {/* Body — split layout */}
               <div className="flex flex-col md:flex-row flex-1 min-h-0">
                 {/* Left: list */}
-                <div className="w-full md:w-64 max-h-[35vh] md:max-h-none min-h-0 border-b md:border-b-0 md:border-r border-gray-100 flex flex-col bg-gray-50 shrink-0">
+                <div className="w-full md:w-80 max-h-[35vh] md:max-h-none min-h-0 border-b md:border-b-0 md:border-r border-gray-100 flex flex-col bg-gray-50 shrink-0">
                   <div className="p-3 border-b border-gray-100">
                     <div className="relative">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
@@ -9482,51 +9595,67 @@ export default function POSSales() {
                         type="text"
                         value={ordersListSearch}
                         onChange={e => setOrdersListSearch(e.target.value)}
-                        placeholder="Search by order no., customer, or item..."
+                        placeholder={isSalesTab ? 'Search by SO no., customer, or item...' : 'Search by order no., customer, or item...'}
                         className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
                       />
                     </div>
                   </div>
-                  <div className="flex gap-1 px-3 py-2 border-b border-gray-100 flex-wrap">
-                    {statusTabs.map(tab => (
-                      <button
-                        key={tab}
-                        type="button"
-                        onClick={() => setOrdersListStatusFilter(tab)}
-                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg transition-colors ${ordersListStatusFilter === tab ? 'bg-amber-400 text-white' : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'}`}
-                      >
-                        {tab}
-                      </button>
-                    ))}
-                  </div>
+                  {isSalesTab ? (
+                    <p className="px-3 py-2 border-b border-gray-100 text-[10px] text-gray-400">Orders from Customers &amp; Sales → Sales Orders</p>
+                  ) : (
+                    <div className="flex gap-1 px-3 py-2 border-b border-gray-100 flex-wrap">
+                      {statusTabs.map(tab => (
+                        <button
+                          key={tab}
+                          type="button"
+                          onClick={() => setOrdersListStatusFilter(tab)}
+                          className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg transition-colors ${ordersListStatusFilter === tab ? 'bg-amber-400 text-white' : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'}`}
+                        >
+                          {tab}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex-1 overflow-y-auto">
-                    {ordersListLoading ? (
+                    {(isSalesTab ? salesOrderRowsLoading : ordersListLoading) ? (
                       <div className="flex items-center justify-center h-24 text-gray-400 gap-2 text-xs">
                         <RefreshCw className="h-3.5 w-3.5 animate-spin" />Loading…
                       </div>
                     ) : filteredOrders.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-32 text-gray-300 gap-1">
+                      <div className="flex flex-col items-center justify-center h-32 text-gray-300 gap-1 px-4 text-center">
                         <Package className="h-8 w-8" />
                         <p className="text-xs text-gray-400">No orders found</p>
+                        <p className="text-[10px] text-gray-300">
+                          {isSalesTab ? 'Confirmed sales orders that are not yet invoiced appear here' : 'Use "Save as Order" to save a cart'}
+                        </p>
                       </div>
-                    ) : filteredOrders.map(order => (
-                      <button
-                        key={order.id}
-                        type="button"
-                        onClick={() => handleSelectOrder(order)}
-                        className={`w-full text-left px-3 py-3 border-b border-gray-100 transition-colors ${selOrder?.id === order.id ? 'bg-amber-50 border-l-2 border-l-amber-400' : 'hover:bg-white'}`}
-                      >
-                        <div className="flex items-center justify-between gap-1 mb-0.5">
-                          <span className="text-xs font-bold text-amber-600">{order.soNumber}</span>
-                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${statusBadge(order.status)}`}>{statusLabel(order.status)}</span>
-                        </div>
-                        <p className="text-[11px] text-gray-600 truncate">{order.customerName || 'Walk-in Customer'}</p>
-                        <div className="flex items-center justify-between mt-0.5">
-                          <span className="text-[10px] text-gray-400">{order.orderDate} · {(order.items || []).length} item{(order.items || []).length !== 1 ? 's' : ''}</span>
-                          <span className="text-[11px] font-bold text-amber-500">{formatCurrency(order.orderTotal)}</span>
-                        </div>
-                      </button>
-                    ))}
+                    ) : filteredOrders.map(order => {
+                      const delivery = isSalesTab && isDeliverySalesOrder(order);
+                      return (
+                        <button
+                          key={order.id}
+                          type="button"
+                          onClick={() => handleSelectOrder(order)}
+                          className={`w-full text-left px-3 py-3 border-b border-gray-100 transition-colors ${selOrder?.id === order.id ? 'bg-[#327F74]/5 border-l-2 border-l-[#327F74]' : 'hover:bg-white'}`}
+                        >
+                          <div className="flex items-center justify-between gap-1 mb-0.5">
+                            <span className="text-xs font-bold text-[#1E293B]">{order.soNumber}</span>
+                            <span className="flex items-center gap-1">
+                              {delivery && <Truck className="h-3 w-3 text-[#327F74]" />}
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${statusBadge(order.status)}`}>{statusLabel(order.status)}</span>
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-gray-600 truncate">{order.customerName || 'Walk-in Customer'}</p>
+                          <div className="flex items-center justify-between mt-0.5">
+                            <span className="text-[10px] text-gray-400">{order.orderDate} · {(order.items || []).length} item{(order.items || []).length !== 1 ? 's' : ''}</span>
+                            <span className="text-[11px] font-bold text-[#1E293B]">{formatCurrency(order.orderTotal)}</span>
+                          </div>
+                          {delivery && order.shippingAddress && (
+                            <p className="text-[10px] text-[#327F74] truncate mt-0.5">{order.shippingAddress}</p>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -9535,7 +9664,7 @@ export default function POSSales() {
                   {!selOrder ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-gray-300 gap-2">
                       <Package className="h-12 w-12" />
-                      <p className="text-sm text-gray-400">Select an order to view details</p>
+                      <p className="text-sm text-gray-400">Select an order to preview</p>
                     </div>
                   ) : ordersListDetailLoading ? (
                     <div className="flex-1 flex items-center justify-center text-gray-400 gap-2 text-sm">
@@ -9544,16 +9673,28 @@ export default function POSSales() {
                   ) : (
                     <>
                       <div className="flex-1 overflow-y-auto p-5">
-                        <div className="flex items-start justify-between mb-4">
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-base font-black text-amber-600">{selOrder.soNumber}</span>
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${statusBadge(selOrder.status)}`}>{statusLabel(selOrder.status)}</span>
-                            </div>
-                            <p className="text-base font-semibold text-gray-800">{(sel || selOrder).customerName || 'Walk-in Customer'}</p>
-                            <p className="text-xs text-gray-400 mt-0.5">{selOrder.orderDate} {selOrder.orderTime ? ', ' + selOrder.orderTime : ''}</p>
+                        <div className="flex items-start justify-between mb-4 gap-3">
+                          <div className="min-w-0">
+                            <span className="text-xs font-bold text-[#327F74]">{selOrder.soNumber}</span>
+                            <p className="text-lg font-black text-gray-800 truncate">{shown.customerName || 'Walk-in Customer'}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">Date: {selOrder.orderDate}</p>
                           </div>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${statusBadge(selOrder.status)}`}>{statusLabel(selOrder.status)}</span>
                         </div>
+                        {selIsDelivery && canTakeUp && (
+                          <div className="rounded-xl border border-[#327F74]/30 bg-[#327F74]/5 p-3 mb-4 flex gap-3">
+                            <Truck className="h-4 w-4 text-[#327F74] shrink-0 mt-0.5" />
+                            <div className="min-w-0">
+                              <p className="text-[11px] font-bold uppercase tracking-wide text-[#327F74]">Delivery order</p>
+                              <p className="text-xs text-gray-700">{shown.shippingAddress || 'No shipping address on the order — enter one in the delivery form.'}</p>
+                              <p className="text-[11px] text-[#327F74] mt-1">
+                                {piFlow
+                                  ? 'PI Flow active — Process Delivery will print a Pro-forma Invoice and save it as a Draft.'
+                                  : 'Process Delivery sends it out; the payment is collected at Delivery Settlement.'}
+                              </p>
+                            </div>
+                          </div>
+                        )}
                         {/* Items table */}
                         <div className="rounded-xl border border-gray-100 overflow-hidden mb-4 overflow-x-auto">
                           <table className="w-full min-w-[420px] text-xs">
@@ -9562,23 +9703,20 @@ export default function POSSales() {
                                 <th className="text-left px-3 py-2 font-semibold text-gray-500 uppercase text-[10px] tracking-wide">Item</th>
                                 <th className="text-center px-3 py-2 font-semibold text-gray-500 uppercase text-[10px] tracking-wide">Qty</th>
                                 <th className="text-right px-3 py-2 font-semibold text-gray-500 uppercase text-[10px] tracking-wide">Price</th>
-                                <th className="text-center px-3 py-2 font-semibold text-gray-500 uppercase text-[10px] tracking-wide">Disc</th>
+                                <th className="text-center px-3 py-2 font-semibold text-gray-500 uppercase text-[10px] tracking-wide">Disc%</th>
                                 <th className="text-right px-3 py-2 font-semibold text-gray-500 uppercase text-[10px] tracking-wide">Amount</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {((sel || selOrder).items || (sel || selOrder).orderItems || []).map((it, idx) => {
-                                const price = toNumber(it.unitPrice || it.rate || it.price, 0);
-                                const qty = toNumber(it.quantity || it.qty, 1);
-                                const disc = toNumber(it.discountPercent || it.discount, 0);
-                                const amt = toNumber(it.lineTotal || it.amount || (price * qty * (1 - disc / 100)), 0);
+                              {(shown.items || []).map((it, idx) => {
+                                const disc = toNumber(it.discount, 0);
                                 return (
-                                  <tr key={idx} className="border-t border-gray-50">
-                                    <td className="px-3 py-2 text-gray-800 font-medium">{it.productName || it.itemName || it.name || '—'}</td>
-                                    <td className="px-3 py-2 text-center text-gray-600">{qty}</td>
-                                    <td className="px-3 py-2 text-right text-gray-600">{formatCurrency(price)}</td>
+                                  <tr key={it.id || idx} className="border-t border-gray-50">
+                                    <td className="px-3 py-2 text-gray-800 font-medium">{it.description || it.productName || it.itemCode || '—'}</td>
+                                    <td className="px-3 py-2 text-center text-gray-600">{toNumber(it.quantity, 0)}{it.unit ? ` ${it.unit}` : ''}</td>
+                                    <td className="px-3 py-2 text-right text-gray-600">{formatCurrency(toNumber(it.price, 0))}</td>
                                     <td className="px-3 py-2 text-center text-gray-400">{disc ? `${disc}%` : '—'}</td>
-                                    <td className="px-3 py-2 text-right font-semibold text-gray-800">{formatCurrency(amt)}</td>
+                                    <td className="px-3 py-2 text-right font-semibold text-gray-800">{formatCurrency(lineAmount(it))}</td>
                                   </tr>
                                 );
                               })}
@@ -9589,43 +9727,85 @@ export default function POSSales() {
                         <div className="space-y-1 text-sm">
                           <div className="flex justify-between text-gray-500">
                             <span>Subtotal</span>
-                            <span>{formatCurrency(toNumber((sel || selOrder).subTotal || (sel || selOrder).orderTotal, 0))}</span>
+                            <span>{formatCurrency(toNumber(shown.subTotal ?? shown.orderTotal, 0))}</span>
                           </div>
-                          {toNumber((sel || selOrder).vatAmount || (sel || selOrder).taxAmount, 0) > 0 && (
+                          {shownDiscount > 0 && (
                             <div className="flex justify-between text-gray-500">
-                              <span>VAT ({toNumber((sel || selOrder).vatRate || (sel || selOrder).taxRate, 0)}%)</span>
-                              <span>{formatCurrency(toNumber((sel || selOrder).vatAmount || (sel || selOrder).taxAmount, 0))}</span>
+                              <span>Discount</span>
+                              <span>− {formatCurrency(shownDiscount)}</span>
+                            </div>
+                          )}
+                          {shownTax > 0 && (
+                            <div className="flex justify-between text-gray-500">
+                              <span>VAT</span>
+                              <span>{formatCurrency(shownTax)}</span>
+                            </div>
+                          )}
+                          {toNumber(shown.deliveryCharge, 0) > 0 && (
+                            <div className="flex justify-between text-gray-500">
+                              <span>Delivery Charge</span>
+                              <span>{formatCurrency(toNumber(shown.deliveryCharge, 0))}</span>
                             </div>
                           )}
                           <div className="flex justify-between font-black text-base text-gray-800 pt-1 border-t border-gray-200">
                             <span>Total</span>
-                            <span>{formatCurrency(toNumber((sel || selOrder).orderTotal, 0))}</span>
+                            <span>{formatCurrency(toNumber(shown.orderTotal, 0))}</span>
                           </div>
+                          {shownAdvance > 0 && (
+                            <>
+                              <div className="flex justify-between text-green-700 font-semibold">
+                                <span>Advance received</span>
+                                <span>− {formatCurrency(shownAdvance)}</span>
+                              </div>
+                              <div className="flex justify-between font-bold text-gray-800">
+                                <span>Balance to collect</span>
+                                <span>{formatCurrency(Math.max(0, toNumber(shown.orderTotal, 0) - shownAdvance))}</span>
+                              </div>
+                            </>
+                          )}
                         </div>
                       </div>
                       {/* Actions */}
                       <div className="border-t border-gray-100 px-5 py-3 flex flex-wrap gap-2 bg-gray-50 shrink-0">
-                        <button
-                          type="button"
-                          onClick={handleCancelOrder}
-                          className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
-                        >
-                          <X className="h-3.5 w-3.5" />Cancel Order
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleOpenOrder}
-                          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-[#1E293B] rounded-lg hover:bg-gray-700 transition-colors"
-                        >
-                          <ShoppingCart className="h-3.5 w-3.5" />Open / Pick Order
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleOpenOrderAndCheckout}
-                          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-amber-400 hover:bg-amber-500 rounded-lg transition-colors"
-                        >
-                          <CheckCircle className="h-3.5 w-3.5" />Checkout
-                        </button>
+                        {!isSalesTab && selOrder.status === 'DRAFT' && (
+                          <button
+                            type="button"
+                            onClick={handleCancelOrder}
+                            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
+                          >
+                            <X className="h-3.5 w-3.5" />Cancel Order
+                          </button>
+                        )}
+                        {canTakeUp ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleOpenOrder}
+                              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold text-white bg-[#327F74] rounded-lg hover:bg-[#2a6b61] transition-colors"
+                            >
+                              <ShoppingCart className="h-3.5 w-3.5" />Open / Pick Order
+                            </button>
+                            {selIsDelivery ? (
+                              <button
+                                type="button"
+                                onClick={handleProcessDelivery}
+                                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold text-white bg-[#1E293B] rounded-lg hover:bg-gray-700 transition-colors"
+                              >
+                                <Truck className="h-3.5 w-3.5" />{piFlow ? 'Process Delivery (Print PI)' : 'Process Delivery'}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={handleOpenOrderAndCheckout}
+                                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold text-[#1E293B] bg-[#F5C742] hover:bg-[#e6b838] rounded-lg transition-colors"
+                              >
+                                <CheckCircle className="h-3.5 w-3.5" />Checkout
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <p className="flex-1 text-xs text-gray-400 self-center">This order is {statusLabel(selOrder.status).toLowerCase()} and can no longer be opened at the till.</p>
+                        )}
                       </div>
                     </>
                   )}
@@ -9634,10 +9814,12 @@ export default function POSSales() {
 
               {/* Footer */}
               <div className="border-t border-gray-100 px-5 py-3 flex justify-between items-center bg-white shrink-0">
-                <button type="button" onClick={() => { setShowOrdersListDialog(false); setOrdersListSelected(null); setOrdersListSelectedDetail(null); }} className="text-sm font-medium text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors">Close</button>
-                <Button className="bg-amber-400 hover:bg-amber-500 text-white text-xs font-semibold" onClick={() => { setShowOrdersListDialog(false); setOrdersListSelected(null); setOrdersListSelectedDetail(null); setShowSaveOrderDialog(true); }}>
-                  <Plus className="h-3.5 w-3.5 mr-1.5" />New Order
-                </Button>
+                <button type="button" onClick={closeDialog} className="text-sm font-medium text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors">Close</button>
+                {!isSalesTab && (
+                  <Button className="bg-amber-400 hover:bg-amber-500 text-white text-xs font-semibold" onClick={() => { closeDialog(); setShowSaveOrderDialog(true); }}>
+                    <Plus className="h-3.5 w-3.5 mr-1.5" />New Order
+                  </Button>
+                )}
               </div>
             </div>
           </div>
@@ -10361,9 +10543,11 @@ export default function POSSales() {
             alert({
               tone: result?.orderClosed ? 'success' : 'warning',
               title: result?.orderClosed ? 'Delivery returned and closed' : 'Goods returned — balance still to collect',
-              message: result?.orderClosed
+              message: (orderRow.proforma
+                ? 'The Pro-forma Invoice was converted to a Sales Invoice and posted to Sales Reports. '
+                : '') + (result?.orderClosed
                 ? 'The goods are credited back and the order has left the delivery list. Nothing left to collect.'
-                : `The goods are credited back, but ${returnAed(returnOutstanding)} is still owed, so this order stays in the delivery list.`,
+                : `The goods are credited back, but ${returnAed(returnOutstanding)} is still owed, so this order stays in the delivery list.`),
               details: [
                 { label: 'Credit note', value: result?.returnNumber, emphasis: true },
                 { label: result?.fullReturn ? 'Returned in full' : 'Returned value', value: returnAed(result?.returnValue) },
@@ -10479,6 +10663,9 @@ export default function POSSales() {
               alert(`Delivery settled, but the receipt didn't print: ${printErr?.message || 'printer error'}.`);
             }
 
+            if (sel.proforma) {
+              showFeedback('success', `PI converted — ${settledInvoice?.invoiceNumber || sel.invoice} is now a Sales Invoice, posted to Sales Reports.`);
+            }
             setDeliverySettleSelected(null);
             deliverySettlePayment.clearLines();
             await loadDeliveryOrders();
@@ -10562,7 +10749,13 @@ export default function POSSales() {
                             className={`w-full grid grid-cols-[1fr_80px_100px_80px_100px] px-4 py-3 border-b border-gray-100 text-left transition-colors ${isSelected ? 'bg-[#FFF8E7] border-[#FDE6A9]' : 'hover:bg-gray-50'}`}>
                             <div>
                               <p className="text-sm font-semibold text-[#1E293B]">{o.customer}</p>
-                              <p className="text-[10px] text-gray-400">{o.invoice}</p>
+                              <p className="text-[10px] text-gray-400 flex items-center gap-1">
+                                {o.invoice}
+                                {o.proforma && (
+                                  <span title="Pro-forma Invoice — becomes the sales invoice when settled or returned"
+                                    className="px-1.5 py-px rounded bg-indigo-50 border border-indigo-200 text-[9px] font-bold text-indigo-700">PI · Draft</span>
+                                )}
+                              </p>
                               {o.mobile && <p className="text-[10px] text-gray-400">{o.mobile}</p>}
                             </div>
                             <div className="flex items-center text-sm text-gray-600">{o.person}</div>
@@ -10604,6 +10797,15 @@ export default function POSSales() {
                                   nothing has been paid: once the customer has handed money over
                                   there is a refund to make, which needs the full return screen's
                                   refund-method and authorization path. */}
+                              {o.proforma && (
+                                <div className="mb-3 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2.5 flex gap-2">
+                                  <FileText className="h-4 w-4 text-indigo-600 shrink-0 mt-0.5" />
+                                  <p className="text-[11px] text-indigo-900">
+                                    <span className="font-bold">Pro-forma Invoice (PI Flow).</span> Settling this delivery — by pay mode or as a return — finalizes
+                                    the PI: it is converted to a Sales Invoice dated today and posted to Sales Reports.
+                                  </p>
+                                </div>
+                              )}
                               <div className="mb-3 grid grid-cols-2 gap-2">
                                 {[
                                   ['SETTLE', 'Settle', CheckCircle, '#327F74'],
@@ -10654,7 +10856,11 @@ export default function POSSales() {
                                     onClick={handleFinalize}
                                     className="w-full py-3 rounded-xl bg-[#327F74] hover:bg-[#2a6b61] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm flex items-center justify-center gap-2 transition-colors">
                                     <CheckCircle className="h-4 w-4" />
-                                    {deliverySettleLoading ? 'Finalizing…' : `Finalize Order — AED ${selBalance.toFixed(2)}`}
+                                    {deliverySettleLoading
+                                      ? 'Finalizing…'
+                                      : o.proforma
+                                        ? `Finalize & Convert PI — AED ${selBalance.toFixed(2)}`
+                                        : `Finalize Order — AED ${selBalance.toFixed(2)}`}
                                   </button>
                                 </>
                               )}

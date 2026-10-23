@@ -36,7 +36,7 @@
 // buildPosCheckoutItems — the two were characterized as deliberately different.
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { computePosCartTotals, toNumber } from '../../posUtils';
+import { computePosCartTotals, salesOrderLineFields, toNumber } from '../../posUtils';
 
 /** The empty-cart shape. Identical to the original initial state and to clearInvoice's. */
 const EMPTY_CART = {
@@ -118,6 +118,7 @@ export function useCart({ posSettings } = {}) {
         batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
         serialNumber: item.isVoided ? null : (item.serialNumber || null),
         voided: !!item.isVoided,
+        ...salesOrderLineFields(item),
       }));
     // Dependency array preserved verbatim: it omits posSettings?.taxEnabled even though
     // the body reads it. Adding it would change when this callback refreshes — a

@@ -1034,6 +1034,8 @@ const SalesInvoice = () => {
         setSalesType('STANDARD_FLOW');
         setLinkedSO(fromSO.soNumber || '');
         setLinkedPI(fromSO.linkedProforma || '');
+        // The order's delivery charge becomes this invoice's Delivery Charge.
+        setDeliveryCharge(Number(fromSO.deliveryCharge) || 0);
         applySourceFooterDiscount(fromSO);
         setReference(fromSO.linkedQuotation || fromSO.linkedProforma || fromSO.soNumber || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
@@ -1562,6 +1564,7 @@ const SalesInvoice = () => {
         const so = salesOrdersList.find(s => s.soNumber === soNumber);
         if (so) {
             applySourceFooterDiscount(so);
+            setDeliveryCharge(Number(so.deliveryCharge) || 0);
             // Resolve full customer master so the panel renders phone/balance/TRN/savedAddresses.
             const matched = resolveCustomer(
                 { customerCode: so.customerCode, customerName: so.customerName },
@@ -3863,6 +3866,7 @@ const SalesInvoice = () => {
                             onPrint={(inv, template) => handlePrintClick(inv, template)}
                             onDownload={(inv) => handleDownloadClick(inv)}
                             onOpenEmailModal={(inv) => { handleLoadInvoice(inv); setIsEmailModalOpen(true); }}
+                            onWhatsApp={(inv) => handleWhatsAppClick(inv)}
                             onRecordPayment={(inv) => setSettlementInvoice(inv)}
                             onPrintVoucher={(receipt, inv) => handlePrintReceipt(receipt, inv)}
                         />

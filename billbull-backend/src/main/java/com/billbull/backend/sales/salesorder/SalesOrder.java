@@ -82,6 +82,12 @@ public class SalesOrder  implements com.billbull.backend.common.ownership.OwnedE
     private String deliveryType;
     private LocalDate expectedDeliveryDate;
 
+    /** Flat, untaxed charge for delivering the order — the same meaning as
+     *  {@code SalesInvoice#deliveryCharge}, which it becomes when the order is invoiced (back office)
+     *  or sent out from the POS. Included in {@link #orderTotal}. */
+    @Column(name = "delivery_charge", precision = 15, scale = 2)
+    private BigDecimal deliveryCharge;
+
     @Column(length = 500)
     private String shippingAddress;
 
@@ -272,6 +278,14 @@ public class SalesOrder  implements com.billbull.backend.common.ownership.OwnedE
 
     public void setPaymentReference(String paymentReference) {
         this.paymentReference = paymentReference;
+    }
+
+    public BigDecimal getDeliveryCharge() {
+        return deliveryCharge;
+    }
+
+    public void setDeliveryCharge(BigDecimal deliveryCharge) {
+        this.deliveryCharge = deliveryCharge;
     }
 
     public String getDeliveryType() {

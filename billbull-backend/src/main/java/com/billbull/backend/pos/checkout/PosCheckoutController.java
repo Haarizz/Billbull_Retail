@@ -107,6 +107,24 @@ public class PosCheckoutController {
      *  branch id sent by the client. */
     private final BranchAccessService branchAccessService;
 
+    // Setter-injected so the (already very wide) constructor — and every test that builds this
+    // controller through it — is unchanged. Both are reached only by the paths that need them: a
+    // checkout that takes up a Sales Order, and a delivery checkout under PI Flow.
+    /** POS → Orders take-up validation. */
+    private com.billbull.backend.pos.salesorder.PosSalesOrderService posSalesOrderService;
+    /** PI Flow: issues the Pro-forma Invoice when a delivery goes out. */
+    private PosProformaDeliveryService proformaDeliveryService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setPosSalesOrderService(com.billbull.backend.pos.salesorder.PosSalesOrderService posSalesOrderService) {
+        this.posSalesOrderService = posSalesOrderService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setProformaDeliveryService(PosProformaDeliveryService proformaDeliveryService) {
+        this.proformaDeliveryService = proformaDeliveryService;
+    }
+
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
                                   PosAuditService auditService, BranchRepository branchRepository,
@@ -281,7 +299,20 @@ public class PosCheckoutController {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(ex.getReadiness());
         }
 
+        // Sales Order take-up (POS → Orders), in the same "validate before we write" band: an order
+        // of another branch, one already taken up, or a sale to a different customer is refused
+        // with nothing created.
+        String linkedSalesOrder = request.getLinkedSalesOrder() != null && !request.getLinkedSalesOrder().isBlank()
+                ? request.getLinkedSalesOrder().trim() : null;
+        if (linkedSalesOrder != null) {
+            posSalesOrderService.assertCanTakeUp(linkedSalesOrder, request.getCustomerCode());
+        }
+        // PI Flow: a delivery order goes out as a Pro-forma Invoice and becomes a sale only at
+        // Delivery Settlement (see PosProformaDeliveryService).
+        boolean proformaDelivery = isProformaDelivery(request);
+
         SalesInvoice invoice = buildInvoice(request);
+        invoice.setLinkedSalesOrder(linkedSalesOrder);
 
         // Step 1: save builds the invoice (number, totals, items) as DRAFT.
         // amountPaid is zero at this point — status/side-effects are deferred.
@@ -305,6 +336,31 @@ public class PosCheckoutController {
         }
         double paymentAmount = plan.getSettledAmount();
         boolean isCreditCheckout = allocationResolver.isCreditCheckout(request);
+
+        if (proformaDelivery) {
+            // Nothing is collected when a PI goes out: the money is taken at Delivery Settlement,
+            // which is also what converts the PI. A tender here would have nothing to settle.
+            if (paymentAmount > 0.001) {
+                deleteQuietly(saved.getId());
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "A Pro-forma Invoice is settled at Delivery Settlement — send it out for delivery without a payment.");
+            }
+            try {
+                proformaDeliveryService.issue(saved.getId());
+            } catch (RuntimeException ex) {
+                deleteQuietly(saved.getId());
+                throw ex;
+            }
+            // Serials leave with the driver, exactly as on a DEFAULT_SETTLEMENT delivery, so they
+            // are marked sold now; nothing else is posted until conversion.
+            markSerialsSold(saved);
+            auditService.logCheckoutCompleted(request.getSessionId(), request.getTerminalId(),
+                    request.getBranchId(), saved.getId(), saved.getInvoiceNumber());
+            terminalActivityService.recordActivity(request.getTerminalId(), "CHECKOUT");
+            SalesInvoice issued = invoiceService.getById(saved.getId());
+            invoiceCustomerContactService.attach(issued);
+            return ResponseEntity.ok(issued);
+        }
 
         // Explicit multi-card split on a non-credit checkout must fully settle the invoice —
         // there's no "change" concept for card tenders the way there is for cash overpayment,
@@ -390,22 +446,21 @@ public class PosCheckoutController {
             sessionService.recordInvoiceOnSession(request.getSessionId(), saved, plan);
         }
 
-        // Mark serial numbers as SOLD for serialized-product line items
-        if (saved.getItems() != null) {
-            for (SalesInvoiceItem soldItem : saved.getItems()) {
-                if (soldItem.getSerialNumber() != null && !soldItem.getSerialNumber().isBlank()
-                        && !Boolean.TRUE.equals(soldItem.getVoided())) {
-                    serialMasterRepository.findBySerialNumberForUpdate(soldItem.getSerialNumber())
-                            .ifPresent(sm -> {
-                                sm.setStatus(SerialStatus.SOLD);
-                                sm.setSoldInvoiceId(saved.getId());
-                                sm.setSoldInvoiceNumber(saved.getInvoiceNumber());
-                                sm.setSoldAt(businessDayClock.now());
-                                serialMasterRepository.save(sm);
-                            });
-                }
+        // Sales Order take-up: the order becomes INVOICED, releases its reservation, and any
+        // advance received on it is applied to this invoice — the till collected only the rest.
+        // After the payments, so the advance covers what is genuinely still outstanding. Never
+        // fails the sale: by now it is posted and paid, and a refusal here would invite the
+        // cashier to ring it again. A miss leaves the invoice with a visible balance instead.
+        if (linkedSalesOrder != null) {
+            try {
+                invoiceService.completeSalesOrderConversion(saved.getId());
+            } catch (RuntimeException ex) {
+                log.error("POS sale {} posted but completing Sales Order {} failed: {}",
+                        saved.getInvoiceNumber(), linkedSalesOrder, ex.getMessage(), ex);
             }
         }
+
+        markSerialsSold(saved);
 
         // §4.1 Receipt archival: generate ZATCA QR at checkout time and store on the invoice.
         // CRITICAL: persist via a single-column UPDATE (invoiceService.archiveReceiptQr →
@@ -748,6 +803,13 @@ public class PosCheckoutController {
         requireBranchAccessible(branchId);
         List<SalesInvoice> deliveries = onlyAccessibleBranches(invoiceRepository.findPendingDeliveryOrders(branchId));
         invoiceCustomerContactService.attach(deliveries);
+        // A PI taken up from a Sales Order absorbs the order's advance when it is converted; show
+        // it as paid so the settlement panel asks only for the remainder.
+        for (SalesInvoice d : deliveries) {
+            if (Boolean.TRUE.equals(d.getPosProformaPending()) && d.getLinkedSalesOrder() != null) {
+                d.setPosProformaAdvance(proformaDeliveryService.pendingSalesOrderAdvance(d));
+            }
+        }
         return deliveries;
     }
 
@@ -785,7 +847,7 @@ public class PosCheckoutController {
     public ResponseEntity<PosDeliveryReturnResponse> returnDelivery(@PathVariable Long id,
             @RequestBody PosDeliveryReturnRequest req) {
         modulePermissionService.requireCanView(PosTillPermission.MODULE);
-        return ResponseEntity.ok(deliveryReturnService.returnDelivery(id, req));
+        return ResponseEntity.ok(deliveryReturnService.returnDelivery(id, req, posBusinessDate(req.getSessionId())));
     }
 
     public static class DeliverySettleRequest {
@@ -995,6 +1057,11 @@ public class PosCheckoutController {
                         si.setSerialNumber(item.getSerialNumber().trim());
                     }
                 }
+                // Only meaningful when the sale takes up a Sales Order; the line link lets the
+                // invoice's delivery match the order's lines and batch reservations.
+                if (req.getLinkedSalesOrder() != null && !req.getLinkedSalesOrder().isBlank()) {
+                    si.setSalesOrderItemId(item.getSalesOrderItemId());
+                }
                 si.setSalesInvoice(inv);
                 return si;
             }).toList());
@@ -1172,6 +1239,34 @@ public class PosCheckoutController {
                 String.format("%.2f", plan.getSettledAmount()),
                 String.format("%.2f", plan.getCreditAmount()),
                 plan.getCombinedPaymentMode(), splitGroupId != null ? splitGroupId : "-");
+    }
+
+    /** Marks the serial numbers on the sale's live lines as SOLD to this invoice. */
+    private void markSerialsSold(SalesInvoice saved) {
+        if (saved.getItems() == null) return;
+        for (SalesInvoiceItem soldItem : saved.getItems()) {
+            if (soldItem.getSerialNumber() != null && !soldItem.getSerialNumber().isBlank()
+                    && !Boolean.TRUE.equals(soldItem.getVoided())) {
+                serialMasterRepository.findBySerialNumberForUpdate(soldItem.getSerialNumber())
+                        .ifPresent(sm -> {
+                            sm.setStatus(SerialStatus.SOLD);
+                            sm.setSoldInvoiceId(saved.getId());
+                            sm.setSoldInvoiceNumber(saved.getInvoiceNumber());
+                            sm.setSoldAt(businessDayClock.now());
+                            serialMasterRepository.save(sm);
+                        });
+            }
+        }
+    }
+
+    /** A delivery checkout on a branch whose Delivery Workflow is PI Flow. */
+    private boolean isProformaDelivery(PosCheckoutRequest req) {
+        if (!isDeliveryCheckout(req)) return false;
+        PosSettings settings = req.getBranchId() != null
+                ? posSettingsService.getForBranch(req.getBranchId())
+                : posSettingsService.getForCurrentBranch();
+        return settings != null
+                && settings.resolvedDeliveryWorkflowMode() == com.billbull.backend.pos.settings.PosDeliveryWorkflowMode.PI_FLOW;
     }
 
     /** Best-effort rollback of a DRAFT invoice whose payment could not be completed —

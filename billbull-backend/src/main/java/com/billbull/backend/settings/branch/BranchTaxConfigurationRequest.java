@@ -5,7 +5,7 @@ import jakarta.validation.constraints.DecimalMin;
 
 /**
  * Write DTO for {@code PUT /api/branches/{branchId}/tax-configuration}. Deliberately exposes
- * only the three editable business fields — never the underlying {@link BranchTaxConfiguration}
+ * only the editable business fields — never the underlying {@link BranchTaxConfiguration}
  * entity (which carries {@code id}/{@code createdAt}/{@code createdBy}/{@code updatedAt}/
  * {@code updatedBy}/{@code isActive} inherited from BaseEntity). Entity mapping happens only in
  * {@link BranchTaxConfigurationService}.
@@ -20,6 +20,10 @@ public class BranchTaxConfigurationRequest {
     @DecimalMax(value = "100", message = "Branch Default VAT Rate cannot exceed 100")
     private Double branchDefaultVatRate;
 
+    @DecimalMin(value = "0", message = "Branch Default Purchase Tax Rate cannot be negative")
+    @DecimalMax(value = "100", message = "Branch Default Purchase Tax Rate cannot exceed 100")
+    private Double branchDefaultPurchaseTaxRate;
+
     public Boolean getTaxEnabled() { return taxEnabled; }
     public void setTaxEnabled(Boolean taxEnabled) { this.taxEnabled = taxEnabled; }
 
@@ -28,4 +32,7 @@ public class BranchTaxConfigurationRequest {
 
     public Double getBranchDefaultVatRate() { return branchDefaultVatRate; }
     public void setBranchDefaultVatRate(Double branchDefaultVatRate) { this.branchDefaultVatRate = branchDefaultVatRate; }
+
+    public Double getBranchDefaultPurchaseTaxRate() { return branchDefaultPurchaseTaxRate; }
+    public void setBranchDefaultPurchaseTaxRate(Double branchDefaultPurchaseTaxRate) { this.branchDefaultPurchaseTaxRate = branchDefaultPurchaseTaxRate; }
 }

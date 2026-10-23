@@ -471,6 +471,12 @@ public class PosSettingsService {
                                 PosDeliveryReturnChargePolicy.fromCode(
                                         settings.getDeliveryReturnChargePolicy()).name());
                     }
+                    // Same partial-POST convention: an older client that does not send the
+                    // field leaves the branch's delivery workflow as it is.
+                    if (settings.getDeliveryWorkflowMode() != null) {
+                        existing.setDeliveryWorkflowMode(
+                                PosDeliveryWorkflowMode.fromCode(settings.getDeliveryWorkflowMode()).name());
+                    }
                     // ARCHFIX S5: hash a newly supplied PIN; a blank/absent PIN leaves the stored hash untouched.
                     if (settings.getSupervisorPin() != null && !settings.getSupervisorPin().isBlank()) {
                         existing.setSupervisorPin(hashPinIfNeeded(settings.getSupervisorPin()));
@@ -537,6 +543,8 @@ public class PosSettingsService {
                     settings.setDeliveryReturnChargePolicy(
                             PosDeliveryReturnChargePolicy.fromCode(
                                     settings.getDeliveryReturnChargePolicy()).name());
+                    settings.setDeliveryWorkflowMode(
+                            PosDeliveryWorkflowMode.fromCode(settings.getDeliveryWorkflowMode()).name());
                     settings.setSupervisorPin(hashPinIfNeeded(settings.getSupervisorPin()));
                     return withBusinessDayScheduleLock(repo.save(settings));
                 });

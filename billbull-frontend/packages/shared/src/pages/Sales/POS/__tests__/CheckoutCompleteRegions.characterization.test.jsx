@@ -93,7 +93,7 @@ function OriginalCheckoutMarkup({
   tplStampDataUrl, USE_NEW_POS_PRINT_TEMPLATE, tplInvoiceShowStamp, printHtml, buildInvoiceSheetHtml,
   buildThermalReceiptArtifacts, printThermalReceiptWithConfiguredPrinter, setShowReprintModal,
   receiptShareChannel, receiptShareInitialValue, handleReceiptShareSend,
-  shippingCharge, currentInvoice, activeLayawayDeposit, checkoutEffectiveDue, previewInvoiceNo,
+  shippingCharge, currentInvoice, activeLayawayDeposit, activeSalesOrderAdvance = 0, checkoutEffectiveDue, previewInvoiceNo,
   checkoutPayment, checkoutCompatibility, showA4CheckoutPreview, checkoutA4Html, checkoutA4BlobUrl,
   checkoutPreviewBlobUrl, PaymentAllocationPanel,
   loadPosCustomers, selectedCustomer, selectedCustomerData, checkoutOnlineBankAccounts,
@@ -204,7 +204,7 @@ function OriginalCheckoutMarkup({
 
         const shippingChargeNum = Number(shippingCharge) || 0;
         const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
-        const depositAmt = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
+        const depositAmt = (activeLayawayDeposit > 0 ? activeLayawayDeposit : 0) + activeSalesOrderAdvance;
         // Owned by the Payment Manager (checkoutEffectiveDue) so the screen and the manager
         // measure every allocation against exactly the same amount due.
         const effectiveDue = checkoutEffectiveDue;

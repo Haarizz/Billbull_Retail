@@ -24,6 +24,10 @@ const CustomerShippingPanel = ({
     onExpectedDispatchChange,
     // Earliest selectable dispatch date ('YYYY-MM-DD'); blocks back-dating.
     minExpectedDispatch,
+    // Optional delivery charge (flat, untaxed). Rendered only when the page passes
+    // onDeliveryChargeChange, and not for Pickup, which has nothing to deliver.
+    deliveryCharge,
+    onDeliveryChargeChange,
     isReadOnly = false,
     currency = 'AED',
     currencySymbol,
@@ -135,6 +139,7 @@ const CustomerShippingPanel = ({
         { label: 'Courier',  icon: ArrowRight },
     ];
     const ActiveIcon = deliveryOptions.find(d => d.label === deliveryType)?.icon || Truck;
+    const showDeliveryCharge = typeof onDeliveryChargeChange === 'function' && deliveryType !== 'Pickup';
 
     return (
         <div
@@ -258,8 +263,8 @@ const CustomerShippingPanel = ({
                     <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Shipping</span>
                 </div>
 
-                {/* Delivery Type + Expected Dispatch — 2 equal columns */}
-                <div className="grid grid-cols-2 gap-2">
+                {/* Delivery Type + Expected Dispatch (+ Delivery Charge) — equal columns */}
+                <div className={`grid gap-2 ${showDeliveryCharge ? 'grid-cols-3' : 'grid-cols-2'}`}>
 
                     {/* Delivery Type */}
                     <div className="relative">
@@ -313,6 +318,29 @@ const CustomerShippingPanel = ({
                                 focus:outline-none focus:border-yellow-400 transition-colors"
                         />
                     </div>
+
+                    {/* Delivery Charge */}
+                    {showDeliveryCharge && (
+                        <div>
+                            <label className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1 block">
+                                Delivery Charge
+                            </label>
+                            <div className={`flex items-center border border-slate-200 rounded-lg overflow-hidden focus-within:border-yellow-400 transition-colors ${isReadOnly ? 'bg-slate-50' : 'bg-white'}`}>
+                                <span className="px-2 py-2 text-[10px] font-semibold text-slate-400 bg-slate-50 border-r border-slate-200">{currencySymbol || currency}</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    placeholder="0.00"
+                                    value={deliveryCharge === 0 || deliveryCharge == null ? '' : deliveryCharge}
+                                    onChange={e => onDeliveryChargeChange(e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)))}
+                                    disabled={isReadOnly}
+                                    className="w-full min-w-0 px-2 py-2 text-xs text-right text-slate-700 bg-transparent focus:outline-none
+                                        disabled:text-slate-500 disabled:cursor-not-allowed"
+                                />
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* Saved address picker — visible whenever a saved customer is selected,

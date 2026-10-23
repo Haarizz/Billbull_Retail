@@ -74,7 +74,9 @@ export default function InvoiceHistoryModal({ invoiceId, invoiceNumber, onClose 
         setState('loading');
         try {
             const data = await getSalesInvoiceHistory(invoiceId);
-            setEvents(Array.isArray(data) ? data : []);
+            // The API returns oldest first (undated lineage rows at the top); show the
+            // latest activity first, which leaves the undated rows at the bottom.
+            setEvents(Array.isArray(data) ? [...data].reverse() : []);
             setState('ready');
         } catch {
             setState('error');

@@ -226,7 +226,11 @@ public class SalesOrderService {
         }
 
         BigDecimal tax2 = tax.setScale(2, RoundingMode.HALF_UP);
-        BigDecimal total = subTotal.subtract(billDiscAmt).add(tax2).setScale(2, RoundingMode.HALF_UP);
+        // Delivery charge: a flat, untaxed add-on on top of the goods, exactly as on the invoice it
+        // becomes. Negative input is treated as none.
+        BigDecimal deliveryCharge = nz(order.getDeliveryCharge()).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+        order.setDeliveryCharge(deliveryCharge.signum() > 0 ? deliveryCharge : null);
+        BigDecimal total = subTotal.subtract(billDiscAmt).add(tax2).add(deliveryCharge).setScale(2, RoundingMode.HALF_UP);
         BigDecimal advance = nz(order.getAdvanceAmount());
 
         order.setSubTotal(subTotal);
@@ -498,6 +502,25 @@ public class SalesOrderService {
             DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                     orders, SalesOrder::getOrderDate, SalesOrder::getSoNumber, SalesOrder::getId);
         }
+        return orders;
+    }
+
+    /**
+     * Orders in the given statuses, with the same branch and ownership scoping as the Sales Order
+     * list, newest first and hydrated for display. Used by POS → Orders to offer the orders a
+     * cashier can take up at the till.
+     */
+    @Transactional(readOnly = true)
+    public List<SalesOrder> getByStatuses(java.util.Collection<SalesOrderStatus> statuses) {
+        List<SalesOrder> orders = new ArrayList<>(
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScopedByBranch(
+                                orderRepo.findByStatusIn(statuses),
+                                SalesOrder::getBranch),
+                        SalesOrder::getCreatedByUserId));
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                orders, SalesOrder::getOrderDate, SalesOrder::getSoNumber, SalesOrder::getId);
+        orders.forEach(this::hydrateForList);
         return orders;
     }
 
