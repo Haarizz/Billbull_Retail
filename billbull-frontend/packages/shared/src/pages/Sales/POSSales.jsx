@@ -520,7 +520,7 @@ export default function POSSales() {
     cancelClosureLoading,
     openCancelClosureDialog, handleCancelClosureSubmit,
     showCloseSessionDialog, setShowCloseSessionDialog,
-    closeSessionError, setCloseSessionError,
+    closeSessionError, setCloseSessionError, closingSession,
     closeSessionTab, setCloseSessionTab,
     closingDenominations, setClosingDenominations,
     cardSettlementAmount, setCardSettlementAmount,
@@ -8399,9 +8399,9 @@ export default function POSSales() {
                 {varianceApprovalBusy ? 'Authorizing…' : 'Authorize & Close Session'}
               </Button>
             ) : (
-              <Button onClick={handleCloseSession} className="bg-[#E63946] hover:bg-[#d32f3d] text-white">
+              <Button onClick={handleCloseSession} disabled={closingSession} className="bg-[#E63946] hover:bg-[#d32f3d] text-white">
                 <Lock className="h-4 w-4 mr-2" />
-                Close Session & Print Report
+                {closingSession ? 'Closing…' : 'Close Session & Print Report'}
               </Button>
             )}
           </DialogFooter>

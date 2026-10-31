@@ -1970,17 +1970,19 @@ public class PosSessionService {
         // or another cashier's concurrent session) would leak into this X-Report. The Z-Report
         // intentionally keeps the unfiltered branch+day view since it aggregates the whole
         // business day. Resolved here because the cash position needs its cash-refund figure.
+        // Returns are dated on the trading date, the same date the Z-Report queries them by.
+        // session_date comes from the older business-date counter and can trail it by days,
+        // which made every return disappear from the X-Report on branches where it does.
         SalesReturnReportingTotals returns = buildSessionReturnsSummary(
-                session.getBranchId(), session.getSessionDate(), invoices);
+                session.getBranchId(), sessionBusinessDate(session), invoices);
 
         summary.put("cashPosition", buildCashPosition(session.getBranchId(), session.getSessionDate(),
                 List.of(sessionId), session.getOpeningCash(), tender.cash, cashDropIn, cashDropOut, false,
                 returns.refund(SalesReturnRefundMethod.CASH_REFUND)));
 
-        // Card refund attribution — sourced from actual refund Payment rows for this
-        // session's invoices, not the generic (and unrelated) item-void counter.
-        summary.put("cardRefundSales", refunds.byBucket.getOrDefault("card", BigDecimal.ZERO));
-        summary.put("cardRefundCount", refunds.countByBucket.getOrDefault("card", 0L));
+        // Card refund attribution — refund Payment rows for this session plus Sales Returns
+        // settled by card against this session's invoices, not the item-void counter.
+        putCardRefunds(summary, refunds, returns);
 
         // Void / refund reporting from the audit trail + persisted voided lines.
         VoidReport voids = buildVoidReport(invoices, List.of(sessionId));
@@ -2319,8 +2321,6 @@ public class PosSessionService {
         summary.put("postedVoidCount", voids.postedVoids.size());
         summary.put("cartRemovalCount", voids.cartRemovals.size());
         summary.put("voidAmount", voids.voidAmount);
-        summary.put("cardRefundSales", refunds.byBucket.getOrDefault("card", BigDecimal.ZERO));
-        summary.put("cardRefundCount", refunds.countByBucket.getOrDefault("card", 0L));
         summary.put("totalRefunds", refunds.total);
         summary.put("totalRefundCount", refunds.countByBucket.values().stream().mapToLong(Long::longValue).sum());
 
@@ -2328,6 +2328,7 @@ public class PosSessionService {
         // (a Sales Return is a separate post-sale transaction, not a session-scoped concept,
         // so it's queried by branch/date like the rest of the Z-Report rather than by session).
         SalesReturnReportingTotals returns = buildReturnsSummary(branchId, date);
+        putCardRefunds(summary, refunds, returns);
         putReturnRefundBuckets(summary, returns);
         summary.put("salesReturnCount", returns.count());
         summary.put("salesReturnTotal", returns.value());
@@ -2747,6 +2748,24 @@ public class PosSessionService {
                 .filter(r -> sessionInvoiceNumbers.contains(r.getLinkedInvoice()))
                 .toList();
         return returnReportingService.totalsOf(returns);
+    }
+
+    /** The session's trading date, falling back to session_date for sessions opened before
+     *  trading_date existed. Sales Returns are dated on the trading date. */
+    private static LocalDate sessionBusinessDate(PosSession session) {
+        return session.getTradingDate() != null ? session.getTradingDate() : session.getSessionDate();
+    }
+
+    /** Card refunds for the Card / Bank Settlement section: refund Payment rows plus Sales
+     *  Returns settled by card. A card-refund return posts a settlement journal and never
+     *  writes a Payment row, so counting Payment rows alone always showed 0 and overstated
+     *  Net Card Settlement by the refunded amount. */
+    private static void putCardRefunds(Map<String, Object> summary, TenderTotals refunds,
+                                       SalesReturnReportingTotals returns) {
+        summary.put("cardRefundSales", refunds.byBucket.getOrDefault("card", BigDecimal.ZERO)
+                .add(returns.refund(SalesReturnRefundMethod.CARD_REFUND)));
+        summary.put("cardRefundCount", refunds.countByBucket.getOrDefault("card", 0L)
+                + returns.refundCount(SalesReturnRefundMethod.CARD_REFUND));
     }
 
     /** The per-refund-method figures both the X-Report and the Z-Report publish. */

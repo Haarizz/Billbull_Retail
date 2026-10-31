@@ -1988,6 +1988,45 @@ class PosSessionServiceTest {
         assertMoney("0", (BigDecimal) summary.get("creditNoteTotal"));
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void xReportLooksUpReturnsOnTheTradingDateNotTheLaggingSessionDate() {
+        // Field case: session_date trailed trading_date by four days, the return was dated on
+        // the trading date, and the X-Report searched session_date, so the return never showed.
+        LocalDate tradingDate = LocalDate.of(2026, 10, 30);
+        PosSession session = openSession();
+        session.setTradingDate(tradingDate);
+        session.setSessionDate(LocalDate.of(2026, 10, 26));
+        when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(1L))
+                .thenReturn(List.of(invoiceWithNumber("INV-2026-0332", 450.0, 0.0)));
+        when(returnRepository.findByReturnDateAndBranchWithItems(eq(tradingDate), any()))
+                .thenReturn(List.of(cardRefundReturn("INV-2026-0332", 450.0)));
+
+        Map<String, Object> summary = (Map<String, Object>) service.getXReport(1L).get("summary");
+
+        assertEquals(1, summary.get("salesReturnCount"));
+        assertMoney("450", (BigDecimal) summary.get("salesReturnTotal"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void xReportCountsCardRefundReturnsInTheCardSettlement() {
+        // A card-refund return writes no refund Payment row, so Card Refunds used to read 0
+        // and Net Card Settlement (card sales - card refunds) stayed overstated.
+        PosSession session = openSession();
+        when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(1L))
+                .thenReturn(List.of(invoiceWithNumber("INV-1", 450.0, 0.0)));
+        when(returnRepository.findByReturnDateAndBranchWithItems(any(), any()))
+                .thenReturn(List.of(cardRefundReturn("INV-1", 450.0)));
+
+        Map<String, Object> summary = (Map<String, Object>) service.getXReport(1L).get("summary");
+
+        assertMoney("450", (BigDecimal) summary.get("cardRefundSales"));
+        assertEquals(1L, ((Number) summary.get("cardRefundCount")).longValue());
+    }
+
     // ---------------------------------------------------------------------
     // getZReport() â€” cross-session aggregation
     // ---------------------------------------------------------------------
@@ -3924,6 +3963,13 @@ class PosSessionServiceTest {
         r.setStatus(status);
         r.setReturnAction(action);
         r.setTotalAmount(BigDecimal.valueOf(amount));
+        return r;
+    }
+
+    private SalesReturn cardRefundReturn(String linkedInvoice, double amount) {
+        SalesReturn r = salesReturn(linkedInvoice, SalesReturnStatus.APPROVED, "Refund", amount);
+        r.setRefundMethod(com.billbull.backend.sales.returns.SalesReturnRefundMethod.CARD_REFUND);
+        r.setRefundAmount(BigDecimal.valueOf(amount));
         return r;
     }
 

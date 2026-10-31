@@ -99,6 +99,7 @@ export function useSessionClosure({
   const [cancelClosureLoading, setCancelClosureLoading] = useState(false);
   const [showCloseSessionDialog, setShowCloseSessionDialog] = useState(false);
   const [closeSessionError, setCloseSessionError] = useState('');
+  const [closingSession, setClosingSession] = useState(false);
   // The server's refusal, verbatim: expected / counted / variance / threshold. Every number the
   // approval panel shows comes from here, so the figure a supervisor authorizes is exactly the
   // one the close was evaluated against. The frontend computes none of it.
@@ -208,9 +209,22 @@ export function useSessionClosure({
     }
   };
 
+  // One close request at a time. A double-click used to send two requests: the first closed
+  // the session, the second came back "Session is already closed." and the cashier read that
+  // error as the close having failed. The flag also disables the Close button while busy.
+  const closeSession = async (loaders) => {
+    if (closingSession) return;
+    setClosingSession(true);
+    try {
+      await runCloseSession(loaders);
+    } finally {
+      setClosingSession(false);
+    }
+  };
+
   // Body of handleCloseSession. `loaders` is the snapshot taken when the user action began
   // (see LATE-BOUND LOADERS above).
-  const closeSession = async ({ loadDaySummary, syncPosData }) => {
+  const runCloseSession = async ({ loadDaySummary, syncPosData }) => {
     const targetSession = sessionToClose || currentSession;
     if (targetSession) {
       if (targetSession.status === 'CLOSED') {
@@ -282,8 +296,19 @@ export function useSessionClosure({
           return;
         }
         const msg = data?.message || data?.error || err?.message;
-        setCloseSessionError(typeof msg === 'string' && msg ? msg : 'Failed to close the session. Please try again.');
-        return;
+        // "Already closed" (another tab, or an earlier request that went through) is the
+        // outcome the cashier asked for, so finish as a successful close instead of an error.
+        const alreadyClosed = err?.response?.status === 400
+          && typeof msg === 'string' && /already closed/i.test(msg);
+        if (!alreadyClosed) {
+          setCloseSessionError(typeof msg === 'string' && msg ? msg : 'Failed to close the session. Please try again.');
+          return;
+        }
+        closureAuthGrantRef.current = null;
+        forceCloseContextRef.current = null;
+        if (targetSession.id === currentSession?.id) {
+          setCurrentSession({ ...currentSession, status: 'CLOSED' });
+        }
       }
       setShowCloseSessionDialog(false);
       setSessionToClose(null);
@@ -437,6 +462,7 @@ export function useSessionClosure({
     // Close Session dialog
     showCloseSessionDialog, setShowCloseSessionDialog,
     closeSessionError, setCloseSessionError,
+    closingSession,
     closeSessionTab, setCloseSessionTab,
     closingDenominations, setClosingDenominations,
     cardSettlementAmount, setCardSettlementAmount,
