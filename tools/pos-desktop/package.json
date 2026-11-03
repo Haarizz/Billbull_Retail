@@ -1,0 +1,50 @@
+{
+  "name": "billbull-pos-desktop",
+  "productName": "BillBull POS",
+  "private": true,
+  "version": "0.1.0",
+  "description": "BillBull POS desktop app: a locked-down window onto the tenant's /pos/ till.",
+  "author": "BillBull",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "build": "electron-builder --win nsis --x64",
+    "build:dir": "electron-builder --win dir --x64",
+    "icon": "electron scripts/make-icon"
+  },
+  "devDependencies": {
+    "electron": "44.9.3",
+    "electron-builder": "26.17.0"
+  },
+  "build": {
+    "appId": "com.billbull.pos",
+    "productName": "BillBull POS",
+    "executableName": "BillBullPOS",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "BillBull POS",
+      "artifactName": "BillBullPOS-Setup-${version}.exe",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

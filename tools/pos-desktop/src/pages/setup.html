@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'">
+  <title>BillBull POS – Server</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="card">
+    <div class="brand"><img class="logo" src="../assets/icon.png" alt=""><div class="brand-name">BillBull POS</div></div>
+    <h1>Connect to your BillBull server</h1>
+    <p>Enter the address you use to open BillBull in the browser.</p>
+
+    <form id="form" novalidate>
+      <label for="address">Server address</label>
+      <input id="address" name="address" type="text" autocomplete="off" spellcheck="false"
+             placeholder="https://yourshop.billbull.com" required>
+      <div class="hint">The till opens at <code>&lt;address&gt;/pos/</code>.</div>
+
+      <div class="actions">
+        <button class="primary" id="save" type="submit">Connect</button>
+        <button class="secondary" id="test" type="button">Test only</button>
+        <button class="secondary" id="back" type="button" hidden>Back to till</button>
+      </div>
+      <div class="status" id="status" role="status" aria-live="polite"></div>
+    </form>
+
+    <div class="footer" id="version"></div>
+  </main>
+  <script src="setup.js"></script>
+</body>
+</html>
