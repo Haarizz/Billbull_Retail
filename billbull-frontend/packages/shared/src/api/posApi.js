@@ -127,6 +127,13 @@ export const getActivePosSession = async (terminalId = "") => {
   return res.data; // null / undefined if 204
 };
 
+// The terminal's last closing drawer count — the default opening count for the next session.
+// Returns { sessionId, closedAt, closedBy, denominations } or null when there is none (204).
+export const getLastClosingCount = async (terminalId) => {
+  const res = await api.get(`${BASE}/sessions/last-closing-count`, { params: { terminalId } });
+  return res.status === 204 ? null : (res.data || null);
+};
+
 export const getPosSessionById = async (sessionId) => {
   const res = await api.get(`${BASE}/sessions/${sessionId}`);
   return res.data;
