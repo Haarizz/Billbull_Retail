@@ -4425,4 +4425,69 @@ class PosSessionServiceTest {
         assertEquals(1, service.listCashMovementEligibleSessions(null).size());
         verify(repo, never()).findByBranchIdAndStatusOrderByOpenedAtDesc(any(), any());
     }
+
+    // ---------------------------------------------------------------------
+    // Opening count default — the last closing count of the same terminal.
+    // ---------------------------------------------------------------------
+
+    @Test
+    void lastClosingCountReturnsTheTerminalsLastClosedSessionCount() throws Exception {
+        when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(1L));
+        PosSession closed = sessionAt(41L, 1L, LocalDate.of(2026, 11, 3), "cashier",
+                PosSessionStatus.CLOSED, LocalDateTime.of(2026, 11, 3, 9, 0));
+        closed.setTerminalId("T-1");
+        closed.setClosedBy("cashier");
+        closed.setClosedAt(LocalDateTime.of(2026, 11, 3, 22, 0));
+        closed.setClosingDenominationsJson("{\"100\":2,\"0.50\":4}");
+        when(repo.findFirstByBranchIdAndTerminalIdAndStatusAndClosingDenominationsJsonIsNotNullOrderByClosedAtDesc(
+                1L, "T-1", PosSessionStatus.CLOSED)).thenReturn(Optional.of(closed));
+        when(objectMapper.readValue(eq("{\"100\":2,\"0.50\":4}"),
+                any(com.fasterxml.jackson.core.type.TypeReference.class)))
+                .thenReturn(Map.of("100", 2, "0.50", 4));
+
+        Map<String, Object> result = service.getLastClosingCount("T-1").orElseThrow();
+
+        assertEquals(41L, result.get("sessionId"));
+        assertEquals("cashier", result.get("closedBy"));
+        assertEquals(LocalDateTime.of(2026, 11, 3, 22, 0), result.get("closedAt"));
+        assertEquals(Map.of("100", 2, "0.50", 4), result.get("denominations"));
+    }
+
+    @Test
+    void lastClosingCountIsEmptyWhenTheTerminalHasNoCountedClosedSession() {
+        when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(1L));
+        when(repo.findFirstByBranchIdAndTerminalIdAndStatusAndClosingDenominationsJsonIsNotNullOrderByClosedAtDesc(
+                1L, "T-1", PosSessionStatus.CLOSED)).thenReturn(Optional.empty());
+
+        assertTrue(service.getLastClosingCount("T-1").isEmpty());
+    }
+
+    @Test
+    void lastClosingCountIsEmptyWithoutATerminal() {
+        assertTrue(service.getLastClosingCount("").isEmpty());
+        assertTrue(service.getLastClosingCount(null).isEmpty());
+        verify(branchAccessService, never()).getRequiredCurrentUserBranch();
+    }
+
+    @Test
+    void lastClosingCountUsesAnAppliedDenominationCorrection() throws Exception {
+        when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(1L));
+        PosSession closed = sessionAt(42L, 1L, LocalDate.of(2026, 11, 3), "cashier",
+                PosSessionStatus.CLOSED, LocalDateTime.of(2026, 11, 3, 9, 0));
+        closed.setTerminalId("T-1");
+        closed.setClosingDenominationsJson("{\"100\":2}");
+        when(repo.findFirstByBranchIdAndTerminalIdAndStatusAndClosingDenominationsJsonIsNotNullOrderByClosedAtDesc(
+                1L, "T-1", PosSessionStatus.CLOSED)).thenReturn(Optional.of(closed));
+        when(effectiveCorrectionViewService.getEffectiveView(
+                com.billbull.backend.pos.admin.CorrectionTargetType.POS_SESSION, 42L))
+                .thenReturn(Map.of("corrected", true, "effective", Map.of("100", 3)));
+        when(objectMapper.writeValueAsString(Map.of("100", 3))).thenReturn("{\"100\":3}");
+        when(objectMapper.readValue(eq("{\"100\":3}"),
+                any(com.fasterxml.jackson.core.type.TypeReference.class)))
+                .thenReturn(Map.of("100", 3));
+
+        Map<String, Object> result = service.getLastClosingCount("T-1").orElseThrow();
+
+        assertEquals(Map.of("100", 3), result.get("denominations"));
+    }
 }

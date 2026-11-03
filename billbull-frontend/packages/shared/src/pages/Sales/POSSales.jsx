@@ -21,7 +21,7 @@ import { fetchStatementOfAccount } from '../../api/financialsApi';
 import { getBankAccounts } from '../../api/ledgerApi';
 import {
   getPosSettings, getPosSettingsForBranch, savePosSettings, savePosAppearance, verifySupervisorAuth, openPosSession,
-  getPosSessionById,
+  getPosSessionById, getLastClosingCount,
   addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, getPosDayCloseSummary, closePosDay, posCheckout,
   checkPosXReportPrintable, checkPosZReportPrintable,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal,
@@ -501,6 +501,8 @@ export default function POSSales() {
   // Session opening states. Closing-count state lives in useSessionClosure.
   const [openingCash, setOpeningCash] = useState('');
   const [denominations, setDenominations] = useState(emptyDenominations);
+  // The previous session whose closing count pre-filled the opening count, or null.
+  const [openingCountSource, setOpeningCountSource] = useState(null);
 
   const [xReportVarianceRemarks, setXReportVarianceRemarks] = useState('');
   const [xReportCardBatchNo, setXReportCardBatchNo] = useState('');
@@ -2069,6 +2071,30 @@ export default function POSSales() {
     return () => window.clearInterval(timer);
   }, [currentSession?.id, currentSession?.openedAt, currentSession?.status]);
 
+  // Default the opening count to this terminal's last closing count: that cash is still in
+  // the drawer. Only an untouched (all-zero) count is filled, and the cashier can change it.
+  useEffect(() => {
+    if (!showStartSessionDialog || !currentTerminal?.terminalId) return undefined;
+    if (calculateDenominationTotal(denominations) > 0) return undefined;
+    let cancelled = false;
+    getLastClosingCount(currentTerminal.terminalId)
+      .then((last) => {
+        if (cancelled || !last?.denominations) return;
+        const filled = emptyDenominations();
+        const keyByValue = new Map(Object.keys(filled).map((k) => [Number(k), k]));
+        Object.entries(last.denominations).forEach(([k, qty]) => {
+          const key = keyByValue.get(Number(k));
+          if (key) filled[key] = Math.max(0, parseInt(qty, 10) || 0);
+        });
+        if (calculateDenominationTotal(filled) <= 0) return;
+        setDenominations((prev) => (calculateDenominationTotal(prev) > 0 ? prev : filled));
+        setOpeningCountSource(last);
+      })
+      .catch((err) => console.warn('Could not load the last closing count', err)); // a default only
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showStartSessionDialog, currentTerminal?.terminalId]);
+
   const handleStartSession = async () => {
     // Never fabricate a terminalId here. A made-up ID like `T001-<timestamp>` doesn't exist
     // in pos_terminals, so openSession() would still create a real, persisted session against
@@ -2089,6 +2115,7 @@ export default function POSSales() {
       // The count has been banked as this session's opening cash — leave nothing
       // behind for the next session's open/close dialogs to inherit.
       setDenominations(emptyDenominations());
+      setOpeningCountSource(null);
       setClosingDenominations(emptyDenominations());
       setXReportData(null);
       setZReportData(null);
@@ -2170,6 +2197,7 @@ export default function POSSales() {
         // The count has been banked as this session's opening cash — leave nothing
         // behind for the next session's open/close dialogs to inherit.
         setDenominations(emptyDenominations());
+        setOpeningCountSource(null);
         setClosingDenominations(emptyDenominations());
         setXReportData(null);
         setZReportData(null);
@@ -7904,6 +7932,35 @@ export default function POSSales() {
           </DialogHeader>
 
           <div className="space-y-4">
+            {openingCountSource && (
+              <div
+                className="flex items-start justify-between gap-3 rounded-lg border border-[#FDE6A9] bg-[#FFF8E7] p-3 text-sm text-[#1E293B]"
+                data-testid="opening-count-prefilled"
+              >
+                <span>
+                  {(() => {
+                    const details = [
+                      openingCountSource.closedBy && `closed by ${openingCountSource.closedBy}`,
+                      openingCountSource.closedAt && new Date(openingCountSource.closedAt).toLocaleString(),
+                    ].filter(Boolean).join(', ');
+                    return `Pre-filled from the last closing count on this till${details ? ` (${details})` : ''}. `
+                      + 'Check the drawer and change any quantity that differs.';
+                  })()}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => {
+                    setDenominations(emptyDenominations());
+                    setOpeningCountSource(null);
+                  }}
+                >
+                  Start from zero
+                </Button>
+              </div>
+            )}
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Opening Cash Drawer Amount</Label>
               <div className="relative">

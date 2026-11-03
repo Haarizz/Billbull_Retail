@@ -46,6 +46,11 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
     // to compute "last activity" and to snapshot archive context (one-off lookup, not hot-path).
     Optional<PosSession> findTopByTerminalPkOrderByOpenedAtDesc(Long terminalPk);
 
+    // The terminal's most recently closed session that has a drawer count — its closing count
+    // pre-fills the next session's opening count.
+    Optional<PosSession> findFirstByBranchIdAndTerminalIdAndStatusAndClosingDenominationsJsonIsNotNullOrderByClosedAtDesc(
+            Long branchId, String terminalId, PosSessionStatus status);
+
     List<PosSession> findByBranchIdAndStatusOrderByOpenedAtDesc(Long branchId, PosSessionStatus status);
 
     // All-branch variant — the Cash Drop / Outs "Add New" session picker uses it when no

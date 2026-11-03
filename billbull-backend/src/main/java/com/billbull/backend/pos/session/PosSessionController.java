@@ -173,6 +173,18 @@ public class PosSessionController {
         return session.map(ResponseEntity::ok).orElse(ResponseEntity.noContent().build());
     }
 
+    /** The terminal's last closing drawer count, used to pre-fill the next opening count.
+     *  204 when the terminal has no counted closed session in the caller's branch. */
+    @GetMapping("/last-closing-count")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> getLastClosingCount(
+            @RequestParam(required = false, defaultValue = "") String terminalId) {
+        requireTillAccess();
+        return service.getLastClosingCount(terminalId)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.noContent().build());
+    }
+
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosSession> getById(@PathVariable Long id) {

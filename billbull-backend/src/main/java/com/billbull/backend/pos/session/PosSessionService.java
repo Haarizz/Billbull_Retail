@@ -3156,6 +3156,38 @@ public class PosSessionService {
         return info;
     }
 
+    /**
+     * The closing drawer count of this terminal's last closed session, used as the default
+     * opening count of the next session. Only a suggestion: the cashier can change it, and the
+     * opening float is still whatever the cashier submits. An applied denomination correction
+     * wins over the raw count. Empty when the terminal has no counted closed session.
+     */
+    @Transactional(readOnly = true)
+    public Optional<Map<String, Object>> getLastClosingCount(String terminalId) {
+        if (terminalId == null || terminalId.isBlank()) return Optional.empty();
+        Long branchId = branchAccessService.getRequiredCurrentUserBranch().getId();
+        return repo
+                .findFirstByBranchIdAndTerminalIdAndStatusAndClosingDenominationsJsonIsNotNullOrderByClosedAtDesc(
+                        branchId, terminalId, PosSessionStatus.CLOSED)
+                .flatMap(s -> {
+                    Map<String, Object> denominations;
+                    try {
+                        denominations = objectMapper.readValue(effectiveClosingDenominationsJson(s),
+                                new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                    } catch (Exception e) {
+                        log.warn("Unreadable closing denominations on session {}; no opening default", s.getId(), e);
+                        return Optional.empty();
+                    }
+                    if (denominations == null || denominations.isEmpty()) return Optional.empty();
+                    Map<String, Object> result = new LinkedHashMap<>();
+                    result.put("sessionId", s.getId());
+                    result.put("closedAt", s.getClosedAt());
+                    result.put("closedBy", resolveDisplayName(s.getClosedBy()));
+                    result.put("denominations", denominations);
+                    return Optional.of(result);
+                });
+    }
+
     /** Overlays an applied denomination correction (Enterprise Console > POS Administration)
      *  onto the session's closing count, mirroring how receipts/advances/cash movements are
      *  already overlaid elsewhere in this class via {@link #effectiveCorrectionViewService}.
