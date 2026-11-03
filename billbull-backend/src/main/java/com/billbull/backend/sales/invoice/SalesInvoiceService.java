@@ -113,6 +113,26 @@ public class SalesInvoiceService {
     /** THE salesperson resolver, shared with POS checkout — see resolveBackOfficeSalesperson. */
     private final com.billbull.backend.hr.employees.SalespersonService salespersonService;
 
+    /**
+     * Price-level resolution (Pricing Phase 1). Setter-injected so the many hand-built test
+     * instances keep compiling; null there means "don't stamp", exactly the pre-price-level save.
+     */
+    private com.billbull.backend.sales.pricing.PricingResolutionService pricingResolutionService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setPricingResolutionService(
+            com.billbull.backend.sales.pricing.PricingResolutionService pricingResolutionService) {
+        this.pricingResolutionService = pricingResolutionService;
+    }
+
+    /** The lines of the order / quotation / pro-forma an invoice was converted from (Pricing Phase 2.1). */
+    private com.billbull.backend.sales.pricing.SourceDocumentPrices sourceDocumentPrices;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setSourceDocumentPrices(com.billbull.backend.sales.pricing.SourceDocumentPrices sourceDocumentPrices) {
+        this.sourceDocumentPrices = sourceDocumentPrices;
+    }
+
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
             DeliveryNoteService deliveryNoteService,
@@ -375,6 +395,26 @@ public class SalesInvoiceService {
 
         SalesSettings settings = settingsService.getSettings();
 
+        // Price levels: resolve the transaction's level (explicit → customer default → default) on
+        // the trusted branch, fill lines that arrive without a price and record how every line was
+        // priced. Charged prices the client sent are kept (manual overrides stay subject to the
+        // existing minimum-price controls). Before the totals loop so a filled price is totalled.
+        // A line unchanged since the last save keeps its pricing record, and one carrying the price
+        // of the order / quotation / pro-forma it came from is priced by that document.
+        if (pricingResolutionService != null) {
+            pricingResolutionService.applyToInvoice(invoice,
+                    resolvedBranch != null ? resolvedBranch.getId() : invoice.getBranchId(),
+                    settings != null ? settings.getSalesItemPricePolicy() : null,
+                    existing != null ? existing.getPriceLevelId() : null,
+                    existing != null
+                            ? com.billbull.backend.sales.pricing.PricingModels.CarriedPrice.of(existing.getItems())
+                            : java.util.List.of(),
+                    sourceDocumentPrices != null
+                            ? sourceDocumentPrices.forDocuments(invoice.getLinkedQuotation(),
+                                    invoice.getLinkedSalesOrder(), invoice.getLinkedProforma())
+                            : java.util.List.of());
+        }
+
         if (invoice.getId() == null) {
             invoice.setInvoiceNumber(numberingService.resolveNumberForCreate(
                     SalesDocumentType.SALES_INVOICE,
@@ -564,6 +604,7 @@ public class SalesInvoiceService {
         // Deliberately BEFORE preserveFinalizedSalespersonAttribution: on a finalized invoice that
         // guard then restores the persisted values over whatever was just resolved, keeping
         // commission history immutable exactly as it is today.
+        inheritSalesOrderSalesperson(invoice);
         resolveBackOfficeSalesperson(invoice);
 
         preserveFinalizedSalespersonAttribution(invoice, existing);
@@ -983,6 +1024,37 @@ public class SalesInvoiceService {
      * <p>The legacy {@link SalesInvoice#getSalesperson()} String is deliberately untouched — it is
      * a separate, free-text concept that existing reports depend on.
      */
+    /**
+     * A NEW invoice raised against a Sales Order that names no salesperson inherits the order's,
+     * so the sale is attributed to whoever took the order even where the back-office picker is
+     * switched off. Only id/code are copied; {@link #resolveBackOfficeSalesperson} re-validates.
+     * An order salesperson who is no longer eligible is skipped (the invoice stays unassigned)
+     * rather than blocking the invoice. POS checkout does the same in its own path.
+     */
+    private void inheritSalesOrderSalesperson(SalesInvoice invoice) {
+        if (invoice == null || invoice.getId() != null || salesOrderRepository == null) return;
+        String soNumber = invoice.getLinkedSalesOrder();
+        if (soNumber == null || soNumber.isBlank()) return;
+        if (invoice.getSalespersonEmployeeId() != null
+                || (invoice.getSalespersonEmployeeCode() != null && !invoice.getSalespersonEmployeeCode().isBlank())) {
+            return;
+        }
+        // linkedSalesOrder may list several orders ("SO-1, SO-2") when invoicing delivery notes.
+        String first = soNumber.split(",")[0].trim();
+        var so = salesOrderRepository.findBySoNumber(first).orElse(null);
+        if (so == null || so.getSalespersonEmployeeId() == null) return;
+        try {
+            var employee = salespersonService.resolveEligible(
+                    so.getSalespersonEmployeeId(), so.getSalespersonEmployeeCode());
+            if (employee == null) return;
+            invoice.setSalespersonEmployeeId(employee.getId());
+            invoice.setSalespersonEmployeeCode(employee.getEmployeeCode());
+        } catch (org.springframework.web.server.ResponseStatusException ex) {
+            log.info("Sales Order {} salesperson {} is no longer eligible; invoice left unassigned",
+                    first, so.getSalespersonEmployeeId());
+        }
+    }
+
     private void resolveBackOfficeSalesperson(SalesInvoice invoice) {
         if (invoice == null) return;
         Long id = invoice.getSalespersonEmployeeId();

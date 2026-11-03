@@ -20,6 +20,27 @@ import java.util.List;
 @org.hibernate.annotations.Filter(name = "ownerFilter", condition = "created_by_user_id = :ownerId")
 public class SalesOrder  implements com.billbull.backend.common.ownership.OwnedEntity {
 
+    /**
+     * The price level the document priced at (V129). Sent by the client only to choose a level
+     * explicitly; on save the server resolves and overwrites all three
+     * (sales.pricing.PricingResolutionService#applyToLines).
+     */
+    @jakarta.persistence.Column(name = "price_level_id")
+    private Long priceLevelId;
+    @jakarta.persistence.Column(name = "price_level_name", length = 100)
+    private String priceLevelName;
+    /** TRANSACTION, CUSTOMER or DEFAULT — see sales.pricing.PriceLevelSource. */
+    @jakarta.persistence.Column(name = "price_level_source", length = 20)
+    private String priceLevelSource;
+
+    public Long getPriceLevelId() { return priceLevelId; }
+    public void setPriceLevelId(Long priceLevelId) { this.priceLevelId = priceLevelId; }
+    public String getPriceLevelName() { return priceLevelName; }
+    public void setPriceLevelName(String priceLevelName) { this.priceLevelName = priceLevelName; }
+    public String getPriceLevelSource() { return priceLevelSource; }
+    public void setPriceLevelSource(String priceLevelSource) { this.priceLevelSource = priceLevelSource; }
+
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -87,6 +108,21 @@ public class SalesOrder  implements com.billbull.backend.common.ownership.OwnedE
      *  or sent out from the POS. Included in {@link #orderTotal}. */
     @Column(name = "delivery_charge", precision = 15, scale = 2)
     private BigDecimal deliveryCharge;
+
+    /**
+     * Salesperson the order is attributed to — same meaning and shape as the
+     * {@code SalesInvoice#salespersonEmployeeId/Code/Name} trio, which it becomes when the order is
+     * invoiced (back office) or taken up at the POS. The client names a candidate by id (or code);
+     * {@code SalesOrderService} re-reads the identity from the employee row. Null = unassigned.
+     */
+    @Column(name = "salesperson_employee_id")
+    private Long salespersonEmployeeId;
+
+    @Column(name = "salesperson_employee_code", length = 100)
+    private String salespersonEmployeeCode;
+
+    @Column(name = "salesperson_name", length = 200)
+    private String salespersonName;
 
     @Column(length = 500)
     private String shippingAddress;
@@ -287,6 +323,15 @@ public class SalesOrder  implements com.billbull.backend.common.ownership.OwnedE
     public void setDeliveryCharge(BigDecimal deliveryCharge) {
         this.deliveryCharge = deliveryCharge;
     }
+
+    public Long getSalespersonEmployeeId() { return salespersonEmployeeId; }
+    public void setSalespersonEmployeeId(Long salespersonEmployeeId) { this.salespersonEmployeeId = salespersonEmployeeId; }
+
+    public String getSalespersonEmployeeCode() { return salespersonEmployeeCode; }
+    public void setSalespersonEmployeeCode(String salespersonEmployeeCode) { this.salespersonEmployeeCode = salespersonEmployeeCode; }
+
+    public String getSalespersonName() { return salespersonName; }
+    public void setSalespersonName(String salespersonName) { this.salespersonName = salespersonName; }
 
     public String getDeliveryType() {
         return deliveryType;

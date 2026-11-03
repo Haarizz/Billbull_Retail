@@ -99,6 +99,10 @@ export function usePosSalesOrders({
       deliveryInstructions: order.deliveryInstructions || '',
       deliveryCharge: orderDeliveryCharge,
       openAdvance: Math.max(0, toNumber(order.openAdvance, 0)),
+      // The order's salesperson; useSalesperson verifies and adopts it for this sale.
+      salespersonEmployeeId: order.salespersonEmployeeId ?? null,
+      salespersonEmployeeCode: order.salespersonEmployeeCode || null,
+      salespersonName: order.salespersonName || null,
     });
     return customer || { id: 'walk-in' };
   }, [posSettings, customerOptions, recalculateInvoice, setCurrentInvoice, setSelectedCustomer]);

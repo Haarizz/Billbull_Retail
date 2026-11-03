@@ -138,7 +138,7 @@ describe('the projection both builders share', () => {
   it('is owned by the hook, not by the POS orchestrator', () => {
     // POSSales destructures it; it declares no salesperson state of its own, which is what
     // keeps the POSSalesArchitecture shape counters unchanged.
-    expect(POS_SALES).toContain('} = useSalesperson();');
+    expect(POS_SALES).toContain('} = useSalesperson({ activeSalesOrder });');
     expect(POS_SALES).not.toMatch(/^ {2}const \[salesperson/m);
   });
 });

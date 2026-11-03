@@ -94,6 +94,34 @@ class PosSalesOrderServiceTest {
                 .thenReturn(List.of());
     }
 
+    @Test
+    void theOrdersSalespersonIsOfferedWhileStillEligible() {
+        var salespersons = org.mockito.Mockito.mock(com.billbull.backend.hr.employees.SalespersonService.class);
+        service.setSalespersonService(salespersons);
+        SalesOrder so = order("SO-1", SalesOrderStatus.CONFIRMED, "C-1");
+        so.setSalespersonEmployeeId(44L);
+        so.setSalespersonEmployeeCode("EMP-44");
+        when(salesOrderRepository.findBySoNumber("SO-1")).thenReturn(Optional.of(so));
+        var rep = new com.billbull.backend.hr.employees.Employee();
+        rep.setId(44L);
+        when(salespersons.resolveEligible(44L, "EMP-44")).thenReturn(rep);
+
+        assertEquals(44L, service.orderSalesperson("SO-1").getId());
+    }
+
+    @Test
+    void anOrderSalespersonWhoIsNoLongerEligibleIsDroppedNotRefused() {
+        var salespersons = org.mockito.Mockito.mock(com.billbull.backend.hr.employees.SalespersonService.class);
+        service.setSalespersonService(salespersons);
+        SalesOrder so = order("SO-1", SalesOrderStatus.CONFIRMED, "C-1");
+        so.setSalespersonEmployeeId(44L);
+        when(salesOrderRepository.findBySoNumber("SO-1")).thenReturn(Optional.of(so));
+        when(salespersons.resolveEligible(44L, null)).thenThrow(
+                new ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "inactive"));
+
+        org.junit.jupiter.api.Assertions.assertNull(service.orderSalesperson("SO-1"));
+    }
+
     private static SalesOrder order(String soNumber, SalesOrderStatus status, String customerCode) {
         SalesOrder so = new SalesOrder();
         so.setSoNumber(soNumber);

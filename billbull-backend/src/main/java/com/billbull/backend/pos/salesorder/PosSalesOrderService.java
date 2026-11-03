@@ -114,6 +114,32 @@ public class PosSalesOrderService {
         return so;
     }
 
+    /** THE salesperson resolver. Setter-injected so the constructor and its tests are unchanged. */
+    private com.billbull.backend.hr.employees.SalespersonService salespersonService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSalespersonService(com.billbull.backend.hr.employees.SalespersonService salespersonService) {
+        this.salespersonService = salespersonService;
+    }
+
+    /**
+     * The salesperson a sale taking up this order inherits: the order's own attribution, re-read
+     * from the employee row. Null when the order names nobody, is not found, or its salesperson is
+     * no longer active/eligible. The till then attributes the sale as it would any other (scan, or
+     * unassigned) rather than being refused over an order that predates the employee's exit.
+     */
+    @Transactional(readOnly = true)
+    public com.billbull.backend.hr.employees.Employee orderSalesperson(String soNumber) {
+        if (soNumber == null || soNumber.isBlank() || salespersonService == null) return null;
+        SalesOrder so = salesOrderRepository.findBySoNumber(soNumber.trim()).orElse(null);
+        if (so == null || so.getSalespersonEmployeeId() == null) return null;
+        try {
+            return salespersonService.resolveEligible(so.getSalespersonEmployeeId(), so.getSalespersonEmployeeCode());
+        } catch (ResponseStatusException ex) {
+            return null;
+        }
+    }
+
     private BigDecimal openAdvance(SalesOrder so) {
         if (so.getAdvanceAmount() == null || so.getAdvanceAmount().signum() <= 0) return BigDecimal.ZERO;
         return invoiceService.openSalesOrderAdvance(so.getSoNumber());

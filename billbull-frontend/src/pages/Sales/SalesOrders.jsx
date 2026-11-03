@@ -59,6 +59,7 @@ import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { getStockAvailability } from '@billbull/shared/api/stockAvailabilityApi';
 import { getSalesSettings } from '@billbull/shared/api/salesSettingsApi';
+import { getSalespersons } from '@billbull/shared/api/employeeApi';
 import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 import { useCompany } from '@billbull/shared/context/CompanyContext';
 import { useBranch } from '@billbull/shared/context/BranchContext';
@@ -102,6 +103,8 @@ import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNu
 import TableSkeleton from '../../components/common/TableSkeleton';
 import KpiCards from '../../components/common/KpiCards';
 import SalesOrderPreviewSplitView from './components/SalesOrderPreviewSplitView';
+import useDocumentPricing, { manualPricePatch } from '@billbull/shared/hooks/useDocumentPricing';
+import PriceSourceTag from '@billbull/shared/components/pricing/PriceSourceTag';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -431,8 +434,32 @@ const SalesOrders = () => {
   }, [orderId, pendingPrintOrderId]);
   const [attachmentFile, setAttachmentFile] = useState(null);
 
-  // Locking Logic 
+  // Locking Logic
   const isLocked = status === 'INVOICED';
+
+  // Customer-specific prices (Pricing Phase 2): lines added from the product master follow the
+  // customer's negotiated price → their default level → the default price, valid on the order
+  // date, through the backend resolver. Lines from a quotation or a saved order keep their price.
+  const documentPricing = useDocumentPricing({
+    items, setItems, customer: selectedCustomer, documentDate: orderDate,
+    recalcRow: (it) => calculateRow(it), enabled: !isLocked,
+  });
+
+  // Salesperson the order is attributed to. Carried onto the invoice when the order is invoiced
+  // here or taken up at the POS (checkout or delivery), so the sale counts for that employee.
+  // Bound by employee id; the server re-resolves and validates the employee.
+  const [salespersonOptions, setSalespersonOptions] = useState([]);
+  const [salespersonEmployeeId, setSalespersonEmployeeId] = useState('');
+  // The saved order's salesperson name, so an employee who has since left the roster still shows.
+  const [savedSalespersonName, setSavedSalespersonName] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    getSalespersons()
+      .then(roster => { if (!cancelled) setSalespersonOptions(Array.isArray(roster?.options) ? roster.options : []); })
+      .catch(() => { });
+    return () => { cancelled = true; };
+  }, []);
+  const selectedSalesperson = salespersonOptions.find(o => String(o.id) === String(salespersonEmployeeId)) || null;
 
   // Stock Check Modal
   const [selectedStockItem, setSelectedStockItem] = useState(null);
@@ -839,6 +866,9 @@ const SalesOrders = () => {
     const rawItem = {
       id: Date.now() + Math.random(),
       code: product.code,
+      productId: product.id ?? null,
+      // Priced from the product master: follows the customer's pricing.
+      priceLevelAuto: true,
       name: product.name || '',
       brand: product.brandName || product.brand || '',
       shortDesc: product.shortDesc || '',
@@ -902,6 +932,8 @@ const SalesOrders = () => {
     const rawItem = {
       id: Date.now() + Math.random(),
       code: product.code,
+      productId: product.id ?? null,
+      priceLevelAuto: Number(price) === Number(pickSalesItemPrice(product, salesSettings?.salesItemPricePolicy)),
       name: product.name || '',
       shortDesc: product.shortDesc || '',
       detailedDesc: product.detailedDesc || '',
@@ -1079,6 +1111,8 @@ const SalesOrders = () => {
       state: {
         fromSalesOrder: {
           soNumber,
+          salespersonEmployeeId: salespersonEmployeeId ? Number(salespersonEmployeeId) : null,
+          salespersonName: selectedSalesperson?.name || savedSalespersonName || '',
           customer: selectedCustomer?.name || selectedCustomer?.code || '',
           customerId: selectedCustomer?.id ?? null,
           customerCode: selectedCustomer?.code || '',
@@ -1310,6 +1344,10 @@ const SalesOrders = () => {
 
   // ✅ FIX 4: INCLUDE ID IN PAYLOAD
   const saveOrUpdateOrder = async (targetStatus = 'DRAFT', overrides = {}) => {
+    if (documentPricing.pending) {
+      alert('Prices are being updated for this customer. Please try again in a moment.');
+      return;
+    }
     if (!orderAutoNumbering && !soNumber.trim()) {
       alert('Please enter a sales order number.');
       return;
@@ -1336,6 +1374,8 @@ const SalesOrders = () => {
 
       customerCode: selectedCustomer?.code || '',
       customerName: selectedCustomer?.name || '',
+      salespersonEmployeeId: salespersonEmployeeId ? Number(salespersonEmployeeId) : null,
+      salespersonEmployeeCode: salespersonEmployeeId ? (selectedSalesperson?.employeeCode || null) : null,
       linkedQuotation: sanitizedLinkedQuotation,
       linkedProforma: sanitizedLinkedProforma,
       billDiscount: billDiscountType === 'percent' ? Number(billDiscount) : 0,
@@ -1632,6 +1672,8 @@ const SalesOrders = () => {
     setPaymentRef(order.paymentReference || '');
     setDeliveryType(order.deliveryType || 'Delivery');
     setDeliveryCharge(Number(order.deliveryCharge) || 0);
+    setSalespersonEmployeeId(order.salespersonEmployeeId ? String(order.salespersonEmployeeId) : '');
+    setSavedSalespersonName(order.salespersonName || '');
     setExpectedDelivery(order.expectedDeliveryDate || '');
     setShippingAddress(order.shippingAddress || '');
     setDeliveryInstructions(order.deliveryInstructions || '');
@@ -1708,6 +1750,8 @@ const SalesOrders = () => {
     setPaymentRef('');
     setDeliveryType('Delivery');
     setDeliveryCharge(0);
+    setSalespersonEmployeeId('');
+    setSavedSalespersonName('');
     setExpectedDelivery('');
     setShippingAddress('');
     setDeliveryInstructions('');
@@ -1730,6 +1774,7 @@ const SalesOrders = () => {
       if (item.id === id) {
         const stringFields = new Set(['desc', 'remarks', 'unit', 'code', 'image', 'focUnit', 'barcode']);
         let newItem = { ...item, [field]: stringFields.has(field) ? value : Number(value) };
+        Object.assign(newItem, manualPricePatch(item, field, newItem[field]) || {});
 
         if (field === 'price') {
           const price = Number(value) || 0;
@@ -2444,6 +2489,30 @@ const SalesOrders = () => {
               </div>
             )}
           </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-slate-500 shrink-0">Salesperson</label>
+            <div className="relative">
+              <select
+                value={salespersonEmployeeId}
+                disabled={isLocked}
+                onChange={(e) => setSalespersonEmployeeId(e.target.value)}
+                title="The sale is attributed to this employee when the order is invoiced or delivered through POS"
+                className="w-48 text-sm p-1.5 pr-7 border border-slate-200 rounded text-slate-700 bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500"
+              >
+                <option value="">Unassigned</option>
+                {salespersonEmployeeId && !selectedSalesperson && (
+                  <option value={salespersonEmployeeId}>{savedSalespersonName || `Employee #${salespersonEmployeeId}`}</option>
+                )}
+                {salespersonOptions.map(emp => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.name}{emp.employeeCode ? ` · ${emp.employeeCode}` : ''}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1">
@@ -2502,6 +2571,17 @@ const SalesOrders = () => {
               }
             />
             </div>
+
+            {(documentPricing.summary?.message || documentPricing.error) && (
+              <div className="rounded-md border border-slate-200 bg-white px-4 py-1.5 text-[11px]" data-testid="customer-pricing-summary">
+                {documentPricing.summary?.message && (
+                  <span className={documentPricing.summary.tone === 'info' ? 'font-semibold text-emerald-700' : 'text-slate-500'}>
+                    {documentPricing.summary.message}{documentPricing.pending ? ' …' : ''}
+                  </span>
+                )}
+                {documentPricing.error && <span className="ml-2 text-red-600" role="alert">{documentPricing.error}</span>}
+              </div>
+            )}
 
             {/* CUSTOMER SELECTOR MODAL */}
             <CustomerSelector
@@ -2711,6 +2791,7 @@ const SalesOrders = () => {
                                 placeholder="0.00"
                               />
                             </div>
+                            <PriceSourceTag line={item} />
                           </td>
 
                           {/* Line Total */}
