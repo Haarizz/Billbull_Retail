@@ -120,6 +120,15 @@ public class InventoryReportDataService {
         this.salesReturnRepo = salesReturnRepo;
     }
 
+    /** Packing conversions for the margin report's cost fallback (cost is per BASE unit).
+     *  Setter-injected so the constructor is unchanged; absent, quantities count as base units. */
+    private com.billbull.backend.inventory.product.ProductPackingRepository packingRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setPackingRepository(com.billbull.backend.inventory.product.ProductPackingRepository packingRepository) {
+        this.packingRepository = packingRepository;
+    }
+
     public InventoryReportDataResponse getReport(String reportId, Long warehouseId) {
         return getReport(reportId, warehouseId, null, null, null, null, null, null, null);
     }
@@ -981,8 +990,20 @@ public class InventoryReportDataService {
         return bd(item.getNetAmount()).subtract(bd(item.getTaxAmount()));
     }
 
+    /** Base units an invoice line issues (paid + FOC), converted like stock deduction does. */
+    static int lineBaseQty(SalesInvoiceItem item, com.billbull.backend.inventory.product.PackingConversions conversions) {
+        int qty = item.getQuantity() != null ? item.getQuantity() : 0;
+        int foc = item.getFoc() != null ? item.getFoc() : 0;
+        String focUnit = item.getFocUnit() != null && !item.getFocUnit().isBlank() ? item.getFocUnit() : item.getUnit();
+        return conversions.baseQty(item.getItemCode(), item.getUnit(), qty)
+                + conversions.baseQty(item.getItemCode(), focUnit, foc);
+    }
+
     private InventoryReportDataResponse itemMarginReport(java.util.Collection<Long> scope) {
         Map<String, MarginAccumulator> acc = new LinkedHashMap<>();
+        com.billbull.backend.inventory.product.PackingConversions conversions = packingRepository != null
+                ? com.billbull.backend.inventory.product.PackingConversions.of(packingRepository.findActiveConversionsByProductCode())
+                : com.billbull.backend.inventory.product.PackingConversions.none();
         for (SalesInvoice invoice : salesInvoiceRepo.findAll()) {
             if (invoice.getStatus() == SalesInvoiceStatus.CANCELLED || invoice.getStatus() == SalesInvoiceStatus.DRAFT) {
                 continue;
@@ -994,9 +1015,11 @@ public class InventoryReportDataService {
                 MarginAccumulator a = acc.computeIfAbsent(key, k -> new MarginAccumulator(key, item.getItemName()));
                 BigDecimal qty = bd(item.getQuantity());
                 BigDecimal revenue = exVatLineValue(item);
+                // Booked COGS when the line was delivered; otherwise cost (per BASE unit) times the
+                // base units the line issues — paid in its unit plus free in its FOC unit.
                 BigDecimal cogs = bd(item.getRecognizedCogs()).compareTo(BigDecimal.ZERO) > 0
                         ? bd(item.getRecognizedCogs())
-                        : bd(item.getCost()).multiply(qty);
+                        : bd(item.getCost()).multiply(BigDecimal.valueOf(lineBaseQty(item, conversions)));
                 a.qty = a.qty.add(qty);
                 a.sales = a.sales.add(revenue);
                 a.cost = a.cost.add(cogs);

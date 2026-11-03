@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Search,
@@ -2566,7 +2566,7 @@ function SalesSummaryReport() {
     kpis: [
       { label: "Net Sales", value: `AED ${totalNetSales.toLocaleString()}`, hint: "After returns & discounts" },
       { label: "Gross Profit", value: `AED ${totalGrossProfit.toLocaleString()}`, hint: `GP: ${avgGP.toFixed(1)}%` },
-      { label: "Tax Collected", value: `AED ${totalTax.toLocaleString()}`, hint: "Output VAT" },
+      { label: "Net VAT", value: `AED ${totalTax.toLocaleString()}`, hint: "Output VAT after returns" },
       { label: "Returns", value: `AED ${totalReturns.toLocaleString()}`, hint: `${returnsPct}% of gross` },
     ],
     sections: [
@@ -2639,11 +2639,11 @@ function SalesSummaryReport() {
         <Card className="border border-slate-200 bg-white">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-medium text-slate-600">Tax Collected</span>
+              <span className="text-[10px] font-medium text-slate-600">Net VAT</span>
               <Shield className="h-4 w-4 text-blue-600" />
             </div>
             <div className="text-xl font-bold text-blue-700"><CurrencySymbol /> {totalTax.toLocaleString()}</div>
-            <div className="text-[9px] text-slate-500 mt-1">Output VAT</div>
+            <div className="text-[9px] text-slate-500 mt-1">Output VAT after returns</div>
           </CardContent>
         </Card>
 

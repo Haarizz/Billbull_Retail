@@ -550,8 +550,12 @@ public class DeliveryNoteService {
             recognizeRevenueForDeliveredDn(dn, invoice);
         }
 
-        // Persist per-item cost snapshot for later COGS reversal on returns (Phase 3.3).
-        persistConsumptions(dn);
+        // Persist per-item cost snapshot for later COGS reversal on returns (Phase 3.3) — only
+        // once the cost is booked. A DN delivered before its invoice exists carries a placeholder
+        // cost until linkDeliveryNotesToInvoice recognises it, and records its rows then.
+        if (dn.isFinancialPosted()) {
+            persistConsumptions(dn);
+        }
 
         // §5.4 Mark serials SOLD at delivery for WORKFLOW_DRIVEN path.
         // The linked invoice items carry the serialNumber scanned at order/quote time.
@@ -870,8 +874,14 @@ public class DeliveryNoteService {
      * Idempotent: returns immediately if financialPosted is already true.
      */
     /**
-     * Persists a cost-snapshot row for every DN line at delivery time so that
-     * SalesReturnService can later reverse COGS at the original cost (not current WAC).
+     * Persists a cost-snapshot row for every DN line so that SalesReturnService can later reverse
+     * COGS at the original cost (not current WAC).
+     *
+     * <p>A row records what actually left stock: {@code quantity} in BASE units, paid + free —
+     * the same quantity stock deduction posted — at the line's base-unit cost, so
+     * {@code totalCost} is exactly the COGS the delivery journal booked for that line.
+     * Written once the DN is financially posted (its cost is final), never before: a Before-Sale
+     * DN is costed when its invoice links it, see {@link #linkDeliveryNotesToInvoice}.
      * Idempotent: skips lines whose consumptions are already recorded.
      */
     private void persistConsumptions(DeliveryNote dn) {
@@ -881,7 +891,7 @@ public class DeliveryNoteService {
             Long dnItemId = item.getId();
             if (dnItemId != null && !consumptionRepo.findByDeliveryNoteItemId(dnItemId).isEmpty()) continue;
 
-            int qty = item.getCurrentQty() != null ? item.getCurrentQty() : 0;
+            int qty = deliveredBaseQty(item);
             if (qty <= 0) continue;
 
             BigDecimal unitCost  = item.getCost();
@@ -898,6 +908,34 @@ public class DeliveryNoteService {
         }
     }
 
+    /**
+     * The invoice line a delivered DN line's cost belongs to.
+     *
+     * <p>A DN generated from this very invoice (auto-delivery: POS checkout, Fast Sale, PI
+     * conversion) records each line's origin in {@code sourceLineId}, so the line is found
+     * exactly. That matters whenever a product appears on more than one invoice line — a POS
+     * cart sells a batch- or serial-controlled product one unit per line — where matching by
+     * item code would stamp the first line every time and leave the rest without a cost.
+     *
+     * <p>Any other DN (raised from a Sales Order, or delivered before the invoice existed) keeps
+     * the item-code match, {@code byItemCode}, unchanged: its {@code sourceLineId}, when set,
+     * refers to a line of a different document.
+     */
+    static SalesInvoiceItem invoiceLineForCost(DeliveryNote dn, DeliveryNoteItem dnItem,
+            SalesInvoice invoice, SalesInvoiceItem byItemCode) {
+        boolean dnOfThisInvoice = invoice != null && invoice.getId() != null
+                && "SALES_INVOICE".equals(dn.getSourceDocumentType())
+                && invoice.getId().equals(dn.getSourceDocumentId());
+        if (dnOfThisInvoice && dnItem.getSourceLineId() != null && invoice.getItems() != null) {
+            for (SalesInvoiceItem line : invoice.getItems()) {
+                if (dnItem.getSourceLineId().equals(line.getId())) {
+                    return line;
+                }
+            }
+        }
+        return byItemCode;
+    }
+
     private void recognizeRevenueForDeliveredDn(DeliveryNote dn, SalesInvoice invoice) {
         if (dn.isFinancialPosted()) return;
 
@@ -905,12 +943,7 @@ public class DeliveryNoteService {
         BigDecimal totalCogs = BigDecimal.ZERO;
 
         for (DeliveryNoteItem dnItem : dn.getItems()) {
-            int rawQty = (dnItem.getCurrentQty() != null ? dnItem.getCurrentQty() : 0);
-            int rawFoc = (dnItem.getFoc() != null ? dnItem.getFoc() : 0);
-            String effectiveFocUnit = (dnItem.getFocUnit() != null && !dnItem.getFocUnit().isBlank())
-                    ? dnItem.getFocUnit() : dnItem.getUnit();
-            int deliveredQty = resolveBaseQty(dnItem.getProduct().getId(), dnItem.getUnit(), rawQty)
-                    + resolveBaseQty(dnItem.getProduct().getId(), effectiveFocUnit, rawFoc);
+            int deliveredQty = deliveredBaseQty(dnItem);
             if (deliveredQty <= 0) continue;
 
             // Cost source: try weighted average from stock ledger first, fall back to product pricing.
@@ -940,58 +973,55 @@ public class DeliveryNoteService {
             BigDecimal itemCogs = effectiveCost.multiply(BigDecimal.valueOf(deliveredQty));
             totalCogs = totalCogs.add(itemCogs);
 
-            // Stamp WAC cost back onto DN item so invoice items can copy it for profit reporting
+            // The unit cost (per BASE unit) these units left at; the COGS journal and every line
+            // figure below are built from it.
             dnItem.setCost(effectiveCost);
+        }
 
-            // Match DN item to invoice item by itemCode for proportional revenue
-            SalesInvoiceItem matchedInvoiceItem = invoice.getItems().stream()
-                    .filter(si -> si.getItemCode() != null
-                            && si.getItemCode().equals(dnItem.getItemCode()))
-                    .findFirst()
-                    .orElse(null);
+        // Which invoice line each delivered unit belongs to (exact source line for this
+        // invoice's own DN; otherwise outstanding quantity per same-code line), after replaying
+        // the deliveries already posted against this invoice.
+        InvoiceLineDeliveryAllocator.Result allocation = InvoiceLineDeliveryAllocator.allocate(
+                invoice, priorPostedDeliveries(dn, invoice, false), dn, memoisedBaseQty());
 
-            if (matchedInvoiceItem != null) {
-                int totalInvoiceQty = (matchedInvoiceItem.getQuantity() != null
-                        ? matchedInvoiceItem.getQuantity() : 0)
-                        + (matchedInvoiceItem.getFoc() != null ? matchedInvoiceItem.getFoc() : 0);
-
-                BigDecimal netAmount = matchedInvoiceItem.getNetAmount() != null
-                        ? matchedInvoiceItem.getNetAmount() : BigDecimal.ZERO;
-
-                BigDecimal proportionalRevenue = totalInvoiceQty > 0
-                        ? netAmount.multiply(BigDecimal.valueOf(deliveredQty))
-                                .divide(BigDecimal.valueOf(totalInvoiceQty), 2,
-                                        java.math.RoundingMode.HALF_UP)
-                        : BigDecimal.ZERO;
-
-                // Cap at remaining unrecognized amount to prevent over-recognition
-                BigDecimal maxAllowed = netAmount.subtract(matchedInvoiceItem.getRecognizedRevenue());
-                if (proportionalRevenue.compareTo(maxAllowed) > 0) {
-                    proportionalRevenue = maxAllowed;
-                }
-
-                if (proportionalRevenue.compareTo(BigDecimal.ZERO) > 0) {
-                    totalRecognizedRevenue = totalRecognizedRevenue.add(proportionalRevenue);
-                    matchedInvoiceItem.setRecognizedRevenue(
-                            matchedInvoiceItem.getRecognizedRevenue().add(proportionalRevenue));
-                    matchedInvoiceItem.setRecognizedCogs(
-                            matchedInvoiceItem.getRecognizedCogs().add(itemCogs));
-                }
-
-                // Stamp WAC unit cost onto invoice item for dashboard profit calculation
-                if (matchedInvoiceItem.getCost() == null || matchedInvoiceItem.getCost().signum() == 0) {
-                    matchedInvoiceItem.setCost(effectiveCost);
-                }
+        for (SalesInvoiceItem line : allocation.linesReached()) {
+            // Revenue follows paid units: this delivery's share is the line's recognised target
+            // after it minus the target before it, never more than the line has left.
+            BigDecimal net = line.getNetAmount() != null ? line.getNetAmount() : BigDecimal.ZERO;
+            BigDecimal remaining = net.subtract(line.getRecognizedRevenue()).max(BigDecimal.ZERO);
+            BigDecimal revenue = allocation.revenueDelta(line).min(remaining);
+            if (revenue.signum() > 0) {
+                totalRecognizedRevenue = totalRecognizedRevenue.add(revenue);
+                line.setRecognizedRevenue(line.getRecognizedRevenue().add(revenue));
+            }
+        }
+        for (InvoiceLineDeliveryAllocator.Share share : allocation.shares) {
+            if (share.line() == null) continue; // no invoice line: cost reaches the journal only
+            BigDecimal unitCost = share.dnItem().getCost() != null ? share.dnItem().getCost() : BigDecimal.ZERO;
+            // Line COGS: the base units of this line that left (paid + free) at their unit cost.
+            share.line().setRecognizedCogs(share.line().getRecognizedCogs()
+                    .add(unitCost.multiply(BigDecimal.valueOf(share.totalBase()))));
+            // Cost-at-sale, per BASE unit — the same figure the COGS entry used. Only fills a line
+            // that has none; POS checkout leaves inventory lines empty so this is what costs them.
+            if (share.line().getCost() == null || share.line().getCost().signum() == 0) {
+                share.line().setCost(unitCost);
             }
         }
 
-        // Snap any remaining rounding difference on the final delivery
-        boolean isFinalDelivery = invoice.getItems().stream()
+        // Final delivery: every line's revenue is recognised (as before — a service line, which
+        // never reaches a DN, still holds this back) AND every line a delivery reached has had
+        // its full ordered quantity, paid and free, in base units. Revenue alone is not enough:
+        // with packing units it used to read "done" after one box of two.
+        boolean allRevenueRecognized = invoice.getItems().stream()
                 .allMatch(si -> {
                     BigDecimal net = si.getNetAmount() != null
                             ? si.getNetAmount() : BigDecimal.ZERO;
                     return si.getRecognizedRevenue().compareTo(net) >= 0;
                 });
+        boolean allQuantityDelivered = allocation.states.values().stream()
+                .filter(InvoiceLineDeliveryAllocator.LineState::touched)
+                .allMatch(InvoiceLineDeliveryAllocator.LineState::fullyDelivered);
+        boolean isFinalDelivery = allRevenueRecognized && allQuantityDelivered;
         if (isFinalDelivery) {
             // Compare against the sum of item netAmounts — the same base that each delivery
             // draw-down targets. Using invoice.subTotal would include footer discount add-backs
@@ -1045,48 +1075,87 @@ public class DeliveryNoteService {
     }
 
     /**
-     * FIX 4 — Resets invoice item recognized amounts when a delivered DN is cancelled.
+     * FIX 4 — Takes a cancelled DN's recognition back off the invoice lines it was put on.
      *
-     * Uses the stored DN totals (dn.recognizedRevenue / dn.recognizedCogs) distributed
-     * proportionally by DN item qty rather than recalculating from invoice netAmount.
-     * This ensures the subtracted amounts exactly match what was originally posted,
-     * even when a rounding snap was applied on the final delivery.
+     * <p>The lines are found with the same allocation the delivery used (deliveries posted before
+     * this one replayed first), so a repeated product is reversed on each of its own lines rather
+     * than all on the first one with its item code.
+     *
+     * <ul>
+     *   <li>Revenue: the DN's stored total — exactly what the reversal journal takes back,
+     *       rounding snap included — split over its lines in proportion to each line's share of
+     *       this delivery, the last line taking the remainder. Line totals therefore keep matching
+     *       the GL.</li>
+     *   <li>COGS: each line loses exactly the base units it received from this DN at this DN's
+     *       unit cost, which is what was added. Units no invoice line received were never on a line.</li>
+     * </ul>
      */
     private void resetInvoiceItemRecognition(DeliveryNote dn, SalesInvoice invoice) {
         BigDecimal storedRevenue = dn.getRecognizedRevenue() != null
                 ? dn.getRecognizedRevenue() : BigDecimal.ZERO;
-        BigDecimal storedCogs = dn.getRecognizedCogs() != null
-                ? dn.getRecognizedCogs() : BigDecimal.ZERO;
 
-        int totalDnQty = dn.getItems().stream()
-                .mapToInt(i -> (i.getCurrentQty() != null ? i.getCurrentQty() : 0)
-                        + (i.getFoc() != null ? i.getFoc() : 0))
-                .sum();
-        if (totalDnQty == 0) return;
+        InvoiceLineDeliveryAllocator.Result allocation = InvoiceLineDeliveryAllocator.allocate(
+                invoice, priorPostedDeliveries(dn, invoice, true), dn, memoisedBaseQty());
 
-        for (DeliveryNoteItem dnItem : dn.getItems()) {
-            int dnItemQty = (dnItem.getCurrentQty() != null ? dnItem.getCurrentQty() : 0)
-                    + (dnItem.getFoc() != null ? dnItem.getFoc() : 0);
-            if (dnItemQty <= 0) continue;
-
-            BigDecimal qtyRatio = BigDecimal.valueOf(dnItemQty)
-                    .divide(BigDecimal.valueOf(totalDnQty), 6, java.math.RoundingMode.HALF_UP);
-            BigDecimal revenueShare = storedRevenue.multiply(qtyRatio)
-                    .setScale(2, java.math.RoundingMode.HALF_UP);
-            BigDecimal cogsShare = storedCogs.multiply(qtyRatio)
-                    .setScale(2, java.math.RoundingMode.HALF_UP);
-
-            final String itemCode = dnItem.getItemCode();
-            invoice.getItems().stream()
-                    .filter(si -> itemCode != null && itemCode.equals(si.getItemCode()))
-                    .findFirst()
-                    .ifPresent(si -> {
-                        si.setRecognizedRevenue(
-                                si.getRecognizedRevenue().subtract(revenueShare).max(BigDecimal.ZERO));
-                        si.setRecognizedCogs(
-                                si.getRecognizedCogs().subtract(cogsShare).max(BigDecimal.ZERO));
-                    });
+        List<SalesInvoiceItem> lines = allocation.linesReached();
+        BigDecimal totalWeight = lines.stream().map(allocation::revenueDelta)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal revenueLeft = storedRevenue;
+        for (int i = 0; i < lines.size(); i++) {
+            SalesInvoiceItem line = lines.get(i);
+            BigDecimal share;
+            if (i == lines.size() - 1) {
+                share = revenueLeft;
+            } else if (totalWeight.signum() > 0) {
+                share = storedRevenue.multiply(allocation.revenueDelta(line))
+                        .divide(totalWeight, 2, java.math.RoundingMode.HALF_UP);
+            } else {
+                share = BigDecimal.ZERO;
+            }
+            share = share.max(BigDecimal.ZERO).min(revenueLeft.max(BigDecimal.ZERO));
+            revenueLeft = revenueLeft.subtract(share);
+            line.setRecognizedRevenue(line.getRecognizedRevenue().subtract(share).max(BigDecimal.ZERO));
         }
+
+        for (InvoiceLineDeliveryAllocator.Share s : allocation.shares) {
+            if (s.line() == null) continue;
+            BigDecimal unitCost = s.dnItem().getCost() != null ? s.dnItem().getCost() : BigDecimal.ZERO;
+            BigDecimal cogs = unitCost.multiply(BigDecimal.valueOf(s.totalBase()));
+            s.line().setRecognizedCogs(s.line().getRecognizedCogs().subtract(cogs).max(BigDecimal.ZERO));
+        }
+    }
+
+    /**
+     * Deliveries already posted against this invoice, oldest first, excluding {@code dn} itself.
+     * {@code onlyEarlier} limits them to DNs created before {@code dn} — the history it was
+     * posted after, used to reverse it.
+     */
+    private List<DeliveryNote> priorPostedDeliveries(DeliveryNote dn, SalesInvoice invoice, boolean onlyEarlier) {
+        if (invoice == null || invoice.getInvoiceNumber() == null || invoice.getInvoiceNumber().isBlank()) {
+            return List.of();
+        }
+        List<DeliveryNote> found = repo.findByLinkedInvoiceNumber(invoice.getInvoiceNumber());
+        if (found == null || found.isEmpty()) return List.of();
+        return found.stream()
+                .filter(other -> other != dn && other.getId() != null && !other.getId().equals(dn.getId()))
+                .filter(DeliveryNote::isFinancialPosted)
+                .filter(other -> !onlyEarlier || dn.getId() == null || other.getId() < dn.getId())
+                .sorted(java.util.Comparator.comparing(DeliveryNote::getId))
+                .toList();
+    }
+
+    /** {@link #resolveBaseQty} memoised for one allocation, so replaying deliveries and matching
+     *  repeated lines does not re-read the same product's packings for every line. */
+    private InvoiceLineDeliveryAllocator.BaseQty memoisedBaseQty() {
+        Map<String, Integer> memo = new HashMap<>();
+        return (productId, unit, qty) -> memo.computeIfAbsent(productId + "|" + unit + "|" + qty,
+                k -> resolveBaseQty(productId, unit, qty));
+    }
+
+    /** Base units a DN line issues from stock — paid + free, exactly as stock deduction posts them. */
+    private int deliveredBaseQty(DeliveryNoteItem item) {
+        int[] base = InvoiceLineDeliveryAllocator.deliveredBase(item, this::resolveBaseQty);
+        return base[0] + base[1];
     }
 
     private void hydrateDeliveryItemDisplayData(DeliveryNote dn) {
@@ -1573,6 +1642,8 @@ public class DeliveryNoteService {
                 Hibernate.initialize(invoice.getItems());
                 recognizeRevenueForDeliveredDn(note, invoice);
                 repo.save(note); // persist financialPosted=true and recognized amounts
+                // Its cost is now the one the COGS journal booked — record the consumption at it.
+                persistConsumptions(note);
             }
         }
     }

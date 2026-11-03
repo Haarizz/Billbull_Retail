@@ -73,6 +73,16 @@ public class SalesReportDataService {
         this.returnReportingService = returnReportingService;
     }
 
+    /** Packing conversions for line cost (cost is per BASE unit, line quantities are in the
+     *  line's unit). Setter-injected so the constructor — and every test building this service
+     *  through it — is unchanged; absent, quantities are taken as already in base units. */
+    private com.billbull.backend.inventory.product.ProductPackingRepository packingRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setPackingRepository(com.billbull.backend.inventory.product.ProductPackingRepository packingRepository) {
+        this.packingRepository = packingRepository;
+    }
+
     @Transactional(readOnly = true)
     public List<String> getDistinctSalespersons() {
         return invoiceRepository.findAll().stream()
@@ -2029,12 +2039,40 @@ public class SalesReportDataService {
         return items(invoice).stream().mapToDouble(item -> lineCost(item, data)).sum();
     }
 
-    private double lineCost(SalesInvoiceItem item, SalesDataset data) {
-        double baseCost = n(item.getCost()) * ni(item.getQuantity());
+    /**
+     * Cost of one invoice line. {@code cost} is per BASE unit (the WAC stamped at delivery, or the
+     * master cost), so it is multiplied by the base units the line issues — paid quantity in its
+     * unit plus free quantity in its FOC unit, converted with the product's packings, exactly as
+     * stock deduction and the COGS journal count them. Multiplying it by the selling quantity
+     * priced a box at one piece's cost and left free goods out. Package-private for tests.
+     */
+    double lineCost(SalesInvoiceItem item, SalesDataset data) {
+        double baseCost = n(item.getCost()) * lineBaseQty(item, data);
         if (baseCost == 0) {
             baseCost = n(item.getRecognizedCogs());
         }
         return baseCost * valuationFactor(data);
+    }
+
+    /** Package-private for tests: the base units a line issues (paid + FOC). */
+    int lineBaseQty(SalesInvoiceItem item, SalesDataset data) {
+        com.billbull.backend.inventory.product.PackingConversions conv = conversions(data);
+        int paid = conv.baseQty(item.getItemCode(), item.getUnit(), ni(item.getQuantity()));
+        String focUnit = item.getFocUnit() != null && !item.getFocUnit().isBlank() ? item.getFocUnit() : item.getUnit();
+        int foc = conv.baseQty(item.getItemCode(), focUnit, ni(item.getFoc()));
+        return paid + foc;
+    }
+
+    private com.billbull.backend.inventory.product.PackingConversions conversions(SalesDataset data) {
+        if (data == null) return loadConversions();
+        if (data.conversions == null) data.conversions = loadConversions();
+        return data.conversions;
+    }
+
+    private com.billbull.backend.inventory.product.PackingConversions loadConversions() {
+        return packingRepository != null
+                ? com.billbull.backend.inventory.product.PackingConversions.of(packingRepository.findActiveConversionsByProductCode())
+                : com.billbull.backend.inventory.product.PackingConversions.none();
     }
 
     private double valuationFactor(SalesDataset data) {
@@ -2231,7 +2269,9 @@ public class SalesReportDataService {
         return (a, b) -> Double.compare(n(b.get(key)), n(a.get(key)));
     }
 
-    private static class SalesDataset {
+    static class SalesDataset {
+        /** Loaded on first use by {@link #lineCost}; one query per report run. */
+        private com.billbull.backend.inventory.product.PackingConversions conversions;
         private LocalDate dateFrom;
         private LocalDate dateTo;
         private String valuationMethod;
