@@ -71,6 +71,10 @@ public enum PosAuditAction {
     VARIANCE_APPROVAL_REQUIRED,
     /** A supervisor authorized this exact expected/counted pair. */
     VARIANCE_APPROVED,
+    /** Closing approval (Console > Behavior): an administrator approved a session close. */
+    SESSION_CLOSE_ADMIN_APPROVED,
+    /** Closing approval (Console > Behavior): an administrator approved a Business Day Close. */
+    DAY_CLOSE_ADMIN_APPROVED,
     /** A shortage was recognised in the ledger. */
     CASH_SHORT_POSTED,
     /** An overage was recognised in the ledger. */

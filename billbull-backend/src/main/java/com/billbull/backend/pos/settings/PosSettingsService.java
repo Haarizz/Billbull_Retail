@@ -366,6 +366,30 @@ public class PosSettingsService {
                 .anyMatch(SUPERVISOR_ROLES::contains);
     }
 
+    /**
+     * Saves only the till's look: the screen layout (template, panel visibility, Quick Checkout,
+     * hidden action buttons) and the print template config. Every other field in the request is
+     * ignored, so this path can be open to every till user while behaviour, approvals, PINs and
+     * financial policy stay behind {@link #save} and the pos.settings permission. A null field is
+     * absent from the request and keeps the saved value.
+     */
+    @Transactional
+    public PosSettings saveAppearance(PosSettings request) {
+        Long branchId = request.getBranchId() != null ? request.getBranchId() : branchAccessService.getActiveBranchId();
+        PosSettings target = repo.findByBranchIdForUpdate(branchId).orElseGet(() -> {
+            PosSettings fresh = new PosSettings();
+            fresh.setBranchId(branchId);
+            return fresh;
+        });
+        if (request.getDefaultLayout() != null) target.setDefaultLayout(request.getDefaultLayout());
+        if (request.getLayoutHideCategoryPanel() != null) target.setLayoutHideCategoryPanel(request.getLayoutHideCategoryPanel());
+        if (request.getLayoutHideItemsPanel() != null) target.setLayoutHideItemsPanel(request.getLayoutHideItemsPanel());
+        if (request.getLayoutQuickCheckout() != null) target.setLayoutQuickCheckout(request.getLayoutQuickCheckout());
+        if (request.getLayoutHiddenPanelButtons() != null) target.setLayoutHiddenPanelButtons(request.getLayoutHiddenPanelButtons());
+        if (request.getPrintTemplateConfig() != null) target.setPrintTemplateConfig(request.getPrintTemplateConfig());
+        return repo.save(target);
+    }
+
     @Transactional
     public PosSettings save(PosSettings settings) {
         if (settings.getBranchId() == null) {
@@ -394,6 +418,13 @@ public class PosSettingsService {
                             || !Objects.equals(existing.getSupervisorApprovalMode(), settings.getSupervisorApprovalMode())
                             || !Objects.equals(existing.getRequirePriceOverrideApproval(), settings.getRequirePriceOverrideApproval())
                             || !Objects.equals(existing.getRequireSupervisorForDayClose(), settings.getRequireSupervisorForDayClose())
+                            // Closing approval: null = absent from this request (partial-POST convention).
+                            || (settings.getRequireAdminApprovalForSessionClose() != null
+                                && !Objects.equals(existing.getRequireAdminApprovalForSessionClose(),
+                                                   settings.getRequireAdminApprovalForSessionClose()))
+                            || (settings.getRequireAdminApprovalForDayClose() != null
+                                && !Objects.equals(existing.getRequireAdminApprovalForDayClose(),
+                                                   settings.getRequireAdminApprovalForDayClose()))
                             // Who may use the POS action buttons is a supervisor-approval decision in
                             // the same sense as the void gate: relaxing it back to ALL_USERS hands every
                             // cashier the Return and Cash Drawer functions again, so a cashier with
@@ -452,6 +483,14 @@ public class PosSettingsService {
                     }
                     existing.setRequireSupervisorForVoid(settings.getRequireSupervisorForVoid());
                     existing.setRequireSupervisorForDayClose(settings.getRequireSupervisorForDayClose());
+                    // Null means "field absent from this request", so an older client that does not
+                    // know these settings cannot silently switch closing approval off.
+                    if (settings.getRequireAdminApprovalForSessionClose() != null) {
+                        existing.setRequireAdminApprovalForSessionClose(settings.getRequireAdminApprovalForSessionClose());
+                    }
+                    if (settings.getRequireAdminApprovalForDayClose() != null) {
+                        existing.setRequireAdminApprovalForDayClose(settings.getRequireAdminApprovalForDayClose());
+                    }
                     existing.setRequireCashMovementCategory(settings.getRequireCashMovementCategory());
                     existing.setSupervisorApprovalMode(settings.getSupervisorApprovalMode());
                     existing.setRequirePriceOverrideApproval(settings.getRequirePriceOverrideApproval());
@@ -499,9 +538,18 @@ public class PosSettingsService {
                     existing.setDefaultLayout(settings.getDefaultLayout());
                     existing.setLayoutHideCategoryPanel(settings.getLayoutHideCategoryPanel());
                     existing.setLayoutHideItemsPanel(settings.getLayoutHideItemsPanel());
+                    // Partial-POST: a client that predates the toggle sends no value; keep the saved one.
+                    if (settings.getLayoutQuickCheckout() != null) {
+                        existing.setLayoutQuickCheckout(settings.getLayoutQuickCheckout());
+                    }
                     existing.setLayoutHiddenPanelButtons(settings.getLayoutHiddenPanelButtons());
                     existing.setPrintTemplateConfig(settings.getPrintTemplateConfig());
                     existing.setWalkInCustomerCode(settings.getWalkInCustomerCode());
+                    // Partial-POST convention: null means the field was absent from this request,
+                    // so an older client cannot silently switch the requirement off.
+                    if (settings.getRequireCustomer() != null) {
+                        existing.setRequireCustomer(settings.getRequireCustomer());
+                    }
                     existing.setAutoPrintReceipt(settings.getAutoPrintReceipt());
                     existing.setTerminalAutoArchiveEnabled(settings.getTerminalAutoArchiveEnabled());
                     existing.setTerminalArchiveAfterDays(settings.getTerminalArchiveAfterDays());
@@ -545,6 +593,12 @@ public class PosSettingsService {
                                     settings.getDeliveryReturnChargePolicy()).name());
                     settings.setDeliveryWorkflowMode(
                             PosDeliveryWorkflowMode.fromCode(settings.getDeliveryWorkflowMode()).name());
+                    if (settings.getRequireAdminApprovalForSessionClose() == null) {
+                        settings.setRequireAdminApprovalForSessionClose(false);
+                    }
+                    if (settings.getRequireAdminApprovalForDayClose() == null) {
+                        settings.setRequireAdminApprovalForDayClose(false);
+                    }
                     settings.setSupervisorPin(hashPinIfNeeded(settings.getSupervisorPin()));
                     return withBusinessDayScheduleLock(repo.save(settings));
                 });

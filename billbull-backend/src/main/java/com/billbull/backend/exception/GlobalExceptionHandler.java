@@ -70,6 +70,19 @@ public class GlobalExceptionHandler {
         return ResponseEntity.unprocessableEntity().body(body);
     }
 
+    /** Closing approval required (POS Console > Behavior) → 403 with a machine-readable code so
+     *  the till opens the administrator approval prompt instead of showing a dead-end error. */
+    @ExceptionHandler(AdminApprovalRequiredException.class)
+    public ResponseEntity<Map<String, Object>> handleAdminApprovalRequired(AdminApprovalRequiredException ex) {
+        log.warn("AdminApprovalRequired action={} requestId={}", ex.getAction(), requestId());
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("code", "ADMIN_APPROVAL_REQUIRED");
+        body.put("action", ex.getAction());
+        body.put("message", ex.getMessage());
+        body.put("requestId", requestId());
+        return ResponseEntity.status(org.springframework.http.HttpStatus.FORBIDDEN).body(body);
+    }
+
     @ExceptionHandler(ReconciliationException.class)
     public ResponseEntity<Map<String, Object>> handleReconciliation(ReconciliationException ex) {
         log.warn("ReconciliationException [{}] requestId={}: {}", ex.getStage(), requestId(), ex.getMessage());

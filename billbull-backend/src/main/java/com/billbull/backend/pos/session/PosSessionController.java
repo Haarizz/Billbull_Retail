@@ -19,6 +19,7 @@ import com.billbull.backend.pos.auth.CredentialVerificationResult;
 import com.billbull.backend.pos.auth.AuthorizationResult;
 import com.billbull.backend.pos.auth.ClosureAuthorizationRequest;
 import com.billbull.backend.pos.auth.PosClosureAuthorizationRegistry;
+import com.billbull.backend.pos.auth.PosCloseApprovalService;
 import com.billbull.backend.pos.auth.PosTillPermission;
 import com.billbull.backend.security.ModulePermissionService;
 
@@ -46,6 +47,11 @@ public class PosSessionController {
     private final PosSessionAuthorizationService sessionAuthorizationService;
     private final PosClosureAuthorizationRegistry closureAuthorizationRegistry;
     private final ModulePermissionService modulePermissionService;
+
+    /** Closing approval (Console > Behavior). Field-injected so the constructor the unit tests
+     *  call is unchanged; null only in those tests, where the gate is simply not exercised. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private PosCloseApprovalService closeApprovalService;
 
     public PosSessionController(PosSessionService service, PosSessionSyncService syncService, ObjectMapper objectMapper,
                                  PosDayStatusService dayStatusService,
@@ -217,10 +223,67 @@ public class PosSessionController {
         String closingRemarks = body != null ? (String) body.get("closingRemarks") : null;
         String closureAuthToken = body != null ? (String) body.get("closureAuthToken") : null;
         String varianceApprovalToken = body != null ? (String) body.get("varianceApprovalToken") : null;
-        return ResponseEntity.ok(service.closeSession(id, closingDenominations, currencyCode, notes,
+        String adminApprovalToken = body != null ? (String) body.get("adminApprovalToken") : null;
+        // Closing approval: refused before anything is written unless an administrator approved
+        // (or is the signed-in user). The grant is spent only once the close has succeeded.
+        PosSession target = service.getById(id);
+        String approver = closeApprovalService == null ? null : closeApprovalService.check(
+                PosCloseApprovalService.Action.SESSION_CLOSE, target.getBranchId(), id, adminApprovalToken);
+        PosSession closed = service.closeSession(id, closingDenominations, currencyCode, notes,
                 cardBatchNo, cardSettlementVerified, cardClosingCash,
                 closingCashierName, closingSupervisorName, closingRemarks, closureAuthToken,
-                varianceApprovalToken));
+                varianceApprovalToken);
+        if (closeApprovalService != null) {
+            closeApprovalService.complete(PosCloseApprovalService.Action.SESSION_CLOSE,
+                    target.getBranchId(), id, target.getTerminalId(), adminApprovalToken, approver);
+        }
+        return ResponseEntity.ok(closed);
+    }
+
+    /**
+     * Closing approval for a session close: an administrator's credentials are verified here
+     * and the till receives a single-use grant to send as {@code adminApprovalToken} on
+     * {@code POST /{id}/close}. Never closes anything itself.
+     */
+    @PostMapping("/{id}/admin-approval")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<AuthorizationResult> approveSessionClose(
+            @PathVariable Long id,
+            @RequestBody ClosureAuthorizationRequest request) {
+        // Scope first, so this cannot be used to test passwords against another branch's session.
+        requireSessionInScope(id);
+        PosSession session = service.getById(id);
+        if (session.getStatus() == PosSessionStatus.CLOSED) {
+            return ResponseEntity.ok(AuthorizationResult.unauthorized(
+                    "SESSION_ALREADY_CLOSED", "Session is already closed."));
+        }
+        return ResponseEntity.ok(verifyAndApprove(PosCloseApprovalService.Action.SESSION_CLOSE,
+                id, session.getBranchId(), request));
+    }
+
+    /** Closing approval for a Business Day Close — see {@link #approveSessionClose}. The grant
+     *  is bound to the branch and is sent as {@code adminApprovalToken} on {@code /close-day}. */
+    @PostMapping("/close-day/admin-approval")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<AuthorizationResult> approveDayClose(
+            @RequestParam Long branchId,
+            @RequestBody ClosureAuthorizationRequest request) {
+        requireBranchInScope(branchId);
+        return ResponseEntity.ok(verifyAndApprove(PosCloseApprovalService.Action.DAY_CLOSE,
+                branchId, branchId, request));
+    }
+
+    private AuthorizationResult verifyAndApprove(PosCloseApprovalService.Action action, Long targetId,
+                                                 Long branchId, ClosureAuthorizationRequest request) {
+        if (closeApprovalService == null) {
+            return AuthorizationResult.unauthorized("UNAVAILABLE", "Closing approval is not available.");
+        }
+        CredentialVerificationResult cred = credentialVerificationService.verifyCredentials(
+                request.getUsernameOrEmail(), request.getPassword());
+        if (!cred.valid()) {
+            return AuthorizationResult.unauthorized("INVALID_CREDENTIALS", cred.message());
+        }
+        return closeApprovalService.approve(action, targetId, branchId, cred.user());
     }
 
     /**
@@ -388,6 +451,12 @@ public class PosSessionController {
         return ResponseEntity.noContent().build();
     }
 
+    /** Day Close without a closing-approval grant (direct callers and tests). */
+    public ResponseEntity<Map<String, Object>> closeDay(Long branchId, String date, Long startSessionId,
+                                                        Long endSessionId, boolean acknowledgeExclusions) {
+        return closeDay(branchId, date, startSessionId, endSessionId, acknowledgeExclusions, null);
+    }
+
     @PostMapping("/close-day")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Object>> closeDay(
@@ -395,13 +464,21 @@ public class PosSessionController {
             @RequestParam(required = false) String date,
             @RequestParam(required = false) Long startSessionId,
             @RequestParam(required = false) Long endSessionId,
-            @RequestParam(required = false, defaultValue = "false") boolean acknowledgeExclusions) {
+            @RequestParam(required = false, defaultValue = "false") boolean acknowledgeExclusions,
+            @RequestParam(required = false) String adminApprovalToken) {
         // Till access and branch scope always apply. With requireSupervisorForDayClose off,
         // authorizeDayClose adds nothing, so these are what stop any signed-in user closing a day.
         requireBranchInScope(branchId);
         authorizationService.authorizeDayClose(branchId);
+        String approver = closeApprovalService == null ? null : closeApprovalService.check(
+                PosCloseApprovalService.Action.DAY_CLOSE, branchId, branchId, adminApprovalToken);
         LocalDate reportDate = date != null ? LocalDate.parse(date) : resolveDefaultDate(branchId);
-        return ResponseEntity.ok(service.closeDay(branchId, reportDate, startSessionId, endSessionId, acknowledgeExclusions));
+        Map<String, Object> result = service.closeDay(branchId, reportDate, startSessionId, endSessionId, acknowledgeExclusions);
+        if (closeApprovalService != null) {
+            closeApprovalService.complete(PosCloseApprovalService.Action.DAY_CLOSE,
+                    branchId, null, null, adminApprovalToken, approver);
+        }
+        return ResponseEntity.ok(result);
     }
 
     /** @deprecated OBSOLETE — the Skip Non-Trading Day workflow has been retired in

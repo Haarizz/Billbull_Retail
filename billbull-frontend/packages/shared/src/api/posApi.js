@@ -93,6 +93,14 @@ export const savePosSettings = async (settings) => {
   return res.data;
 };
 
+// Layout + print-template settings only (POS Configure, Console → Manage Layouts / Print
+// Templates). Open to every till user; the backend ignores any other field, so behaviour and
+// approval settings still go through savePosSettings and need pos.settings edit.
+export const savePosAppearance = async (appearance) => {
+  const res = await api.post(`${BASE}/settings/appearance`, appearance);
+  return res.data;
+};
+
 // Verify a supervisor PIN server-side. The PIN is no longer shipped to the client
 // (ARCHFIX S5); the backend compares it against the stored BCrypt hash.
 export const verifyPosSupervisorPin = async (pin) => {
@@ -172,12 +180,32 @@ export const closePosSession = async (sessionId, {
   // Single-use grant from verifySessionClosurePermission. Required when the logged-in
   // user isn't the session owner (Day Close closing another cashier's session).
   closureAuthToken,
+  // Single-use grant from approvePosSessionCloseByAdmin. Required only when the branch has
+  // Closing Approval on and the signed-in user is not an administrator.
+  adminApprovalToken,
 } = {}) => {
   const res = await api.post(`${BASE}/sessions/${sessionId}/close`, {
     notes, closingDenominations, currencyCode, varianceApprovalToken,
     cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks,
-    closureAuthToken,
+    closureAuthToken, adminApprovalToken,
   });
+  return res.data;
+};
+
+/**
+ * Closing Approval (Console → Behavior): an administrator's credentials, typed at the till,
+ * exchanged for a single-use grant. Resolves to { authorized, reasonCode, message,
+ * authorizationToken } — a refusal is a normal response, not a thrown error.
+ */
+export const approvePosSessionCloseByAdmin = async (sessionId, { usernameOrEmail, password }) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/admin-approval`, { usernameOrEmail, password });
+  return res.data;
+};
+
+/** Same as approvePosSessionCloseByAdmin, for the Business Day Close (Z-Report). */
+export const approvePosDayCloseByAdmin = async (branchId, { usernameOrEmail, password }) => {
+  const res = await api.post(`${BASE}/sessions/close-day/admin-approval`, { usernameOrEmail, password },
+    { params: { branchId } });
   return res.data;
 };
 
@@ -294,7 +322,7 @@ export const getPosDayCloseSummary = async (branchId, date, startSessionId, endS
   return res.data;
 };
 
-export const closePosDay = async (branchId, date, startSessionId, endSessionId, acknowledgeExclusions) => {
+export const closePosDay = async (branchId, date, startSessionId, endSessionId, acknowledgeExclusions, adminApprovalToken) => {
   const res = await api.post(`${BASE}/sessions/close-day`, null, {
     params: {
       branchId,
@@ -302,6 +330,7 @@ export const closePosDay = async (branchId, date, startSessionId, endSessionId, 
       startSessionId: startSessionId || undefined,
       endSessionId: endSessionId || undefined,
       acknowledgeExclusions: acknowledgeExclusions || undefined,
+      adminApprovalToken: adminApprovalToken || undefined,
     },
   });
   return res.data;

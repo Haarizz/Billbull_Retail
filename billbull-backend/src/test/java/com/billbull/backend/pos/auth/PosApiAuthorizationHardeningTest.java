@@ -202,7 +202,7 @@ class PosApiAuthorizationHardeningTest {
                 () -> sessions().getZReport(OWN, "2026-10-09", null, null),
                 () -> sessions().getDayCloseSummary(OWN, "2026-10-09", null, null),
                 () -> sessions().checkZReportPrintable(OWN, "2026-10-09"),
-                () -> sessions().closeDay(OWN, "2026-10-09", null, null, false),
+                () -> sessions().closeDay(OWN, "2026-10-09", null, null, false, null),
                 () -> sessions().getDayStatus("T1"),
                 () -> sessions().getSessionHistory(OWN, "2026-10-01", "2026-10-09", null, null, 0, 20))) {
             assertThrows(AccessDeniedException.class, call);
@@ -277,13 +277,13 @@ class PosApiAuthorizationHardeningTest {
         dayCloseNeedsSupervisor(false);
 
         signIn("HR", OWN);
-        assertThrows(AccessDeniedException.class, () -> sessions().closeDay(OWN, "2026-10-09", null, null, false));
+        assertThrows(AccessDeniedException.class, () -> sessions().closeDay(OWN, "2026-10-09", null, null, false, null));
 
         signIn("TILL_CASHIER", OWN);
-        assertForbidden(() -> sessions().closeDay(OTHER, "2026-10-09", null, null, false));
+        assertForbidden(() -> sessions().closeDay(OTHER, "2026-10-09", null, null, false, null));
         verify(sessionService, never()).closeDay(anyLong(), any(), any(), any(), anyBoolean());
 
-        assertDoesNotThrow(() -> sessions().closeDay(OWN, "2026-10-09", null, null, false));
+        assertDoesNotThrow(() -> sessions().closeDay(OWN, "2026-10-09", null, null, false, null));
         verify(sessionService).closeDay(OWN, LocalDate.parse("2026-10-09"), null, null, false);
     }
 
@@ -292,11 +292,11 @@ class PosApiAuthorizationHardeningTest {
         dayCloseNeedsSupervisor(true);
 
         signIn("TILL_CASHIER", OWN);
-        assertForbidden(() -> sessions().closeDay(OWN, "2026-10-09", null, null, false));
+        assertForbidden(() -> sessions().closeDay(OWN, "2026-10-09", null, null, false, null));
         verify(sessionService, never()).closeDay(anyLong(), any(), any(), any(), anyBoolean());
 
         signIn("SUPERVISOR", OWN);
-        assertDoesNotThrow(() -> sessions().closeDay(OWN, "2026-10-09", null, null, false));
+        assertDoesNotThrow(() -> sessions().closeDay(OWN, "2026-10-09", null, null, false, null));
         verify(sessionService).closeDay(OWN, LocalDate.parse("2026-10-09"), null, null, false);
     }
 
@@ -597,7 +597,7 @@ class PosApiAuthorizationHardeningTest {
 
     private SalesInvoiceController invoices() {
         return new SalesInvoiceController(invoiceService, invoiceCustomerContactService, permissions,
-                null, null, null, null);
+                null, null, null, null, null);
     }
 
     private void dayCloseNeedsSupervisor(boolean required) {
