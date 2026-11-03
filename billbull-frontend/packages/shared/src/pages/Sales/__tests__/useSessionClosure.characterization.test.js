@@ -688,6 +688,32 @@ describe('close-session API invocation — handleCloseSession', () => {
       expect(result.current.closeSessionError).toBe('');
       await act(async () => { d.resolve({ id: 42, status: 'CLOSED' }); await pending; });
     });
+
+    it('treats "Session is already closed." as a successful close, not an error', async () => {
+      // Field case: a double-click sent two closes; the second got this 400 and the cashier
+      // thought the close had failed although the first one went through.
+      closePosSession.mockRejectedValueOnce(httpErr(400, { message: 'Session is already closed.' }));
+      const { args, result } = setup();
+      act(() => { result.current.setShowCloseSessionDialog(true); });
+      await close(result);
+      expect(result.current.closeSessionError).toBe('');
+      expect(result.current.showCloseSessionDialog).toBe(false);
+      expect(args.setCurrentSession).toHaveBeenCalledWith({ ...CURRENT, status: 'CLOSED' });
+      expect(args.setCurrentView).toHaveBeenCalledWith('x-report');
+    });
+  });
+
+  it('flags the close as in flight and ignores a second click until it settles', async () => {
+    const d = deferred();
+    closePosSession.mockReturnValueOnce(d.promise);
+    const { result } = setup();
+    let pending;
+    act(() => { pending = result.current.handleCloseSession(); });
+    expect(result.current.closingSession).toBe(true);
+    await act(async () => { await result.current.handleCloseSession(); });
+    expect(closePosSession).toHaveBeenCalledTimes(1);
+    await act(async () => { d.resolve({ id: 42, status: 'CLOSED' }); await pending; });
+    expect(result.current.closingSession).toBe(false);
   });
 
   it('uses the loaders snapshotted when the close began, not ones parked during the request', async () => {

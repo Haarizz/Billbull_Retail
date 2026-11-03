@@ -1970,14 +1970,17 @@ public class PosSessionService {
         // Expected Cash figure above. Customer Receipts/Advances are back-office vouchers
         // with no session linkage yet, so they're omitted here (Z-Report only).
         // Sales Return figures for THIS session only — same shape as the Z-Report's Returns/Refund
-        // Summary, scoped by the return's posSessionId (see buildSessionReturnsSummary). Resolved
-        // here because the cash position needs its cash-refund figure.
+        // Summary: POS returns by the return's posSessionId, plus Back Office returns against this
+        // session's invoices on its trading date (see buildSessionReturnsSummary). Resolved here
+        // because the cash position needs its cash-refund figure.
         SalesReturnReportingTotals returns = buildSessionReturnsSummary(session, invoices);
 
         summary.put("cashPosition", buildCashPosition(session.getBranchId(), session.getSessionDate(),
                 List.of(sessionId), session.getOpeningCash(), tender.cash, cashDropIn, cashDropOut, false,
                 returns.refund(SalesReturnRefundMethod.CASH_REFUND)));
 
+        // Card refund attribution — refund Payment rows for this session plus Sales Returns
+        // settled by card against this session's invoices, not the item-void counter.
         putCardRefunds(summary, refunds, returns);
 
         // Void / refund reporting from the audit trail + persisted voided lines.
@@ -2743,9 +2746,10 @@ public class PosSessionService {
 
     /** The X-Report scope: returns rung up through THIS session. Keyed on the return's own
      *  posSessionId, not its date — the old lookup used the session's business date, so a
-     *  session running behind the calendar reported none of its returns. Legacy returns saved
-     *  before posSessionId existed fall back to "same business date and linked to one of this
-     *  session's invoices", which keeps another terminal's returns out. */
+     *  session running behind the calendar reported none of its returns. Returns with no
+     *  session (made from the Back Office Sales Return screen, or saved before posSessionId
+     *  existed) count when they are linked to one of this session's invoices and dated on its
+     *  trading date, which keeps another terminal's returns out. */
     private SalesReturnReportingTotals buildSessionReturnsSummary(PosSession session,
                                                                   List<SalesInvoice> sessionInvoices) {
         List<SalesReturn> scoped = new java.util.ArrayList<>();
@@ -2757,7 +2761,7 @@ public class PosSessionService {
                 .filter(java.util.Objects::nonNull)
                 .collect(java.util.stream.Collectors.toSet());
         if (!sessionInvoiceNumbers.isEmpty()) {
-            returnRepository.findByReturnDateAndBranchWithItems(session.getSessionDate(), session.getBranchId()).stream()
+            returnRepository.findByReturnDateAndBranchWithItems(sessionBusinessDate(session), session.getBranchId()).stream()
                     .filter(r -> r.getPosSessionId() == null)
                     .filter(r -> sessionInvoiceNumbers.contains(r.getLinkedInvoice()))
                     .forEach(scoped::add);
@@ -2774,6 +2778,12 @@ public class PosSessionService {
                 .add(nz(returns.refund(SalesReturnRefundMethod.CARD_REFUND))));
         summary.put("cardRefundCount", refunds.countByBucket.getOrDefault("card", 0L)
                 + returns.refundCount(SalesReturnRefundMethod.CARD_REFUND));
+    }
+
+    /** The session's trading date, falling back to session_date for sessions opened before
+     *  trading_date existed. Sales Returns are dated on the trading date. */
+    private static LocalDate sessionBusinessDate(PosSession session) {
+        return session.getTradingDate() != null ? session.getTradingDate() : session.getSessionDate();
     }
 
     /** The per-refund-method figures both the X-Report and the Z-Report publish. */
