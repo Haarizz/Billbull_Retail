@@ -104,6 +104,9 @@ const SEARCH_SOURCES = [
           category: p?.department?.name ?? p?.category ?? undefined,
           stock: raw?.stock ?? p?.quantity ?? null,
           reorderLevel: raw?.inventory?.reorderLevel ?? null,
+          // Rack zone + locator from the product's inventory setup.
+          zone: raw?.inventory?.zone?.name ?? undefined,
+          locator: raw?.inventory?.locator?.name ?? undefined,
         },
       };
     },

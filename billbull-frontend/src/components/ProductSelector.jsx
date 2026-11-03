@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, Plus, X, Box, Loader2, ChevronLeft, ChevronRight, Clock, Folder, Package, Tag } from 'lucide-react';
+import { Search, Plus, X, Box, Loader2, ChevronLeft, ChevronRight, Clock, Folder, Package, Tag, MapPin } from 'lucide-react';
+import { getProductRackLocation } from '@billbull/shared/utils/productRackLocation';
 import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import { getProductsList, getProductById } from '@billbull/shared/api/productsApi';
 import QuickAddProductModal from '@billbull/shared/components/inventory/QuickAddProductModal';
@@ -580,6 +581,12 @@ const ProductSelector = ({
                                     </div>
                                     <div className="text-[11px] text-slate-500 truncate">
                                         {selectedProduct.code || 'No code'} {selectedProduct.unitName ? `· ${selectedProduct.unitName}` : ''}
+                                        {(() => {
+                                            const rack = getProductRackLocation(selectedProduct);
+                                            return (rack.zone || rack.locator)
+                                                ? ` · Zone: ${rack.zone || '-'} | Locator: ${rack.locator || '-'}`
+                                                : '';
+                                        })()}
                                     </div>
                                 </div>
                                 <button
@@ -754,6 +761,7 @@ const ProductSelector = ({
                             const unit = product.unitName ?? product.unit ?? '';
                             const outOfStock = stock <= 0;
                             const isFocused = idx === focusedIdx;
+                            const rack = getProductRackLocation(product);
 
                             return (
                                 <div
@@ -796,6 +804,12 @@ const ProductSelector = ({
                                                     <Package size={12} className="text-slate-400" /> Stock: <StockBadge stock={stock} />
                                                 </span>
                                                 <span className="text-slate-400">SKU: {product.sku || '-'}</span>
+                                                <span className="flex items-center gap-1 text-slate-500" data-testid="product-rack-location">
+                                                    <MapPin size={12} className="text-slate-400" />
+                                                    Zone: <span className="font-semibold text-slate-700">{rack.zone || '-'}</span>
+                                                    <span className="text-slate-300">|</span>
+                                                    Locator: <span className="font-semibold text-slate-700">{rack.locator || '-'}</span>
+                                                </span>
                                             </div>
                                         </div>
                                     </div>

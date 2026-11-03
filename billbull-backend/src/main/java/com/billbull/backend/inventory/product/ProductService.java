@@ -1139,6 +1139,37 @@ public class ProductService {
         return picked.values().stream().map(this::buildResponse).collect(Collectors.toList());
     }
 
+    /** Upper bound for one classification load; each row is a full aggregate, so it stays modest. */
+    public static final int CLASSIFICATION_MAX_SIZE = 200;
+
+    /**
+     * Products in a department / sub-department / category, for bulk barcode label printing.
+     * At least one filter is required, so an empty request can never mean "the whole catalogue".
+     * Returns {@code content} (full aggregates, name order) and {@code totalElements} so the
+     * caller can say when the list was capped.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Map<String, Object> findByClassification(Long departmentId, Long subDepartmentId,
+            String category, int size) {
+        String cat = category != null ? category.trim() : "";
+        java.util.Map<String, Object> out = new java.util.HashMap<>();
+        if (departmentId == null && subDepartmentId == null && cat.isEmpty()) {
+            out.put("content", java.util.Collections.emptyList());
+            out.put("totalElements", 0L);
+            return out;
+        }
+        int limit = Math.max(1, Math.min(size, CLASSIFICATION_MAX_SIZE));
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(
+                0, limit, listSort("name"));
+        java.util.Collection<Long> scope = catalogScope();
+        org.springframework.data.domain.Page<Product> page = scope != null
+                ? productRepo.findActiveByClassificationInBranchScope(departmentId, subDepartmentId, cat, scope, pageable)
+                : productRepo.findActiveByClassification(departmentId, subDepartmentId, cat, pageable);
+        out.put("content", page.getContent().stream().map(this::buildResponse).collect(Collectors.toList()));
+        out.put("totalElements", page.getTotalElements());
+        return out;
+    }
+
     @Transactional(readOnly = true)
     public List<ProductAggregateResponse> searchProducts(String search) {
         String trimmedSearch = (search != null) ? search.trim() : "";
@@ -1348,6 +1379,10 @@ public class ProductService {
             ProductInventoryPolicy inv = inventoryMap.get(p.getId());
             item.put("unitName", inv != null && inv.getDefaultUnit() != null ? inv.getDefaultUnit().getName() : null);
             item.put("defaultUnitId", inv != null && inv.getDefaultUnit() != null ? inv.getDefaultUnit().getId() : null);
+            // Rack zone + locator from the product's inventory setup, shown on the item
+            // pickers so staff can find the shelf. Already loaded with the policy.
+            item.put("zoneName", inv != null && inv.getZone() != null ? inv.getZone().getName() : null);
+            item.put("locatorName", inv != null && inv.getLocator() != null ? inv.getLocator().getName() : null);
 
             item.put("maxDiscount", p.getMaxDiscount());
             // POS Default Discount %: what the till applies on add (maxDiscount is only the cap).
@@ -1607,6 +1642,10 @@ public class ProductService {
             ProductInventoryPolicy inv = inventoryMap.get(p.getId());
             item.put("unitName", inv != null && inv.getDefaultUnit() != null ? inv.getDefaultUnit().getName() : null);
             item.put("defaultUnitId", inv != null && inv.getDefaultUnit() != null ? inv.getDefaultUnit().getId() : null);
+            // Rack zone + locator from the product's inventory setup, shown on the item
+            // pickers so staff can find the shelf. Already loaded with the policy.
+            item.put("zoneName", inv != null && inv.getZone() != null ? inv.getZone().getName() : null);
+            item.put("locatorName", inv != null && inv.getLocator() != null ? inv.getLocator().getName() : null);
 
             item.put("maxDiscount", p.getMaxDiscount());
             // POS Default Discount %: what the till applies on add (maxDiscount is only the cap).

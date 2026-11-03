@@ -52,6 +52,32 @@ describe('resolveLabelPrinter', () => {
     });
   });
 
+  it('uses the printer the user picked when it is an active branch label printer', async () => {
+    const picked = { id: 9, status: 'ACTIVE', deviceType: 'LABEL_PRINTER', branchId: 3,
+      connectionType: 'USB', systemPrinterName: 'ZD420' };
+    getPosPrinters.mockResolvedValue([USB, picked]);
+
+    const printer = await resolveLabelPrinter({ branchId: 3, preferredPrinterId: '9' });
+
+    expect(printer).toBe(picked);
+    expect(resolvePrinterForContext).not.toHaveBeenCalled();
+  });
+
+  for (const [label, stale] of [
+    ['inactive', { id: 9, status: 'INACTIVE', deviceType: 'LABEL_PRINTER', branchId: 3, systemPrinterName: 'X' }],
+    ['another branch', { id: 9, status: 'ACTIVE', deviceType: 'LABEL_PRINTER', branchId: 4, systemPrinterName: 'X' }],
+    ['terminal-bound', { id: 9, status: 'ACTIVE', deviceType: 'LABEL_PRINTER', branchId: 3, terminalId: 'T1', systemPrinterName: 'X' }],
+  ]) {
+    it(`falls back to the branch default when the picked printer is ${label}`, async () => {
+      getPosPrinters.mockResolvedValue([USB, stale]);
+
+      const printer = await resolveLabelPrinter({ branchId: 3, preferredPrinterId: 9 });
+
+      expect(printer).toBe(USB);
+      expect(resolvePrinterForContext).toHaveBeenCalled();
+    });
+  }
+
   for (const [label, branchId] of [['All Branches', 'ALL'], ['none', null], ['blank', '']]) {
     it(`refuses to guess when the branch is ${label}`, async () => {
       await expect(resolveLabelPrinter({ branchId })).rejects.toThrow(LabelPrinterError);

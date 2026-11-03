@@ -111,6 +111,7 @@ public class BarcodeTemplateService {
     }
 
     public BarcodeTemplate create(BarcodeTemplate template) {
+        validatePriceSource(template.getFields());
         template.setSystem(false); // User created templates are never system
         template.setSystemKey(null);
         return repository.save(template);
@@ -119,6 +120,7 @@ public class BarcodeTemplateService {
     public BarcodeTemplate update(Long id, BarcodeTemplate updates) {
         BarcodeTemplate existing = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Template not found"));
+        validatePriceSource(updates.getFields());
 
         existing.setName(updates.getName());
         existing.setDescription(updates.getDescription());
@@ -145,6 +147,27 @@ public class BarcodeTemplateService {
     
     public BarcodeTemplate getById(Long id) {
         return repository.findById(id).orElseThrow(() -> new RuntimeException("Template not found"));
+    }
+
+    /**
+     * A stored {@code _priceSource} must be a key {@link LabelPriceSource} understands. A template
+     * without one keeps the default (retail) source. Malformed fields JSON stays accepted, as before.
+     */
+    void validatePriceSource(String fieldsJson) {
+        if (fieldsJson == null || fieldsJson.isBlank()) return;
+        com.fasterxml.jackson.databind.JsonNode node;
+        try {
+            node = objectMapper.readTree(fieldsJson).path(LabelPriceSource.TEMPLATE_FIELD);
+        } catch (JsonProcessingException e) {
+            return;
+        }
+        if (node.isMissingNode() || node.isNull()) return;
+        try {
+            LabelPriceSource.parse(node.asText());
+        } catch (IllegalArgumentException ex) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST, ex.getMessage());
+        }
     }
 
     private void ensureSystemTemplates() {

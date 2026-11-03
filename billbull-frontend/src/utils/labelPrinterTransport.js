@@ -40,11 +40,31 @@ export class LabelPrinterError extends Error {
  * @throws LabelPrinterError when no branch is selected, none is configured, or the configured
  *         one is missing the address details its connection type needs
  */
-export const resolveLabelPrinter = async ({ branchId, branchLabel = 'this branch' } = {}) => {
-  const resolvedBranchId = (branchId != null && branchId !== 'ALL' && branchId !== '')
-    ? Number(branchId)
-    : null;
-  if (resolvedBranchId == null || Number.isNaN(resolvedBranchId)) {
+const toBranchId = (branchId) => {
+  const resolved = (branchId != null && branchId !== 'ALL' && branchId !== '') ? Number(branchId) : null;
+  return (resolved == null || Number.isNaN(resolved)) ? null : resolved;
+};
+
+/** ACTIVE, branch-scoped (not terminal-bound) label printers a user may pick from. */
+const eligibleLabelPrinters = (printers, branchId) => (Array.isArray(printers) ? printers : [])
+  .filter((p) => p && p.status === 'ACTIVE' && p.deviceType === 'LABEL_PRINTER')
+  .filter((p) => p.branchId == null || Number(p.branchId) === Number(branchId))
+  .filter((p) => !p.terminalId || !String(p.terminalId).trim());
+
+/**
+ * The label printers a user can choose between for a branch (for pickers and settings).
+ * Same eligibility as {@link resolveLabelPrinter}; an unselected branch yields [].
+ */
+export const listLabelPrinters = async ({ branchId } = {}) => {
+  const resolvedBranchId = toBranchId(branchId);
+  if (resolvedBranchId == null) return [];
+  const printers = await getPosPrinters({ branchId: resolvedBranchId, deviceType: 'LABEL_PRINTER' });
+  return eligibleLabelPrinters(printers, resolvedBranchId);
+};
+
+export const resolveLabelPrinter = async ({ branchId, branchLabel = 'this branch', preferredPrinterId = null } = {}) => {
+  const resolvedBranchId = toBranchId(branchId);
+  if (resolvedBranchId == null) {
     throw new LabelPrinterError('Select a branch before printing labels.');
   }
 
@@ -58,9 +78,15 @@ export const resolveLabelPrinter = async ({ branchId, branchLabel = 'this branch
     loadError = e;
   }
 
+  // A printer the user picked wins, but only while it is still one this branch may use;
+  // a stale or foreign id falls back to the branch default rather than failing.
+  const preferred = preferredPrinterId != null
+    ? eligibleLabelPrinters(printers, resolvedBranchId).find((p) => String(p.id) === String(preferredPrinterId))
+    : null;
+
   // terminalId is deliberately omitted: "give me the branch-scoped label printer, and do not
   // narrow this office operation to a POS terminal."
-  const printer = resolvePrinterForContext(printers, {
+  const printer = preferred || resolvePrinterForContext(printers, {
     deviceType: 'LABEL_PRINTER',
     branchId: resolvedBranchId,
   });
