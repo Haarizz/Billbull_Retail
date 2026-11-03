@@ -108,7 +108,7 @@ No `PosWorkspaceContext` was introduced. POSSales already owns its state, and th
 
 ### Host capabilities
 
-`@billbull/shared/pages/Sales/POS/posHost` is a static context with no state. The embedded route keeps the default (`terminalAdministration: true`). The standalone app passes `STANDALONE_POS_HOST`, which hides the POS Console's **Terminals & Counters** tab (terminal archive/decommission, auto-archive policy, counter CRUD). That administration stays in Retail: Enterprise → POS Administration, or the embedded Console. Layouts, Behavior (already permission-gated), Devices and Print Templates stay available on the till, since hardware setup happens there. The backend authorizes every call either way.
+`@billbull/shared/pages/Sales/POS/posHost` is a static context with no state. The embedded route keeps the default (`terminalAdministration: true`). The standalone app passes `STANDALONE_POS_HOST`, which also has `terminalAdministration: true`, so the till's POS Console shows the **Terminals & Counters** tab (terminal archive/decommission, auto-archive policy, counter CRUD) alongside Layouts, Behavior (permission-gated), Devices and Print Templates. Terminal actions stay gated by `permissions.pos.terminal.*`. Setting the flag to `false` hides the tab and its panel on a host; the same administration is also in Retail under Enterprise → POS Administration. The backend authorizes every call either way.
 
 ## Auth, session and terminal decisions
 
