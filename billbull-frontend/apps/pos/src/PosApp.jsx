@@ -6,6 +6,7 @@ import { BranchProvider } from '@billbull/shared/context/BranchContext';
 import { PermissionProvider } from '@billbull/shared/context/PermissionContext';
 import AedSymbolRenderer from '@billbull/shared/components/AedSymbolRenderer';
 import AppAlertBridge from '@billbull/shared/components/AppAlertBridge';
+import AppConfirmBridge from '@billbull/shared/components/AppConfirmBridge';
 import PosLogin from './shell/PosLogin';
 import RequireAuth from './shell/RequireAuth';
 import RequirePosAccess from './shell/RequirePosAccess';
@@ -56,6 +57,7 @@ export default function PosApp() {
         <BranchProvider>
           <AedSymbolRenderer />
           <AppAlertBridge />
+          <AppConfirmBridge />
           <Toaster position="top-right" reverseOrder={false} containerStyle={{ zIndex: 10000 }} />
           <SonnerToaster position="top-right" richColors />
           <TillRoutes />

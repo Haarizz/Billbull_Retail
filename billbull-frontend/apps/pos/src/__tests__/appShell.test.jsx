@@ -46,10 +46,10 @@ describe('till routes', () => {
     expect(screen.getByText('Sign in to the till')).toBeTruthy();
   });
 
-  it('renders the workspace with terminal administration turned off, plus the till rail', () => {
+  it('renders the workspace with terminal administration turned on, plus the till rail', () => {
     authState.authenticated = true;
     at('/');
-    expect(screen.getByText('POS WORKSPACE terminalAdministration=false')).toBeTruthy();
+    expect(screen.getByText('POS WORKSPACE terminalAdministration=true')).toBeTruthy();
     expect(screen.getByRole('navigation', { name: 'Till' })).toBeTruthy();
     expect(screen.getByText('MN')).toBeTruthy();
     expect(screen.getByLabelText('Sign out')).toBeTruthy();
