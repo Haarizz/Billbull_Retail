@@ -111,7 +111,7 @@ export function useCart({ posSettings } = {}) {
         itemCode: item.code || item.productId || item.id,
         itemName: item.name,
         quantity: item.quantity,
-        unit: 'Each',
+        unit: item.unit || 'Each',
         price: item.price,
         discount: item.discount || 0,
         taxRate: toNumber(item.taxRate, posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0)),

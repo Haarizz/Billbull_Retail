@@ -55,6 +55,7 @@ import { resolvePosEntry } from '../../../../../api/posApi';
 import { ProductEntryMode, templateSupportsEntryDialog } from '../../../../../components/pos/ItemEntry/constants';
 import { resolveLineTaxRate } from '../../../../../utils/vatMath';
 import { cachePosProduct, getPriceFloor, mapPosProductAggregateItem, toNumber } from '../../posUtils';
+import { changeItemsUnit, lineIdForUnit, lineInUnit, sameUnit } from '../cart/lineUnits';
 
 /**
  * @param {object}   args
@@ -156,8 +157,15 @@ export function useProductEntry({
     // full-price item discounted below minimum at add-time is caught here too, not just
     // at checkout. `overrides.approved` marks the post-approval retry dispatched from
     // the approval dispatcher, so it isn't re-gated.
+    // A packing unit (box, carton …) chosen in the Item Entry dialog. Batch/serial lines are one
+    // base unit each, so they never take one. The line is keyed by unit: see lineUnits.js.
+    const saleUnit = !isPinned && !isBatchControlled && overrides.unit ? overrides.unit : null;
+    const unitConversion = saleUnit && Number(saleUnit.conversion) > 0 ? Number(saleUnit.conversion) : 1;
+    const lineId = lineIdForUnit(product.id, saleUnit);
+
     if (!overrides.approved && posSettings?.requirePriceOverrideApproval) {
-      const floor = getPriceFloor(product.minPrice, product.cost);
+      const baseFloor = getPriceFloor(product.minPrice, product.cost);
+      const floor = baseFloor != null ? baseFloor * unitConversion : null;
       const effectivePrice = unitPrice * (1 - unitDiscount / 100);
       if (floor != null && effectivePrice < floor) {
         requestApproval({
@@ -187,12 +195,12 @@ export function useProductEntry({
       // stacks onto an existing line. Batch-controlled grid lines also never merge.
       const existingItem = (isPinned || isBatchControlled)
         ? null
-        : prev.items.find(item => item.id === product.id);
+        : prev.items.find(item => item.id === lineId);
       let newItems;
 
       if (existingItem) {
         newItems = prev.items.map(item => {
-          if (item.id === product.id) {
+          if (item.id === lineId) {
             const mergedQuantity = overrides.isAbsoluteQuantity ? qtyToAdd : item.quantity + qtyToAdd;
             const mergedPrice = overrides.price !== undefined ? unitPrice : item.price;
             const mergedDiscount = overrides.discount !== undefined ? unitDiscount : item.discount;
@@ -215,7 +223,7 @@ export function useProductEntry({
         // React key) keeps targeting exactly one row. productId carries the real
         // product id; the checkout payload reads item.code for the item code.
         const pinKey = pinnedSerialNumber ? `S:${pinnedSerialNumber}` : pinnedBatchNumber;
-        newItems = [{
+        const line = {
           id: isPinned ? `${product.id}::${pinKey}` : product.id,
           productId: product.id,
           name: product.name,
@@ -241,18 +249,37 @@ export function useProductEntry({
           // Lock qty on batch/serial lines — each line is exactly one physical
           // unit. The cart UI disables +/- for lines flagged batchControlled.
           batchControlled: isPinned || isBatchControlled,
-        }, ...prev.items];
+        };
+        // Sold in a packing unit: unit fields, unit-scaled price bounds and the unit's id. The
+        // price is the one entered for that unit (the dialog defaults it to the unit's price).
+        newItems = [saleUnit
+          ? {
+            ...lineInUnit(line, saleUnit), price: unitPrice, total: line.total,
+            priceOverridden: saleUnit.price != null && Number(unitPrice) !== Number(saleUnit.price),
+          }
+          : line, ...prev.items];
       }
 
       return recalculateInvoice(newItems);
     });
-    // Same id the updater gives the line: only an unpinned line merges, and it merges by product id.
+    // Same id the updater gives the line: only an unpinned line merges, and it merges by its
+    // product + unit id.
     setLastEnteredLineId(isPinned
       ? `${product.id}::${pinnedSerialNumber ? `S:${pinnedSerialNumber}` : pinnedBatchNumber}`
-      : product.id);
+      : lineId);
     return { ok: true };
   };
   addToInvoiceRef.current = addToInvoice;
+
+  // Moves a cart line to another packing unit (Item Entry edit). Through a ref, like addToInvoice,
+  // so the memoised line helpers below always use the current VAT settings.
+  const moveLineUnitRef = useRef(null);
+  moveLineUnitRef.current = (lineId, unit) => {
+    setCurrentInvoice(prev => {
+      const { items } = changeItemsUnit(prev.items, lineId, unit);
+      return items === prev.items ? prev : recalculateInvoice(items, prev.billDiscountAmount || 0);
+    });
+  };
 
   /**
    * Helper wrapper around addToInvoice that accepts a rich initial payload.
@@ -275,6 +302,7 @@ export function useProductEntry({
         discountType: payload.discountType,
         taxRate: payload.tax,
         notes: payload.notes,
+        unit: payload.unit || null,
         isAbsoluteQuantity: true // If passed through wrapper, assume it's the exact final line qty
       }
     );
@@ -289,6 +317,17 @@ export function useProductEntry({
       return { ok: false, reason: 'Missing invoiceLine payload' };
     }
     
+    // Packing unit: a new one moves the line first (re-keyed and re-priced, see lineUnits.js);
+    // either way addToInvoice is told the line's unit so it targets the line by its unit id.
+    const line = payload.invoiceLine;
+    let unit = line.unit
+      ? { unit: line.unit, symbol: line.unitSymbol, conversion: line.unitConversion || 1, base: !(Number(line.unitConversion) > 1) }
+      : null;
+    if (payload.unit && !sameUnit(payload.unit.unit, line.unit) && !line.batchControlled && !line.salesOrderItemId) {
+      moveLineUnitRef.current(line.id, payload.unit);
+      unit = payload.unit;
+    }
+
     // To cleanly target the existing line in addToInvoice, we pass the invoiceLine
     // structured identically to how the grid passes it (id/productId).
     const fakeProduct = {
@@ -312,6 +351,7 @@ export function useProductEntry({
         discountType: payload.discountType,
         taxRate: payload.tax,
         notes: payload.notes,
+        unit,
         isAbsoluteQuantity: true
       }
     );

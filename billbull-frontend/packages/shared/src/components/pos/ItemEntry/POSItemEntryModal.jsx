@@ -36,7 +36,10 @@ const POSItemEntryModal = ({
     lockedSerial,
     customerName,
     selectedPriceRef,
-    onSelectPrice
+    onSelectPrice,
+    units = [],
+    unit = null,
+    onChangeUnit
 }) => {
     const priceInputRef = useRef(null);
     const quantityInputRef = useRef(null);
@@ -107,7 +110,10 @@ const POSItemEntryModal = ({
                             onCancel={onClose}
                             onConfirm={onConfirm}
                             mode={mode}
-                            uom={product.uom || 'BAG'}
+                            uom={unit?.unit || product.unit || product.uom || 'BAG'}
+                            units={units}
+                            unit={unit}
+                            onChangeUnit={onChangeUnit}
                             lockQuantity={lockQuantity}
                             priceInputRef={priceInputRef}
                             quantityInputRef={quantityInputRef}

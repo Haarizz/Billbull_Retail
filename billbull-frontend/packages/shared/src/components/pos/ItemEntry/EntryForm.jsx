@@ -26,6 +26,10 @@ const EntryForm = ({
     onConfirm,
     mode,
     uom = 'BAG',
+    // Packing units the item sells in (null = loading). Shown only when there is a choice.
+    units = [],
+    unit = null,
+    onChangeUnit,
     // Owned by the modal so it can focus the field the dialog opens on.
     priceInputRef,
     quantityInputRef,
@@ -89,6 +93,50 @@ const EntryForm = ({
     return (
         <div className="flex flex-col h-full">
             <div className="flex-1 space-y-6">
+                {/* Packing unit — picking one re-prices the entry per that unit */}
+                {Array.isArray(units) && units.length > 1 && (
+                    <div>
+                        <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">
+                            UNIT
+                        </span>
+                        <div role="radiogroup" aria-label="Packing unit" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                            {units.map((u) => {
+                                const selected = unit && String(unit.unit).toLowerCase() === String(u.unit).toLowerCase();
+                                const conv = Number(u.conversion) || 1;
+                                return (
+                                    <button
+                                        key={u.unit}
+                                        type="button"
+                                        role="radio"
+                                        aria-checked={Boolean(selected)}
+                                        disabled={isReadOnly}
+                                        onClick={() => onChangeUnit?.(u)}
+                                        className={`flex items-center gap-2 rounded-xl border-2 px-3 py-2 text-left transition-colors disabled:opacity-60 ${
+                                            selected
+                                                ? 'border-[#327F74] bg-[#327F74]/5'
+                                                : 'border-gray-100 bg-white hover:border-[#327F74]/40'
+                                        }`}
+                                    >
+                                        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-black ${
+                                            selected ? 'bg-[#327F74] text-white' : 'bg-gray-100 text-gray-600'
+                                        }`}
+                                        >
+                                            {Number(conv.toFixed(3))}×
+                                        </span>
+                                        <span className="min-w-0 flex-1">
+                                            <span className="block truncate text-sm font-bold text-slate-800">{u.unit}</span>
+                                            {u.price != null && (
+                                                <CurrencyAmount value={Number(u.price)} currency={currency} className="block text-[11px] text-gray-500" />
+                                            )}
+                                        </span>
+                                        {selected && <Check size={14} strokeWidth={3} className="shrink-0 text-[#327F74]" />}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
                 {/* Price per UOM */}
                 <div>
                     <label htmlFor={priceId} className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">

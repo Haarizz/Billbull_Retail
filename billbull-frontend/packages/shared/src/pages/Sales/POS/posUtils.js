@@ -1,3 +1,4 @@
+import { tierLabelOf } from '../../../utils/priceLevels';
 import { getImageUrl } from '../../../utils/urlUtils';
 
 export const toNumber = (value, fallback = 0) => {
@@ -36,6 +37,9 @@ export const mapPosProductListItem = (d = {}) => ({
   isSerial: Boolean(d.isSerial),
   fefoEnabled: Boolean(d.fefoEnabled),
   availableInPos: d.availableInPos ?? true,
+  // Rack zone + locator (Products → Inventory & Tracking), shown on the item pickers.
+  zoneName: d.zoneName || '',
+  locatorName: d.locatorName || '',
 });
 
 export const mapPosProductAggregateItem = (entry = {}, scannedBarcode = '') => {
@@ -64,6 +68,8 @@ export const mapPosProductAggregateItem = (entry = {}, scannedBarcode = '') => {
     isSerial: product.isSerial,
     fefoEnabled: product.fefoEnabled,
     availableInPos: product.availableInPos ?? true,
+    zoneName: (entry.inventory || product.inventory)?.zone?.name,
+    locatorName: (entry.inventory || product.inventory)?.locator?.name,
   });
 };
 
@@ -88,6 +94,9 @@ export const mapPosCustomer = (customer = {}) => ({
   balance: toNumber(customer.currentBalance ?? customer.balance ?? 0),
   membershipId: customer.membershipId || customer.code || customer.customerCode || '',
   tier: customer.priceList || customer.groupType || customer.group || '',
+  // Default price level (Pricing Phase 1) — the sale prices at it unless the cashier picks another.
+  priceLevelId: customer.priceLevelId ?? null,
+  priceList: customer.priceList || '',
   loyaltyPoints: toNumber(customer.loyaltyPoints ?? 0),
   // Full list of saved shipping addresses, so the delivery dialog can offer a
   // picker instead of just the single default address above.
@@ -111,13 +120,34 @@ export const getPriceFloor = (minPrice, cost) => {
   return c > 0 ? c : null;
 };
 
+// A cart line's floor: the product floor above, except that a customer's negotiated price is an
+// authorised selling price — selling at or above it never needs a price override even when it is
+// below the product minimum (PosCheckoutController §2.4 applies the same rule server-side).
+export const getLineFloor = (line) => {
+  if (!line) return null;
+  const floor = getPriceFloor(line.minPrice, line.cost);
+  const negotiated = toNumber(line.customerPrice);
+  if (floor == null || !(negotiated > 0)) return floor;
+  return Math.min(floor, negotiated);
+};
+
+/** The line is charged the customer's negotiated price (not a hand-edited one). */
+export const isCustomerPricedLine = (line) => Boolean(line) && !line.isVoided && !line.priceOverridden
+  && (line.priceSource === 'CUSTOMER_SPECIFIC' || line.priceSource === 'CUSTOMER_SPECIFIC_BRANCH');
+
+/**
+ * "Wholesale · Tier 20+" when a quantity tier priced the line (Pricing Phase 3), else null. Never
+ * for a negotiated or hand-edited price.
+ */
+export const tierMarkerOf = (line) => (line && !line.isVoided ? tierLabelOf(line) : null);
+
 export const getCartPriceWarning = (item) => {
   if (!item || item.isVoided) return null;
   const unitPrice = toNumber(item.price, 0);
   const discountPct = toNumber(item.discount, 0);
   const effectivePrice = unitPrice * (1 - (discountPct / 100));
 
-  const floor = getPriceFloor(item.minPrice, item.cost);
+  const floor = getLineFloor(item);
 
   if (floor != null && effectivePrice < floor) {
     return { level: 'error', message: `Below min price (${floor})` };
@@ -246,7 +276,7 @@ export const buildPosCheckoutItems = (items, posSettings = null) =>
     itemCode: item.code || item.productId || item.id,
     itemName: item.name,
     quantity: item.quantity,
-    unit: 'Each',
+    unit: item.unit || 'Each',
     price: item.price,
     discount: item.discount || 0,
     taxRate: toNumber(item.taxRate, posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0)),
@@ -258,7 +288,7 @@ export const buildPosCheckoutItems = (items, posSettings = null) =>
 
 /**
  * The Sales Order link of a cart line opened from POS → Orders, or nothing. A till line always
- * sells in 'Each', but an order line carries the unit it was ordered in (a Box of 12 is priced per
+ * sells in 'Each' unless the cashier picked a packing unit; an order line carries the unit it was ordered in (a Box of 12 is priced per
  * box), so that unit travels with it — otherwise stock and price would be read per piece. Spread
  * into the line payload only when present, so an ordinary sale's payload is unchanged.
  */
