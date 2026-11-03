@@ -13,10 +13,13 @@ import { isPosFocusV2Enabled, isPosInputV2Enabled } from './posInputFlag';
 import { createPosInputRegistry } from './posInputRegistry';
 import { acceptsPaymentHotkeys, acceptsScanner, POS_SCOPES, resolvePosScope } from './posScope';
 import { acceptsScannerInput } from './posScannerField';
-import { findFocusElement, POS_FOCUS_TARGETS, requestFocusTarget } from './posFocus';
+import { cartZoneOf, findFocusElement, POS_FOCUS_TARGETS, requestFocusTarget } from './posFocus';
 import { createMultiTap } from './posMultiTap';
 import {
   BURST_TAIL_MS,
+  CART_CURSOR_KEY,
+  CART_MOVE_KEYS,
+  CART_TENDER_KEYS,
   CASH_DOUBLE_TAP_MS,
   ENTER_MULTI_TAP_MS,
   ENTER_TAP_INTENT,
@@ -60,7 +63,6 @@ const controlOf = (target) => {
   const el = elementOf(target);
   return typeof el?.closest === 'function' ? el.closest(CONTROL_SELECTOR) : null;
 };
-
 /**
  * The single POS keyboard pipeline. Every keydown is handled in this order:
  *
@@ -108,7 +110,7 @@ export function createPosKeyHandler({
   let lastPrintableAt = 0; // a printable key, human or scanner
   let lastScanEnterAt = 0; // the Enter that ended a scanner burst
   let enterCooldownUntil = 0; // after an Enter sequence acted: stray Enters are not another one
-  let heldSaleKey = null; // { key, target, timer } — a + or − inside its settle window
+  let heldSaleKey = null; // { key, target, timer, action, arg } — a printable SALE key in its settle window
   let cashTap = null; // { at, owner, target } — the last Cash hotkey in checkout
 
   const resetWedge = () => {
@@ -192,16 +194,19 @@ export function createPosKeyHandler({
     clearTimer(heldSaleKey.timer);
     heldSaleKey = null;
   };
-  /** The held + / − acts now: a person pressed it. */
+  /** The held key (+, −, or a cart tender letter) acts now: a person pressed it. */
   const fireHeldSaleKey = () => {
     const held = heldSaleKey;
     cancelHeldSaleKey();
     if (!held || resolve().scope !== POS_SCOPES.SALE) return;
-    const spec = SALE_LINE_KEYS[held.key];
-    shortcutAction(POS_SCOPES.SALE, null, spec.action)?.(spec.arg);
+    shortcutAction(POS_SCOPES.SALE, null, held.action)?.(held.arg);
+  };
+  /** Holds a printable SALE key for the settle window; a scanner's next character beats it. */
+  const holdSaleKey = (event, action, arg) => {
+    heldSaleKey = { key: event.key, target: event.target, action, arg, timer: setTimer(fireHeldSaleKey, HOTKEY_SETTLE_MS) };
   };
   /**
-   * The held + / − was the first character of a scanner burst: hand it to the scan path ahead
+   * The held key was the first character of a scanner burst: hand it to the scan path ahead
    * of the character that just arrived, which then continues there as usual.
    */
   const replayHeldSaleKey = () => {
@@ -284,10 +289,63 @@ export function createPosKeyHandler({
       }
       // Printable: wait out the settle window, as a payment hotkey does. A scanner's next
       // character beats it, and the key is handed back to the scan path instead.
-      heldSaleKey = { key, target, timer: setTimer(fireHeldSaleKey, HOTKEY_SETTLE_MS) };
+      holdSaleKey(event, line.action, line.arg);
+      return true;
+    }
+    return handleCartKeys(event, { follows });
+  };
+
+  /**
+   * The cart cursor (posShortcuts CART_*). F6 moves the caret into the cart and back. With the
+   * caret in the cart: ↑ / ↓ pick a line, a tender letter opens checkout on that tender (held for
+   * the settle window, like + and −, so a scan starting with that letter still scans). Enter,
+   * +, − and Delete are handled above, as anywhere the caret is on no field.
+   */
+  const handleCartKeys = (event, { follows }) => {
+    const { key, target } = event;
+    const inCart = Boolean(cartZoneOf(target)) && !isEditableTarget(target);
+
+    if (key === CART_CURSOR_KEY) {
+      if (!shortcutAction(POS_SCOPES.SALE, null, 'cartEnter')) return false;
+      swallow(event);
+      if (event.repeat) return true;
+      if (inCart) {
+        requestFocusTarget(registry, POS_FOCUS_TARGETS.SEARCH);
+      } else {
+        shortcutAction(POS_SCOPES.SALE, null, 'cartEnter')();
+        requestFocusTarget(registry, POS_FOCUS_TARGETS.CART);
+      }
+      return true;
+    }
+    if (!inCart) return false;
+
+    const delta = CART_MOVE_KEYS[key];
+    if (delta) {
+      const move = shortcutAction(POS_SCOPES.SALE, null, 'cartMove');
+      if (!move) return false;
+      swallow(event);
+      move(delta);
+      return true;
+    }
+
+    const tender = key.length === 1 ? CART_TENDER_KEYS[key.toLowerCase()] : null;
+    if (tender) {
+      if (follows || !shortcutAction(POS_SCOPES.SALE, null, 'tender')) return false;
+      swallow(event);
+      if (event.repeat) return true;
+      holdSaleKey(event, 'tender', tender);
       return true;
     }
     return false;
+  };
+
+  /** Esc with the caret in the cart: back to the search. */
+  const handleCartEscape = (state, event) => {
+    if (state.scope !== POS_SCOPES.SALE || state.overlay || !cartZoneOf(event.target)) return false;
+    if (isEditableTarget(event.target)) return false;
+    if (!requestFocusTarget(registry, POS_FOCUS_TARGETS.SEARCH)) return false;
+    swallow(event);
+    return true;
   };
 
   // ── CHECKOUT / COMPLETE shortcuts ─────────────────────────────────────────────────────────
@@ -571,6 +629,7 @@ export function createPosKeyHandler({
     if (key === 'Escape') {
       cancelPending();
       cancelSaleSequences();
+      if (handleCartEscape(state, event)) return;
       handleEscape(state, event);
       return;
     }

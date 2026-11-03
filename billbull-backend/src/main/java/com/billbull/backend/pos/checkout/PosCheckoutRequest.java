@@ -142,6 +142,14 @@ public class PosCheckoutRequest {
     public void setCheckoutKey(String checkoutKey) { this.checkoutKey = checkoutKey; }
     public String getCustomerCode() { return customerCode; }
     public void setCustomerCode(String customerCode) { this.customerCode = customerCode; }
+
+    /**
+     * The price level the cashier explicitly chose for this sale, or null for the customer's
+     * default. Validated (exists, active) and resolved server-side on the session's branch.
+     */
+    private Long priceLevelId;
+    public Long getPriceLevelId() { return priceLevelId; }
+    public void setPriceLevelId(Long priceLevelId) { this.priceLevelId = priceLevelId; }
     public String getCustomerName() { return customerName; }
     public void setCustomerName(String customerName) { this.customerName = customerName; }
     public String getPaymentMode() { return paymentMode; }

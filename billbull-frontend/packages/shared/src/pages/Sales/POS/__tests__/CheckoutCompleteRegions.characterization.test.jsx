@@ -432,7 +432,7 @@ const summaryRegion = (root) => card(root).children[indicator(root) ? 3 : 2];
 const actionsRegion = (root) => card(root).children[indicator(root) ? 4 : 3];
 const shareOverlay = (root) => root.children[1] ?? null;
 const button = (name) => screen.getByRole('button', { name });
-const shareInput = () => within(screen.getByRole('dialog')).getByRole('textbox');
+const shareInput = () => within(screen.getByRole('dialog')).getAllByRole('textbox')[0];
 
 const HEADER_CLASS = 'bg-gradient-to-b from-[#F5C742] to-[#E5B532] px-6 pt-5 pb-4 text-center shrink-0';
 const AMOUNT_CLASS = 'bg-[#FFFBEB] border-b border-amber-100/50 px-6 py-4 text-center shrink-0';
@@ -756,7 +756,7 @@ describe('7. C8 ReceiptShareModal — placement and lifecycle inside the complet
     expect(screen.getByRole('dialog')).toBe(dialog);
     fireEvent.change(shareInput(), { target: { value: '  jane@shop.test  ' } });
     await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: /Send/ })); });
-    expect(next.mock.calls).toEqual([['jane@shop.test']]);
+    expect(next.mock.calls).toEqual([['jane@shop.test', { messageHtml: expect.stringContaining('Please find your receipt attached.') }]]);
     expect(props.handleReceiptShareSend).not.toHaveBeenCalled();
   });
 

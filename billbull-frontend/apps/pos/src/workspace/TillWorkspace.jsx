@@ -30,22 +30,22 @@ function TillRail() {
   const branchLabel = activeBranch?.code || activeBranch?.name || '';
 
   return (
-    <nav aria-label="Till" className="flex h-full w-16 flex-shrink-0 flex-col items-center justify-between bg-[#1C2838] py-4 text-white">
+    <nav aria-label="Till" className="flex h-full w-16 flex-shrink-0 flex-col items-center justify-between border-r border-[#E2E8F0] bg-white py-4 text-[#1E1E1E]">
       <div className="flex flex-col items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#F5C742] text-sm font-extrabold text-[#1C2838]" title="BillBull POS">BB</div>
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#F5C742] to-[#E5B732] text-sm font-extrabold text-[#1E1E1E] shadow-md shadow-[#F5C742]/30" title="BillBull POS">BB</div>
         {branchLabel && (
-          <div className="max-w-[56px] truncate rounded-md bg-white/10 px-1.5 py-1 text-center text-[10px] font-semibold uppercase tracking-wide"
+          <div className="max-w-[56px] truncate rounded-md border border-[#FDE6A9] bg-[#FFF8E7] px-1.5 py-1 text-center text-[10px] font-semibold uppercase tracking-wide text-[#8a6a10]"
             title={activeBranch?.name || branchLabel}>
             {branchLabel}
           </div>
         )}
       </div>
       <div className="flex flex-col items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-xs font-bold" title={fullName}>
+        <div className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-[#E2E8F0] bg-[#F5C742] text-xs font-bold text-[#1E1E1E]" title={fullName}>
           {initials(fullName)}
         </div>
         <button type="button" onClick={() => signOutOfTill()} title="Sign out" aria-label="Sign out"
-          className="flex h-10 w-10 items-center justify-center rounded-xl text-white/70 hover:bg-white/10 hover:text-white">
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#CBD5E1] text-[#334155] transition hover:border-[#F5C742] hover:bg-[#F5C742]/10 hover:text-[#1E1E1E]">
           <LogOut className="h-5 w-5" />
         </button>
       </div>

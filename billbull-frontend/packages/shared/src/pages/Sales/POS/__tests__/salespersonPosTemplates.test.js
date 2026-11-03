@@ -138,7 +138,7 @@ describe('scanner safety', () => {
 
 describe('state ownership', () => {
   it('all verification state comes from useSalesperson, none from POSSales', () => {
-    expect(POS_SALES).toContain('} = useSalesperson();');
+    expect(POS_SALES).toContain('} = useSalesperson({ activeSalesOrder });');
     // POSSales must declare no salesperson/verification state of its own — this is what keeps
     // the POSSalesArchitecture shape counters unchanged.
     expect(POS_SALES).not.toMatch(/^ {2}const \[verifiedSalesperson/m);

@@ -7,13 +7,17 @@ import { AlertCircle } from 'lucide-react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import TerminalUnavailableOverlay from '../features/session/TerminalUnavailableOverlay';
-import { resolveTerminalUnavailableConfig } from '../features/terminal/terminalUnavailable';
+import { REGISTER_NEW_TERMINAL_CONFIRM, resolveTerminalUnavailableConfig } from '../features/terminal/terminalUnavailable';
+import { confirmDialog } from '../../../../components/AppConfirmBridge';
 
 // Pinned verbatim from the POSSales.jsx R1 terminal-registration overlay before extraction.
 const SUBTITLE = 'This device cannot register a session until this is resolved';
 const CONTACT_ADMIN = 'Contact Administrator';
 const REGISTER_LABEL = 'Register as New Terminal';
-const CONFIRM_MESSAGE = 'This will assign a new independent terminal to this device.\n\nContinue?';
+const ORIGINAL_CONFIRM_MESSAGE = 'This will assign a new independent terminal to this device.\n\nContinue?';
+// POSSales now asks through confirmDialog (the in-app modal). With no AppConfirmBridge mounted
+// — as here — it falls back to window.confirm with the title and message joined.
+const CONFIRM_MESSAGE = 'Register as a new terminal?\n\nThis will assign a new independent terminal to this device.';
 
 const BACKDROP_CLASS = 'fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-2 sm:p-4';
 const PANEL_CLASS = 'bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-lg border border-slate-100 max-h-[95vh] overflow-y-auto';
@@ -61,19 +65,42 @@ const VARIANTS = [
     registerLabel: REGISTER_LABEL,
   }],
 ];
-// Anything that is not exactly "Terminal is {KNOWN_STATUS}" resolves to the fallback.
+// Anything that is not exactly "Terminal is {KNOWN_STATUS}" and is not a safe server message
+// resolves to the fallback copy.
 const FALLBACK_REASONS = [
-  ['an unrelated message', 'Terminal not found'],
-  ['an unknown status', 'Terminal is RETIRED'],
-  ['a lowercase status', 'Terminal is archived'],
-  ['a lowercase prefix', 'terminal is ARCHIVED'],
-  ['a trailing period', 'Terminal is ARCHIVED.'],
-  ['a leading space', ' Terminal is ARCHIVED'],
-  ['a trailing newline', 'Terminal is ARCHIVED\n'],
-  ['a two-word status', 'Terminal is ARCHIVED NOW'],
   ['true', true],
   ['a non-zero number', 403],
   ['an object', { status: 'ARCHIVED', message: 'Terminal is ARCHIVED' }],
+  ['whitespace only', '   '],
+  ['a Java exception', 'java.lang.NullPointerException: Cannot invoke "Branch.getId()"'],
+  ['a stack trace', 'Something failed\n\tat com.billbull.backend.pos.terminal.PosTerminalService.registerOrRefresh(PosTerminalService.java:67)'],
+  ['an SQL error', 'could not execute statement; SQL [n/a]; constraint [uk_pos_terminal_fp]'],
+  ['an HTML error page', '<html><body><h1>403 Forbidden</h1></body></html>'],
+  ['an over-long message', 'x'.repeat(201)],
+];
+// Any other short, user-facing server message is shown in place of the generic fallback text,
+// keeping the fallback title, hint and register-new button.
+const SERVER_MESSAGE_REASONS = [
+  ['an unrelated message', 'Terminal not found', 'Terminal not found'],
+  ['an unknown status', 'Terminal is RETIRED', 'Terminal is RETIRED'],
+  ['a lowercase status', 'Terminal is archived', 'Terminal is archived'],
+  ['a lowercase prefix', 'terminal is ARCHIVED', 'terminal is ARCHIVED'],
+  ['a trailing period', 'Terminal is ARCHIVED.', 'Terminal is ARCHIVED.'],
+  ['a leading space', ' Terminal is ARCHIVED', 'Terminal is ARCHIVED'],
+  ['a trailing newline', 'Terminal is ARCHIVED\n', 'Terminal is ARCHIVED'],
+  ['a two-word status', 'Terminal is ARCHIVED NOW', 'Terminal is ARCHIVED NOW'],
+  ['access denied', 'Access denied', 'Access denied'],
+];
+// The branch terminal cap (PosTerminalService.registerOrRefresh); the limit comes from the message.
+const limitExpected = (limit) => ({
+  title: 'Terminal Limit Reached',
+  message: `Branch terminal limit reached (limit: ${limit}). Archive an unused terminal or increase the branch terminal limit.`,
+  hint: 'Ask an administrator to archive an unused terminal or raise the limit in Console > Terminals & Counters, then reload this page.',
+  registerLabel: null,
+});
+const LIMIT_REASONS = [
+  ['limit (5)', 'Maximum number of terminals (5) reached for this branch.', limitExpected(5)],
+  ['limit (12)', 'Maximum number of terminals (12) reached for this branch.', limitExpected(12)],
 ];
 
 /**
@@ -143,8 +170,8 @@ function ExtractedTerminalUnavailableBlock({ terminalRegistrationError }) {
       {terminalRegistrationError && (
         <TerminalUnavailableOverlay
           reason={terminalRegistrationError}
-          onRegisterNew={() => {
-            if (window.confirm('This will assign a new independent terminal to this device.\n\nContinue?')) {
+          onRegisterNew={async () => {
+            if (await confirmDialog(REGISTER_NEW_TERMINAL_CONFIRM)) {
               localStorage.removeItem('billbull:pos:device_fingerprint');
               Object.keys(localStorage)
                 .filter(k => k.startsWith('billbull:pos:terminal_id'))
@@ -158,10 +185,11 @@ function ExtractedTerminalUnavailableBlock({ terminalRegistrationError }) {
   );
 }
 
-// Behavioural tests run against each POSSales-shaped block (same POSSales input).
+// Behavioural tests run against each POSSales-shaped block (same POSSales input). Only the
+// confirm wording differs: the original asked a bare window.confirm.
 const SUBJECTS = [
-  ['original R1 block', OriginalTerminalUnavailableBlock],
-  ['TerminalUnavailableOverlay wired like POSSales', ExtractedTerminalUnavailableBlock],
+  ['original R1 block', OriginalTerminalUnavailableBlock, ORIGINAL_CONFIRM_MESSAGE],
+  ['TerminalUnavailableOverlay wired like POSSales', ExtractedTerminalUnavailableBlock, CONFIRM_MESSAGE],
 ];
 
 const backdrop = (container) => container.firstChild;
@@ -214,7 +242,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-describe.each(SUBJECTS)('%s', (_label, Subject) => {
+describe.each(SUBJECTS)('%s', (_label, Subject, confirmMessage) => {
   describe('mounting (terminalRegistrationError guard)', () => {
     it.each([
       ['null', null],
@@ -257,6 +285,10 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
   describe.each([
     ...VARIANTS,
     ...FALLBACK_REASONS.map(([name, reason]) => [`fallback (${name})`, reason, FALLBACK]),
+    ...SERVER_MESSAGE_REASONS.map(([name, reason, shown]) => [
+      `server message (${name})`, reason, { ...FALLBACK, message: shown, showsReason: true },
+    ]),
+    ...LIMIT_REASONS.map(([name, reason, expected]) => [name, reason, expected]),
   ])('status %s', (_status, reason, expected) => {
     it('renders the exact heading and fixed subtitle', () => {
       const { container } = render(<Subject terminalRegistrationError={reason} />);
@@ -291,10 +323,14 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
       }
     });
 
-    it('never renders the raw terminalRegistrationError text', () => {
+    it('renders the raw reason only when it is a safe server message', () => {
       const { container } = render(<Subject terminalRegistrationError={reason} />);
-      if (typeof reason === 'string') {
-        expect(container.textContent).not.toContain(reason.trim());
+      if (typeof reason === 'string' && reason.trim()) {
+        if (expected.showsReason) {
+          expect(container.textContent).toContain(reason.trim());
+        } else {
+          expect(container.textContent).not.toContain(reason.trim());
+        }
       }
       expect(container.textContent).not.toContain('[object Object]');
       expect(container.textContent).not.toContain('403');
@@ -413,7 +449,7 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
       render(<Subject terminalRegistrationError={reason} />);
       await userEvent.click(screen.getByRole('button', { name: REGISTER_LABEL }));
       expect(confirmSpy).toHaveBeenCalledTimes(1);
-      expect(confirmSpy).toHaveBeenCalledWith(CONFIRM_MESSAGE);
+      expect(confirmSpy).toHaveBeenCalledWith(confirmMessage);
       expect(confirmSpy.mock.calls[0]).toHaveLength(1);
     });
 
@@ -543,6 +579,8 @@ describe('TerminalUnavailableOverlay DOM parity', () => {
     ['0', 0],
     ...VARIANTS.map(([status, reason]) => [status, reason]),
     ...FALLBACK_REASONS.map(([name, reason]) => [`fallback (${name})`, reason]),
+    ...SERVER_MESSAGE_REASONS.map(([name, reason]) => [`server message (${name})`, reason]),
+    ...LIMIT_REASONS.map(([name, reason]) => [name, reason]),
   ])('renders identical DOM to the pre-extraction block when terminalRegistrationError is %s', (_name, value) => {
     const original = renderedHtml(OriginalTerminalUnavailableBlock, { terminalRegistrationError: value });
     const extracted = renderedHtml(ExtractedTerminalUnavailableBlock, { terminalRegistrationError: value });
@@ -561,7 +599,8 @@ describe('POSSales wiring (TerminalUnavailableOverlay boundary)', () => {
   const POS_SALES = read('../../POSSales.jsx');
   const CHILD = read('../features/session/TerminalUnavailableOverlay.jsx');
   // As written in JSX source: the confirm message's `\n\n` is a literal escape sequence.
-  const CONFIRM_SOURCE = "window.confirm('This will assign a new independent terminal to this device.\\n\\nContinue?')";
+  // POSSales asks through the in-app confirm modal; both register-new handlers share one prompt.
+  const CONFIRM_SOURCE = 'await confirmDialog(REGISTER_NEW_TERMINAL_CONFIRM)';
 
   it('keeps the guard and the verbatim register-new handler in POSSales', () => {
     expect(POS_SALES).toContain(
@@ -569,7 +608,7 @@ describe('POSSales wiring (TerminalUnavailableOverlay boundary)', () => {
         '      {terminalRegistrationError && (',
         '        <TerminalUnavailableOverlay',
         '          reason={terminalRegistrationError}',
-        '          onRegisterNew={() => {',
+        '          onRegisterNew={async () => {',
         `            if (${CONFIRM_SOURCE}) {`,
         "              localStorage.removeItem('billbull:pos:device_fingerprint');",
         '              Object.keys(localStorage)',
@@ -601,7 +640,7 @@ describe('POSSales wiring (TerminalUnavailableOverlay boundary)', () => {
   it('leaves the duplicated handler in the terminal-handover overlay untouched', () => {
     expect(POS_SALES).toContain(
       [
-        '                  onClick={() => {',
+        '                  onClick={async () => {',
         `                    if (${CONFIRM_SOURCE}) {`,
         "                      localStorage.removeItem('billbull:pos:device_fingerprint');",
         '                      // Clear every branch-scoped terminal_id cached on this device, not just the',

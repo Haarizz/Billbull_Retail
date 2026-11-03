@@ -30,6 +30,9 @@ const ProductResultRow = ({ item, active, onSelect }) => {
   ]
     .filter(Boolean)
     .join(" · ");
+  const rackLine = meta.zone || meta.locator
+    ? `Zone: ${meta.zone || "-"} | Locator: ${meta.locator || "-"}`
+    : "";
 
   return (
     <button
@@ -75,6 +78,14 @@ const ProductResultRow = ({ item, active, onSelect }) => {
         {detailLine && (
           <span className="block truncate text-[11px] leading-snug text-slate-400">
             {detailLine}
+          </span>
+        )}
+        {rackLine && (
+          <span
+            className="block truncate text-[11px] leading-snug text-slate-500"
+            data-testid="product-rack-location"
+          >
+            {rackLine}
           </span>
         )}
         {(status || (!detailLine && meta.badge)) && (

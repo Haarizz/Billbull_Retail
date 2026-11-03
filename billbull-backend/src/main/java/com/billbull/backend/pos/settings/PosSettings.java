@@ -133,6 +133,14 @@ public class PosSettings extends BaseEntity {
     @Column(name = "layout_hide_items_panel")
     private Boolean layoutHideItemsPanel = false;
 
+    // Quick Checkout: Classic and Cart Focus show a tender rail (Cash / Card / Credit / Online /
+    // BNPL + Add-ons) in place of the Functions panel and the Checkout button. Off = the classic
+    // Functions panel with a Checkout button. No field initializer on purpose: a request that
+    // omits the field must deserialize to null (keep the saved value), not to a default that
+    // would switch it back. Null means "never set" and the till treats it as on.
+    @Column(name = "layout_quick_checkout")
+    private Boolean layoutQuickCheckout;
+
     // Comma-separated set of action button IDs that are hidden in the Cart Focus panel
     @Column(name = "layout_hidden_panel_buttons", length = 500)
     private String layoutHiddenPanelButtons = "";
@@ -144,6 +152,12 @@ public class PosSettings extends BaseEntity {
     // Walk-in customer code
     @Column(name = "walk_in_customer_code", length = 50)
     private String walkInCustomerCode = "WALK-IN";
+
+    /** Console > Behavior > Mandatory Customer. When true, a POS sale cannot be settled for the
+     *  walk-in customer — the cashier must select (or create) a real customer first. Enforced in
+     *  PosCheckoutController; the till's check at Checkout is only a courtesy. Defaults false. */
+    @Column(name = "require_customer")
+    private Boolean requireCustomer = false;
 
     // Auto-print receipt after payment
     @Column(name = "auto_print_receipt")
@@ -261,6 +275,20 @@ public class PosSettings extends BaseEntity {
      *  true  = supervisor authorization required (same flow as void/price-override). */
     @Column(name = "require_supervisor_for_day_close")
     private Boolean requireSupervisorForDayClose = false;
+
+    /** Console > Behavior > Closing Approval. When true, closing a POS session (the X-Report
+     *  close) only goes through once an administrator (ADMIN / BRANCH_ADMIN / SUPER_ADMIN) has
+     *  approved it with their own credentials — see {@code pos.auth.PosCloseApprovalService}.
+     *  An administrator who is themselves signed in approves implicitly. Off by default so
+     *  businesses that do not want the extra step are unaffected. */
+    @Column(name = "require_admin_approval_for_session_close")
+    private Boolean requireAdminApprovalForSessionClose = false;
+
+    /** Same as {@link #requireAdminApprovalForSessionClose}, for the Business Day Close
+     *  (Z-Report). Independent of {@link #requireSupervisorForDayClose}, which controls who may
+     *  <em>perform</em> the close; this controls whether an administrator must approve it. */
+    @Column(name = "require_admin_approval_for_day_close")
+    private Boolean requireAdminApprovalForDayClose = false;
 
     /** Who may use the POS Functions/Actions buttons — see {@link PosFunctionAccessMode}.
      *  Branch-wide and template-independent: Classic, Cart Focus and Compact all honour it,
@@ -398,6 +426,9 @@ public class PosSettings extends BaseEntity {
     public Boolean getLayoutHideItemsPanel() { return layoutHideItemsPanel; }
     public void setLayoutHideItemsPanel(Boolean layoutHideItemsPanel) { this.layoutHideItemsPanel = layoutHideItemsPanel; }
 
+    public Boolean getLayoutQuickCheckout() { return layoutQuickCheckout; }
+    public void setLayoutQuickCheckout(Boolean layoutQuickCheckout) { this.layoutQuickCheckout = layoutQuickCheckout; }
+
     public String getLayoutHiddenPanelButtons() { return layoutHiddenPanelButtons; }
     public void setLayoutHiddenPanelButtons(String layoutHiddenPanelButtons) { this.layoutHiddenPanelButtons = layoutHiddenPanelButtons; }
 
@@ -406,6 +437,9 @@ public class PosSettings extends BaseEntity {
 
     public String getWalkInCustomerCode() { return walkInCustomerCode; }
     public void setWalkInCustomerCode(String walkInCustomerCode) { this.walkInCustomerCode = walkInCustomerCode; }
+
+    public Boolean getRequireCustomer() { return requireCustomer; }
+    public void setRequireCustomer(Boolean requireCustomer) { this.requireCustomer = requireCustomer; }
 
     public Boolean getAutoPrintReceipt() { return autoPrintReceipt; }
     public void setAutoPrintReceipt(Boolean autoPrintReceipt) { this.autoPrintReceipt = autoPrintReceipt; }
@@ -477,6 +511,12 @@ public class PosSettings extends BaseEntity {
 
     public Boolean getRequireSupervisorForDayClose() { return requireSupervisorForDayClose; }
     public void setRequireSupervisorForDayClose(Boolean requireSupervisorForDayClose) { this.requireSupervisorForDayClose = requireSupervisorForDayClose; }
+
+    public Boolean getRequireAdminApprovalForSessionClose() { return requireAdminApprovalForSessionClose; }
+    public void setRequireAdminApprovalForSessionClose(Boolean v) { this.requireAdminApprovalForSessionClose = v; }
+
+    public Boolean getRequireAdminApprovalForDayClose() { return requireAdminApprovalForDayClose; }
+    public void setRequireAdminApprovalForDayClose(Boolean v) { this.requireAdminApprovalForDayClose = v; }
 
     public String getPosFunctionAccessMode() { return posFunctionAccessMode; }
     public void setPosFunctionAccessMode(String posFunctionAccessMode) { this.posFunctionAccessMode = posFunctionAccessMode; }

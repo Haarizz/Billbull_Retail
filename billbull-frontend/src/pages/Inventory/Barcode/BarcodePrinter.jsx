@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import JsBarcode from 'jsbarcode';
 import {
     Search, Printer, X, Plus, Minus, Trash2,
@@ -7,11 +8,11 @@ import {
     ChevronLeft, ChevronRight, RefreshCw, Send, Box,
     Calendar, Filter, Loader, Save, SlidersHorizontal
 } from 'lucide-react';
-import { searchExactProducts } from "@billbull/shared/api/productsApi";
+import { searchExactProducts, getProductsByClassification } from "@billbull/shared/api/productsApi";
 import { getLpos } from "../../../api/lpoApi";
 import { getPostedPurchaseInvoices } from '../../../api/purchaseInvoiceApi';
 import { getVendors } from "../../../api/vendorsApi";
-import { getBarcodeTemplates, createBarcodeTemplate, updateBarcodeTemplate, deleteBarcodeTemplate } from '../../../api/barcodeTemplateApi';
+import { getBarcodeTemplates, createBarcodeTemplate, updateBarcodeTemplate, deleteBarcodeTemplate, getLabelPriceSources } from '../../../api/barcodeTemplateApi';
 import { getStockTakeSessions, getStockTakeSession } from '../../../api/stockTakeApi';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCompany } from "@billbull/shared/context/CompanyContext";
@@ -23,7 +24,29 @@ import {
     UAE_DIRHAM_SYMBOL_IMAGE
 } from "@billbull/shared/utils/countryCurrencyOptions";
 import { buildZplBatch } from "../../../utils/zebraZpl";
-import { resolveLabelPrinter, sendZplToLabelPrinter, LabelPrinterError } from "../../../utils/labelPrinterTransport";
+import { resolveLabelPrinter, sendZplToLabelPrinter, listLabelPrinters, LabelPrinterError } from "../../../utils/labelPrinterTransport";
+import QuickBarcodePrintDialog from "./QuickBarcodePrintDialog";
+import BarcodePrintSettingsDialog from "./BarcodePrintSettingsDialog";
+import {
+    PRINT_METHODS,
+    loadBarcodePrintSettings,
+    saveBarcodePrintSettings,
+    preferredPrinterFor,
+} from "./barcodePrintSettings";
+import LabelPricePanel from "./LabelPricePanel";
+import useLabelPrices from "./useLabelPrices";
+import {
+    hasLabelPrice,
+    labelPriceDisplay,
+    labelsWithoutPrice,
+    missingPriceWarning,
+    templatePriceSource,
+    withPriceSource,
+    zplPriceField,
+} from "./labelPricing";
+
+// The editor's sample label shows this price; it is never a product's price.
+const SAMPLE_LABEL_PRICE = { available: true, price: 99, sourceLabel: 'Sample' };
 
 const TEMPLATES = [
     {
@@ -401,9 +424,14 @@ const renderBarcodesInRoot = (root, options, template) => {
     if (!root?.querySelectorAll) return;
     const { widthMm, heightMm } = getBarcodeTargetBoxMm(template);
 
+    // A container marked data-bb-own-barcodes (the Quick Print preview) draws its barcodes with
+    // its own template; a page-wide pass must not redraw them with the page's template.
+    const rootOwnsBarcodes = typeof root.matches === 'function' && root.matches('[data-bb-own-barcodes]');
+
     root.querySelectorAll('svg[data-barcode]').forEach((svg) => {
         const barcodeValue = svg.getAttribute('data-barcode');
         if (!barcodeValue) return;
+        if (!rootOwnsBarcodes && svg.closest?.('[data-bb-own-barcodes]')) return;
 
         try {
             JsBarcode(svg, barcodeValue, options);
@@ -427,6 +455,7 @@ const mapAggregateToProduct = (d) => ({
     ...d.inventory,
     packings: d.inventory?.packings || [],
     image: d.primaryImage,
+    stock: d.stock,
     id: d.product?.id,
     isActive: d.product?.isActive,
     createdAt: d.product?.createdAt,
@@ -439,16 +468,78 @@ const BarcodePrinter = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const { company } = useCompany();
-    const { activeBranchId, activeBranch } = useBranch();
+    const { activeBranchId, activeBranch, branches, canSwitchBranches } = useBranch();
     const currencyCode = company?.currency || 'AED';
     const currencyLabel = resolveCurrencyDisplayCode(company || {});
+
+    // Label prices (Pricing Phase 4): resolved on the server for the template's price source —
+    // or this run's override — the branch, an optional customer and an optional pricing quantity.
+    const [priceSources, setPriceSources] = useState([]);
+    const [priceSourcesError, setPriceSourcesError] = useState(null);
+    // branchId undefined = follow the active branch.
+    const [priceRun, setPriceRun] = useState({ sourceOverride: null, branchId: undefined, customer: null, pricingQuantity: '' });
+    const labelPrices = useLabelPrices();
+
+    useEffect(() => {
+        let cancelled = false;
+        getLabelPriceSources()
+            .then((list) => { if (!cancelled) { setPriceSources(list); setPriceSourcesError(null); } })
+            .catch((err) => { if (!cancelled) setPriceSourcesError(`Price sources could not be loaded: ${err?.message || err}`); });
+        return () => { cancelled = true; };
+    }, []);
+
+    useEffect(() => {
+        setPriceRun((prev) => (prev.branchId === undefined ? prev : { ...prev, branchId: undefined }));
+    }, [activeBranchId]);
+
+    const labelPriceParamsFor = (t) => ({
+        source: priceRun.sourceOverride || templatePriceSource(t),
+        branchId: priceRun.branchId !== undefined
+            ? priceRun.branchId
+            : (activeBranchId != null && activeBranchId !== 'ALL' && activeBranchId !== '' ? Number(activeBranchId) : null),
+        customerId: priceRun.customer?.id ?? null,
+        pricingQuantity: priceRun.pricingQuantity,
+    });
+
+    /** The resolved price for one queue entry on template `t` (undefined while loading). */
+    const labelPriceFor = (t, item) => (item?.product?.id === 'sample'
+        ? SAMPLE_LABEL_PRICE
+        : labelPrices.lookup(item, labelPriceParamsFor(t)));
+
+    /**
+     * Resolves every label's price before printing — the same cached values the preview showed —
+     * and asks before printing labels that have no price. Returns resultFor(item), or throws when
+     * the user cancels. Nothing is substituted for a missing price.
+     */
+    const resolvePricesForPrint = async (items, t) => {
+        const { resultFor, meta } = await labelPrices.ensure(items, labelPriceParamsFor(t));
+        const priceOn = !t.fields || typeof t.fields !== 'object' || t.fields.price;
+        if (priceOn) {
+            const missing = labelsWithoutPrice(items, resultFor);
+            if (missing.length > 0) {
+                const text = meta?.sourceError
+                    ? `${meta.sourceError}\n\nPrint the labels without a price?`
+                    : missingPriceWarning(missing, meta?.sourceLabel);
+                if (!window.confirm(text)) throw new Error('Printing cancelled: some labels have no price.');
+            }
+        }
+        return resultFor;
+    };
     const [products, setProducts] = useState([]);
     const [filteredProducts, setFilteredProducts] = useState([]);
     const [cart, setCart] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [isSearchFocused, setIsSearchFocused] = useState(false);
     const [searchLoading, setSearchLoading] = useState(false);
-    const [selectedTemplate, setSelectedTemplate] = useState('dual_standard_70x50');
+    const [printSettings, setPrintSettings] = useState(loadBarcodePrintSettings);
+    const [selectedTemplate, setSelectedTemplate] = useState(() => printSettings.defaultTemplateId || 'dual_standard_70x50');
+    const [showQuickPrint, setShowQuickPrint] = useState(false);
+    const [showPrintSettings, setShowPrintSettings] = useState(false);
+    const [labelPrinters, setLabelPrinters] = useState([]);
+    const [labelPrintersLoading, setLabelPrintersLoading] = useState(false);
+    const [labelPrintersError, setLabelPrintersError] = useState(null);
+    // { items, template } rendered off-screen so Quick Print can use the browser print path.
+    const [quickPrintJob, setQuickPrintJob] = useState(null);
     const [previewPage, setPreviewPage] = useState(1);
     const [loading, setLoading] = useState(true);
 
@@ -562,7 +653,9 @@ const BarcodePrinter = () => {
 
             setTemplates(nextTemplates);
             setSelectedTemplate(prev => {
-                if (nextTemplates.some(t => t.id === prev)) return prev;
+                // Saved settings hold ids as strings; server template ids may be numbers.
+                const exact = nextTemplates.find(t => String(t.id) === String(prev));
+                if (exact) return exact.id;
                 const persistedSystemMatch = nextTemplates.find(t => t.systemKey === prev);
                 return persistedSystemMatch?.id ?? nextTemplates[0]?.id ?? prev;
             });
@@ -588,10 +681,10 @@ const BarcodePrinter = () => {
     const saveNewTemplate = async () => {
         try {
             const contentScale = getTemplateContentScale(editingTemplate);
-            const fieldsForSave = {
+            const fieldsForSave = withPriceSource({
                 ...normalizeTemplateFields(editingTemplate.fields),
                 [CONTENT_SCALE_FIELD]: contentScale
-            };
+            }, templatePriceSource(editingTemplate));
 
             // Send only fields the server cares about — drop BaseEntity audit fields
             // (createdAt/updatedAt/createdBy/updatedBy/active) so Jackson doesn't trip on them.
@@ -798,46 +891,65 @@ const BarcodePrinter = () => {
         };
     };
 
-    const addToCart = (product, qty = 1, options = {}) => {
+    const cartKeyOf = (item) => item.cartKey || [
+        item.product?.id || item.product?.code || item.product?.name || 'item',
+        item.barcode || 'no-product-barcode',
+        item.batchBarcode || item.batchNumber || 'no-batch-barcode'
+    ].join(':');
+
+    // One print-queue entry. Shared by the queue and Quick Print so both label the same way.
+    const makeCartEntry = (product, qty = 1, options = {}) => {
         const batchBarcode = options.batchBarcode || options.batchNumber || null;
         const targetBarcode = options.barcode || getBarcodeValue(product) || null;
+        if (!targetBarcode && !batchBarcode) return null;
 
-        if (!targetBarcode && !batchBarcode) return false;
+        const cartKey = options.cartKey || [
+            product?.id || product?.code || product?.name || 'item',
+            targetBarcode || 'no-product-barcode',
+            batchBarcode || 'no-batch-barcode'
+        ].join(':');
+        const matchedPacking = product.packings?.find(p => p.barcode === targetBarcode);
+        const resolvedUnit = options.unit || matchedPacking?.unit?.name || matchedPacking?.unitName || null;
+
+        return {
+            cartKey,
+            product,
+            qty,
+            barcode: targetBarcode,
+            productBarcode: targetBarcode,
+            unit: resolvedUnit, // Store unit name for display
+            batchNumber: options.batchNumber || null,
+            batchBarcode,
+            expiryDate: options.expiryDate || null,
+            batchEnabled: options.batchEnabled ?? product.isBatch ?? product.batchEnabled ?? product.batchExpiryControlled ?? false,
+            expiryEnabled: options.expiryEnabled ?? product.expiryEnabled ?? product.batchExpiryControlled ?? product.isBatch ?? false
+        };
+    };
+
+    const addToCart = (product, qty = 1, options = {}) => {
+        const entry = makeCartEntry(product, qty, options);
+        if (!entry) return false;
 
         setCart(prev => {
-            const cartKey = options.cartKey || [
-                product?.id || product?.code || product?.name || 'item',
-                targetBarcode || 'no-product-barcode',
-                batchBarcode || 'no-batch-barcode'
-            ].join(':');
-            const existing = prev.find(item => (item.cartKey || [
-                item.product?.id || item.product?.code || item.product?.name || 'item',
-                item.barcode || 'no-product-barcode',
-                item.batchBarcode || item.batchNumber || 'no-batch-barcode'
-            ].join(':')) === cartKey);
-
-            if (existing) return prev; // already added
-
-            const matchedPacking = product.packings?.find(p => p.barcode === targetBarcode);
-            const resolvedUnit = options.unit || matchedPacking?.unit?.name || matchedPacking?.unitName || null;
-
-            return [...prev, {
-                cartKey,
-                product,
-                qty,
-                barcode: targetBarcode,
-                productBarcode: targetBarcode,
-                unit: resolvedUnit, // Store unit name for display
-                batchNumber: options.batchNumber || null,
-                batchBarcode,
-                expiryDate: options.expiryDate || null,
-                batchEnabled: options.batchEnabled ?? product.isBatch ?? product.batchEnabled ?? product.batchExpiryControlled ?? false,
-                expiryEnabled: options.expiryEnabled ?? product.expiryEnabled ?? product.batchExpiryControlled ?? product.isBatch ?? false
-            }];
+            if (prev.some(item => cartKeyOf(item) === entry.cartKey)) return prev; // already added
+            return [...prev, entry];
         });
         setSearchTerm('');
         setIsSearchFocused(false);
         return true;
+    };
+
+    // Quick Print → "Add to Queue": an item already queued gets the extra labels added on.
+    const addEntriesToCart = (entries) => {
+        setCart(prev => {
+            const next = [...prev];
+            entries.filter(Boolean).forEach(entry => {
+                const idx = next.findIndex(item => cartKeyOf(item) === entry.cartKey);
+                if (idx >= 0) next[idx] = { ...next[idx], qty: (next[idx].qty || 0) + (entry.qty || 0) };
+                else next.push(entry);
+            });
+            return next;
+        });
     };
 
     const openStockTakeModal = async () => {
@@ -975,13 +1087,13 @@ const BarcodePrinter = () => {
             po.items.forEach((poItem, itemIndex) => {
                 const batches = getPurchaseItemBatches(poItem);
                 const fetchedProduct = fetchedProducts.find(p => p.code === poItem.itemCode);
+                // No price here: label prices are resolved on the server from the selling-price
+                // source. The purchase line's unit cost is never a selling price.
                 const fallbackProduct = {
                     id: `purchase-${po.id || po.invoiceNumber || 'invoice'}-${poItem.id || poItem.itemCode || itemIndex}`,
                     code: poItem.itemCode,
                     name: poItem.itemName || poItem.productName || poItem.itemCode || 'Purchase Item',
                     sku: poItem.itemCode,
-                    price: poItem.unitCost || 0,
-                    retailPrice: poItem.unitCost || 0,
                     image: poItem.image,
                     barcode: poItem.barcode || null,
                     packings: poItem.barcode ? [{ isSale: true, barcode: poItem.barcode, unitName: poItem.uom }] : [],
@@ -1008,8 +1120,6 @@ const BarcodePrinter = () => {
 
                 const productWithPrice = {
                     ...product,
-                    price: product.price || poItem.unitCost || 0,
-                    retailPrice: product.retailPrice || product.price || poItem.unitCost || 0,
                     sku: product.sku || poItem.itemCode,
                     isBatch: product.isBatch || product.batchEnabled || poItem.batchEnabled || batches.length > 0,
                     batchEnabled: product.batchEnabled || product.isBatch || poItem.batchEnabled || batches.length > 0,
@@ -1115,18 +1225,26 @@ const BarcodePrinter = () => {
     const handlePrintZebra = async () => {
         const t = templates.find(temp => temp.id === selectedTemplate) || editingTemplate;
         if (!t || cart.length === 0) return;
+        try {
+            await printItemsToZebra(cart, t, preferredPrinterFor(printSettings, activeBranchId));
+        } catch (err) {
+            if (!(err instanceof LabelPrinterError)) console.error(err);
+            alert(err instanceof LabelPrinterError ? err.message : `Could not send to Zebra.\n\n${err.message}`);
+        }
+    };
 
+    /**
+     * ZPL for `items` (queue entries, qty = labels each) on template `t`, sent to the branch
+     * label printer — or `preferredPrinterId` when that is still a valid choice. Throws
+     * LabelPrinterError for setup problems and the transport's error for send failures.
+     */
+    const printItemsToZebra = async (items, t, preferredPrinterId = null) => {
         // Printer resolution and the branch-safety rule live in labelPrinterTransport, shared
         // with HR's employee ID barcodes. "All Branches" never guesses a printer.
         const branchId = (activeBranchId != null && activeBranchId !== 'ALL') ? Number(activeBranchId) : null;
         const branchLabel = activeBranch?.name || 'this branch';
-        let resolvedPrinter;
-        try {
-            resolvedPrinter = await resolveLabelPrinter({ branchId, branchLabel });
-        } catch (err) {
-            if (err instanceof LabelPrinterError) { alert(err.message); return; }
-            throw err;
-        }
+        const resolvedPrinter = await resolveLabelPrinter({ branchId, branchLabel, preferredPrinterId });
+        const priceResultFor = await resolvePricesForPrint(items, t);
 
         const companyName = company?.companyName || '';
         const isEnabled = (field) => !t.fields || typeof t.fields !== 'object' || t.fields[field];
@@ -1140,7 +1258,7 @@ const BarcodePrinter = () => {
         const UNIT_SUFFIX_RE = /^(.*)-(\d+)$/;
         const expanded = [];
         const seenUnitKeys = new Set();
-        cart.forEach(item => {
+        items.forEach(item => {
             const batchKey = item.batchBarcode || item.batchNumber || '';
             if (UNIT_SUFFIX_RE.test(batchKey)) {
                 if (seenUnitKeys.has(batchKey)) return;
@@ -1170,9 +1288,11 @@ const BarcodePrinter = () => {
             const batchBarcode = (isEnabled('batchNumber') && isBatchTrackingEnabled(item))
                 ? (getBatchBarcodeValue(item) || '')
                 : '';
-            const priceVal = isEnabled('price') && item?.product?.price != null
-                ? `${resolveCurrencyDisplayCode(company || {})} ${formatCurrencyAmount(item.product.price, 2)}`
-                : '';
+            // Same resolved value the HTML label renders (labelPriceDisplay).
+            const priceField = zplPriceField(priceResultFor(item), {
+                enabled: isEnabled('price'),
+                currencyCode: resolveCurrencyDisplayCode(company || {}),
+            });
             return {
                 labelWidthMm: Number(t.width) || 100,
                 labelHeightMm: Number(t.height) || 75,
@@ -1184,30 +1304,42 @@ const BarcodePrinter = () => {
                     { type: 'barcode', id: 'productBarcode', enabled: true, value: productBarcode || '' },
                     { type: 'barcode', id: 'batchBarcode', enabled: true, value: batchBarcode !== productBarcode ? (batchBarcode || '') : '' },
                     { type: 'text', id: 'expiry', enabled: !!(isEnabled('expiryDate') && isExpiryTrackingEnabled(item)), value: item.expiryDate ? `Exp: ${item.expiryDate}` : '' },
-                    { type: 'text', id: 'price', enabled: isEnabled('price'), value: priceVal || '' }
+                    priceField
                 ]
             };
         });
 
-        try {
-            const zpl = buildZplBatch(labels);
-            const sent = await sendZplToLabelPrinter(resolvedPrinter, zpl, {
-                title: 'BillBull Barcode Labels',
-            });
-            console.info(`Sent ZPL via ${sent.transport} to`, sent.target);
-        } catch (err) {
-            console.error(err);
-            alert(`Could not send to Zebra.
+        const zpl = buildZplBatch(labels);
+        const sent = await sendZplToLabelPrinter(resolvedPrinter, zpl, {
+            title: 'BillBull Barcode Labels',
+        });
+        console.info(`Sent ZPL via ${sent.transport} to`, sent.target);
+        return sent;
+    };
 
-${err.message}`);
+    const handlePrint = async () => {
+        const t = templates.find(temp => temp.id === selectedTemplate) || editingTemplate;
+        if (!t || cart.length === 0) return;
+        try {
+            await printItemsViaBrowser(cart, t);
+        } catch (err) {
+            alert(err?.message || 'Printing failed.');
         }
     };
 
-    const handlePrint = () => {
-        const printContent = document.getElementById('print-area');
-        const t = templates.find(temp => temp.id === selectedTemplate) || editingTemplate;
-        if (!printContent || !t) return;
+    // Browser print (queue and Quick Print): resolve the label prices, render the labels into the
+    // off-screen area synchronously, then hand that markup to the iframe print path.
+    const printItemsViaBrowser = async (items, t) => {
+        const priceResultFor = await resolvePricesForPrint(items, t);
+        flushSync(() => setQuickPrintJob({ items, template: t, priceResultFor }));
+        const area = document.getElementById('quick-print-area');
+        const html = area?.innerHTML || '';
+        setQuickPrintJob(null);
+        if (!html.trim()) throw new Error('Nothing to print.');
+        printHtmlViaBrowser(html, t);
+    };
 
+    const printHtmlViaBrowser = (labelsHtml, t) => {
         const metrics = getTemplateMetrics(t);
         const iframe = document.createElement('iframe');
         Object.assign(iframe.style, { position: 'fixed', right: '0', bottom: '0', width: '0', height: '0', border: '0' });
@@ -1296,7 +1428,7 @@ ${err.message}`);
 
         doc.open();
         doc.write('<html><head><title> </title>' + styles + '</head><body>');
-        doc.write(printContent.innerHTML);
+        doc.write(labelsHtml);
         doc.write('</body></html>');
         doc.close();
 
@@ -1315,10 +1447,17 @@ ${err.message}`);
         }, 500);
     };
 
-    const renderLabels = (isPreview = false, templateOverride = null, itemsOverride = null) => {
+    /**
+     * @param priceResultForOverride for printing: the prices resolved just before the print, so the
+     *        printed labels carry exactly the values checked; otherwise the live (cached) lookup
+     */
+    const renderLabels = (isPreview = false, templateOverride = null, itemsOverride = null, priceResultForOverride = null) => {
         const t = templateOverride || templates.find(temp => temp.id === selectedTemplate);
         if (!t) return null;
         const companyName = company?.companyName || '';
+        const priceResultFor = priceResultForOverride
+            ? (item) => (item?.product?.id === 'sample' ? SAMPLE_LABEL_PRICE : priceResultForOverride(item))
+            : (item) => labelPriceFor(t, item);
 
         const isEnabled = (field) => !t.fields || typeof t.fields !== 'object' || t.fields[field];
 
@@ -1377,6 +1516,9 @@ ${err.message}`);
             const showBatchBarcode = showLinearBarcode && showBatchDetails && batchBarcodeValue !== productBarcodeValue;
             const showExpiryDate = isEnabled('expiryDate') && isExpiryTrackingEnabled(item) && !!item.expiryDate;
             const productBrandName = getProductBrandName(item.product);
+            const priceDisplay = isEnabled('price')
+                ? labelPriceDisplay(priceResultFor(item), { currencyCode: currencyLabel })
+                : null;
 
             return (
                 <div
@@ -1418,7 +1560,7 @@ ${err.message}`);
                             src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(JSON.stringify({
                                 id: item.product.id,
                                 name: item.product.name,
-                                price: item.product.retailPrice || item.product.price || '0.00',
+                                ...(priceDisplay?.status === 'ok' ? { price: priceDisplay.amount } : {}),
                                 barcode: productBarcodeValue,
                                 sku: item.product.sku || item.product.code,
                                 company: item.product.company || companyName
@@ -1461,13 +1603,20 @@ ${err.message}`);
                     <div className="label-unit" style={{ fontSize: codeFontSize, marginTop: '1px', opacity: 0.8 }}>{item.unit || item.product?.unit || item.product?.unitName}</div>
                 )}
 
-                {isEnabled('price') && (
-                    <div className="label-price" style={{ fontSize: priceFontSize, marginTop: priceMarginTop }}>
-                        <CurrencyAmount
-                            value={item.product.retailPrice || item.product.price || '0.00'}
-                            currencyCode={currencyCode}
-                            currencyLabel={currencyLabel}
-                        />
+                {priceDisplay?.status === 'ok' && (
+                    <div className="label-price" data-label-price={priceDisplay.amount} style={{ fontSize: priceFontSize, marginTop: priceMarginTop }}>
+                        <CurrencySymbol currencyCode={currencyCode} currencyLabel={currencyLabel} /> {priceDisplay.amount}
+                    </div>
+                )}
+                {/* Screen preview only: a printed label leaves a missing price blank. */}
+                {isPreview && priceDisplay && priceDisplay.status !== 'ok' && (
+                    <div
+                        className="label-price"
+                        data-label-price-status={priceDisplay.status}
+                        title={priceDisplay.message}
+                        style={{ fontSize: codeFontSize, marginTop: priceMarginTop, color: priceDisplay.status === 'pending' ? '#64748b' : '#dc2626' }}
+                    >
+                        {priceDisplay.status === 'pending' ? 'Loading price…' : 'Price unavailable'}
                     </div>
                 )}
             </div>
@@ -1522,14 +1671,94 @@ ${err.message}`);
         );
     };
 
+    const currentTemplate = templates.find(temp => temp.id === selectedTemplate) || null;
+    const queuePriceSummary = (() => {
+        if (!currentTemplate) return null;
+        const summary = { total: cart.length, priced: 0, missing: 0, pending: 0 };
+        cart.forEach((item) => {
+            const r = labelPriceFor(currentTemplate, item);
+            if (r === undefined) summary.pending += 1;
+            else if (hasLabelPrice(r)) summary.priced += 1;
+            else summary.missing += 1;
+        });
+        return summary;
+    })();
+
+    // ---------- Quick Print + Print Settings ----------
+
+    const branchSelected = activeBranchId != null && activeBranchId !== 'ALL' && activeBranchId !== '';
+
+    const loadLabelPrinters = useCallback(async () => {
+        if (!branchSelected) {
+            setLabelPrinters([]);
+            setLabelPrintersError(null);
+            return;
+        }
+        setLabelPrintersLoading(true);
+        setLabelPrintersError(null);
+        try {
+            setLabelPrinters(await listLabelPrinters({ branchId: activeBranchId }));
+        } catch (err) {
+            setLabelPrinters([]);
+            setLabelPrintersError(`Could not load label printers: ${err?.message || err}`);
+        } finally {
+            setLabelPrintersLoading(false);
+        }
+    }, [activeBranchId, branchSelected]);
+
+    useEffect(() => {
+        if (showQuickPrint || showPrintSettings) loadLabelPrinters();
+    }, [showQuickPrint, showPrintSettings, loadLabelPrinters]);
+
+    const quickSearchProducts = useCallback(async (term) => {
+        const data = await searchExactProducts(term);
+        return (data || []).map(mapAggregateToProduct)
+            .filter(p => p.packings?.some(pkg => pkg.barcode && String(pkg.barcode).trim() !== ''));
+    }, []);
+
+    const quickLoadByClassification = useCallback(async (filters) => {
+        const data = await getProductsByClassification(filters);
+        return {
+            items: (data?.content || []).map(mapAggregateToProduct),
+            total: Number(data?.totalElements) || 0,
+        };
+    }, []);
+
+    const quickPrint = async (entries, t, { method, printerId }) => {
+        const items = entries.filter(Boolean);
+        if (!items.length) throw new Error('Nothing to print.');
+        if (method === PRINT_METHODS.BROWSER) {
+            await printItemsViaBrowser(items, t);
+            return;
+        }
+        await printItemsToZebra(items, t, printerId);
+    };
+
+    const savePrintSettings = (next) => {
+        const saved = saveBarcodePrintSettings(next);
+        setPrintSettings(saved);
+        if (saved.defaultTemplateId) {
+            const match = templates.find(t => String(t.id) === String(saved.defaultTemplateId));
+            if (match) setSelectedTemplate(match.id);
+        }
+        setShowPrintSettings(false);
+    };
+
+    const quickPrintInitialTemplateId = (() => {
+        const wanted = printSettings.defaultTemplateId ?? selectedTemplate;
+        const match = templates.find(t => String(t.id) === String(wanted))
+            || templates.find(t => String(t.id) === String(selectedTemplate));
+        return match ? String(match.id) : (templates[0] ? String(templates[0].id) : '');
+    })();
+
     return (
         <div
             className="flex flex-col h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden"
             data-bb-skip-aed-symbol="true"
         >
             {/* Header */}
-            <div className="bg-white border-b border-slate-200 px-4 lg:px-6 py-4 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 lg:gap-0 shrink-0">
-                <div>
+            <div className="bg-white border-b border-slate-200 px-3 md:px-4 lg:px-6 py-3 md:py-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 md:gap-4 shrink-0">
+                <div className="shrink-0">
                     <div className="flex items-center gap-2 text-xs text-slate-500 mb-1">
                         <Link to="/inventory/products" className="hover:text-[#F5C742]">Inventory & Registries</Link>
                         <span>&gt;</span>
@@ -1539,27 +1768,39 @@ ${err.message}`);
                         <div className="bg-[#F5C742]/20 p-1.5 rounded-lg text-amber-900">
                             <Barcode size={20} />
                         </div>
-                        <h1 className="text-xl font-bold text-slate-900">Barcode Print & Design</h1>
+                        <h1 className="text-lg md:text-xl font-bold text-slate-900">Barcode Print & Design</h1>
                     </div>
                     <p className="text-xs text-slate-500 mt-1 ml-11">Design and print custom barcode labels for inventory items</p>
                 </div>
-                <div className="flex gap-3 flex-wrap w-full lg:w-auto">
+                <div className="flex gap-2 flex-wrap items-center w-full md:w-auto md:justify-end">
+                    <button
+                        onClick={() => setShowQuickPrint(true)}
+                        className="px-2.5 md:px-3 lg:px-4 py-1.5 md:py-2 border border-emerald-500 text-emerald-700 rounded-lg text-xs md:text-sm font-medium hover:bg-emerald-50 flex items-center gap-1.5 whitespace-nowrap"
+                    >
+                        <Printer size={16} /> Quick Barcode Print
+                    </button>
                     <button
                         onClick={handleCreateNew}
-                        className="px-4 py-2 border border-slate-200 rounded-lg text-sm font-medium hover:bg-slate-50 flex items-center gap-2"
+                        className="px-2.5 md:px-3 lg:px-4 py-1.5 md:py-2 border border-slate-200 rounded-lg text-xs md:text-sm font-medium hover:bg-slate-50 flex items-center gap-1.5 whitespace-nowrap"
                     >
                         <Plus size={16} /> New Template
                     </button>
                     <button
                         onClick={() => setShowTemplateManager(true)}
-                        className="px-4 py-2 border border-slate-200 rounded-lg text-sm font-medium hover:bg-slate-50 flex items-center gap-2"
+                        className="px-2.5 md:px-3 lg:px-4 py-1.5 md:py-2 border border-slate-200 rounded-lg text-xs md:text-sm font-medium hover:bg-slate-50 flex items-center gap-1.5 whitespace-nowrap"
                     >
                         <Layout size={16} /> Manage Templates
                     </button>
                     <button
+                        onClick={() => setShowPrintSettings(true)}
+                        className="px-2.5 md:px-3 lg:px-4 py-1.5 md:py-2 border border-blue-500 text-blue-700 rounded-lg text-xs md:text-sm font-medium hover:bg-blue-50 flex items-center gap-1.5 whitespace-nowrap"
+                    >
+                        <SlidersHorizontal size={16} /> Print Settings
+                    </button>
+                    <button
                         onClick={handlePrint}
                         disabled={cart.length === 0}
-                        className="px-4 py-2 bg-[#F5C742]/20 text-amber-900 border border-amber-200 rounded-lg text-sm font-medium hover:bg-amber-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="px-2.5 md:px-3 lg:px-4 py-1.5 md:py-2 bg-[#F5C742]/20 text-amber-900 border border-amber-200 rounded-lg text-xs md:text-sm font-medium hover:bg-amber-200 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                     >
                         Preview ({cart.reduce((a, c) => a + c.qty, 0)} Labels)
                     </button>
@@ -1567,7 +1808,7 @@ ${err.message}`);
                         onClick={handlePrintZebra}
                         disabled={cart.length === 0}
                         title="Send ZPL directly to the Zebra printer via Browser Print"
-                        className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="px-2.5 md:px-3 lg:px-4 py-1.5 md:py-2 bg-slate-900 text-white rounded-lg text-xs md:text-sm font-medium hover:bg-slate-800 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                     >
                         <Printer size={16} /> Print to Zebra
                     </button>
@@ -1753,6 +1994,21 @@ ${err.message}`);
                                 </div>
                             </div>
 
+                            <LabelPricePanel
+                                sources={priceSources}
+                                sourcesError={priceSourcesError}
+                                templateName={currentTemplate?.name}
+                                templateSource={templatePriceSource(currentTemplate)}
+                                value={priceRun}
+                                onChange={setPriceRun}
+                                branches={branches || []}
+                                canSwitchBranches={Boolean(canSwitchBranches)}
+                                activeBranchName={activeBranch?.name}
+                                meta={currentTemplate ? labelPrices.metaFor(labelPriceParamsFor(currentTemplate)) : null}
+                                summary={queuePriceSummary}
+                                onRefresh={labelPrices.refresh}
+                            />
+
                             <div className="overflow-y-auto custom-scrollbar bg-slate-50 rounded-lg border border-slate-200 p-2" style={{ minHeight: '320px', maxHeight: '480px' }}>
                                 {cart.length === 0 ? (
                                     <div className="h-full flex flex-col items-center justify-center text-slate-400">
@@ -1792,13 +2048,29 @@ ${err.message}`);
                                                                     </span>
                                                                 )}
                                                             </div>
-                                                            <div className="font-bold text-[#F5C742]">
-                                                                <CurrencyAmount
-                                                                    value={item.product.retailPrice || item.product.price || '0.00'}
-                                                                    currencyCode={currencyCode}
-                                                                    currencyLabel={currencyLabel}
-                                                                />
-                                                            </div>
+                                                            {(() => {
+                                                                const shown = labelPriceDisplay(labelPriceFor(currentTemplate, item), { currencyCode: currencyLabel });
+                                                                if (shown.status === 'ok') {
+                                                                    return (
+                                                                        <div className="flex items-center gap-1.5" data-testid="queue-label-price">
+                                                                            <span className="font-bold text-[#F5C742]">
+                                                                                <CurrencySymbol currencyCode={currencyCode} currencyLabel={currencyLabel} /> {shown.amount}
+                                                                            </span>
+                                                                            {shown.sourceLabel && <span className="text-[10px] text-slate-500">{shown.sourceLabel}</span>}
+                                                                            {shown.message && <span className="text-[10px] text-amber-700" title={shown.message}>⚠</span>}
+                                                                        </div>
+                                                                    );
+                                                                }
+                                                                return (
+                                                                    <div
+                                                                        className={`text-[11px] font-semibold ${shown.status === 'pending' ? 'text-slate-400' : 'text-red-600'}`}
+                                                                        data-testid="queue-label-price"
+                                                                        title={shown.message}
+                                                                    >
+                                                                        {shown.status === 'pending' ? 'Loading price…' : `No price: ${shown.message}`}
+                                                                    </div>
+                                                                );
+                                                            })()}
                                                             {batchBarcodeValue && (
                                                                 <div className="text-[10px] font-mono text-amber-900 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 w-fit max-w-[240px] truncate" title={batchBarcodeValue}>
                                                                     Batch: {batchBarcodeValue}
@@ -2726,6 +2998,45 @@ ${err.message}`);
                                                                 </p>
                                                             </div>
 
+                                                            <div>
+                                                                <label className="text-[10px] font-bold text-slate-400 uppercase" htmlFor="template-price-source">Price Source</label>
+                                                                {(() => {
+                                                                    const stored = templatePriceSource(editingTemplate);
+                                                                    const known = priceSources.some(s => s.key === stored);
+                                                                    const selectedOption = priceSources.find(s => s.key === stored);
+                                                                    return (
+                                                                        <>
+                                                                            <select
+                                                                                id="template-price-source"
+                                                                                aria-label="Template price source"
+                                                                                className="w-full border-b border-slate-200 py-1 text-sm font-bold text-slate-900 focus:border-[#F5C742] outline-none bg-white"
+                                                                                value={stored}
+                                                                                onChange={e => {
+                                                                                    const key = e.target.value;
+                                                                                    setEditingTemplate(prev => ({
+                                                                                        ...prev,
+                                                                                        fields: withPriceSource(normalizeTemplateFields(prev.fields), key)
+                                                                                    }));
+                                                                                }}
+                                                                            >
+                                                                                {!known && (
+                                                                                    <option value={stored}>
+                                                                                        {stored === 'DEFAULT' ? 'Retail (selling price)' : `${stored} (not available)`}
+                                                                                    </option>
+                                                                                )}
+                                                                                {priceSources.map(s => (
+                                                                                    <option key={s.key} value={s.key}>{s.label}</option>
+                                                                                ))}
+                                                                            </select>
+                                                                            <p className="text-[10px] text-slate-400 mt-1">
+                                                                                {selectedOption?.description || 'Which selling price the label prints.'}
+                                                                                {' '}Prices come from the server for the print run&apos;s branch; a product without that price prints no price, never another price or its cost.
+                                                                            </p>
+                                                                        </>
+                                                                    );
+                                                                })()}
+                                                            </div>
+
                                                             <div className="bg-[#F5C742]/10 rounded-lg p-3 border border-[#F5C742]/20 text-xs text-amber-900">
                                                                 <strong>Note:</strong> Template layouts are saved to the server and used by preview, browser print, and Zebra print.
                                                             </div>
@@ -2756,10 +3067,46 @@ ${err.message}`);
                     )
                 }
 
-                {/* Hidden Print Area */}
-                <div id="print-area" className="hidden">
-                    {renderLabels(false)}
+                {/* Hidden print area: every browser print renders here with the prices it resolved. */}
+                <div id="quick-print-area" className="hidden">
+                    {quickPrintJob && renderLabels(false, quickPrintJob.template, quickPrintJob.items, quickPrintJob.priceResultFor)}
                 </div>
+
+                {showQuickPrint && <QuickBarcodePrintDialog
+                    open={showQuickPrint}
+                    onClose={() => setShowQuickPrint(false)}
+                    templates={templates}
+                    initialTemplateId={quickPrintInitialTemplateId}
+                    settings={{ ...printSettings, preferredPrinterId: preferredPrinterFor(printSettings, activeBranchId) }}
+                    branchSelected={branchSelected}
+                    printers={labelPrinters}
+                    printersLoading={labelPrintersLoading}
+                    currencyLabel={currencyLabel}
+                    formatPrice={(v) => formatCurrencyAmount(v, 2)}
+                    labelPriceOf={(t, entry) => labelPriceDisplay(labelPriceFor(t, entry), { currencyCode: currencyLabel })}
+                    searchProducts={quickSearchProducts}
+                    loadByClassification={quickLoadByClassification}
+                    makeEntry={makeCartEntry}
+                    renderPreview={(t, entry) => renderLabels(true, t, [entry])}
+                    refreshPreviewBarcodes={(root, t) => renderBarcodesInRoot(root, getBarcodeRenderOptions(t), t)}
+                    onPrint={quickPrint}
+                    onAddToQueue={addEntriesToCart}
+                    onOpenSettings={() => setShowPrintSettings(true)}
+                />}
+
+                {showPrintSettings && <BarcodePrintSettingsDialog
+                    open={showPrintSettings}
+                    settings={printSettings}
+                    templates={templates}
+                    branchId={branchSelected ? activeBranchId : null}
+                    branchLabel={activeBranch?.name || 'this branch'}
+                    printers={labelPrinters}
+                    printersLoading={labelPrintersLoading}
+                    printersError={labelPrintersError}
+                    onReloadPrinters={loadLabelPrinters}
+                    onSave={savePrintSettings}
+                    onClose={() => setShowPrintSettings(false)}
+                />}
 
             </div>
         </div>

@@ -906,8 +906,8 @@ function CheckoutHarness({ base, log, initial = {} }) {
 
   const ordersListCheckout = (() => {
     // ORDERS-CHECKOUT-START
-    const handleOpenOrderAndCheckout = () => {
-      if (!openIntoCart()) return;
+    const handleOpenOrderAndCheckout = async () => {
+      if (!(await openIntoCart())) return;
       // Delegates to the SAME shared entry point as the main Checkout button rather than
       // opening the payment dialog itself: an order picked straight into settlement is still a
       // POS sale and still needs its salesperson scanned. The order is loaded into the cart
@@ -1201,7 +1201,7 @@ describe('10. finalizing indicator', () => {
 
 // ── 11. ReceiptShareModal ───────────────────────────────────────────────────────────────
 describe('11. ReceiptShareModal', () => {
-  const shareInput = () => within(screen.getByRole('dialog')).getByRole('textbox');
+  const shareInput = () => within(screen.getByRole('dialog')).getAllByRole('textbox')[0];
 
   it('is absent while receiptShareChannel is null', () => {
     renderMarkup(completeProps());
@@ -1605,7 +1605,7 @@ describe('15. the POSSales one-second session tick', () => {
     const { root } = renderHarness({ currentSession: OPEN_SESSION, receiptShareChannel: 'sms' });
     const before = { root: root(), details: detailsEl(root()), dialog: screen.getByRole('dialog') };
     before.details.open = true;
-    fireEvent.change(within(before.dialog).getByRole('textbox'), { target: { value: '0507777777' } });
+    fireEvent.change(within(before.dialog).getAllByRole('textbox')[0], { target: { value: '0507777777' } });
     const tick0 = screen.getByTestId('tick').textContent;
 
     act(() => { vi.advanceTimersByTime(3000); });
@@ -1615,7 +1615,7 @@ describe('15. the POSSales one-second session tick', () => {
     expect(detailsEl(root())).toBe(before.details);
     expect(before.details.open).toBe(true);
     expect(screen.getByRole('dialog')).toBe(before.dialog);
-    expect(within(before.dialog).getByRole('textbox').value).toBe('0507777777');
+    expect(within(before.dialog).getAllByRole('textbox')[0].value).toBe('0507777777');
   });
 
   it('re-renders every second without remounting the payment root, the remarks input or the panel', () => {
@@ -1839,7 +1839,7 @@ describe('18. source anchors — the copy', () => {
     ['SHARE-INITIAL', '  const receiptShareInitialValue = useMemo(() => {', '\n  }, [lastPaidInvoice, receiptShareChannel]);'],
     ['HANDLE-CHECKOUT', '  const quickCashSeqRef = useRef(0);\n  const handleCheckout = useCallback((opts) => {',
       '\n  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal, activeSalesOrder]);'],
-    ['ORDERS-CHECKOUT', '        const handleOpenOrderAndCheckout = () => {', '\n        };'],
+    ['ORDERS-CHECKOUT', '        const handleOpenOrderAndCheckout = async () => {', '\n        };'],
     ['TICK', '  useEffect(() => {\n    const isActive = currentSession?.status === \'OPEN\'', '\n  }, [currentSession?.id, currentSession?.openedAt, currentSession?.status]);'],
   ])('harness block %s is identical to POSSales', (marker, start, end) => {
     const copy = between(SELF, `// ${marker}-START\n`, `// ${marker}-END`);
@@ -1916,7 +1916,7 @@ describe('18. source anchors — invariants the extraction must keep', () => {
     expect(count(POS_SALES, '  const [receiptShareChannel, setReceiptShareChannel] = useState(null);')).toBe(1);
     expect(count(POS_SALES, '  const [checkoutSettling, setCheckoutSettling] = useState(false);')).toBe(1);
     expect(count(POS_SALES, '  const cancelCheckoutTenders = useCallback(() => {')).toBe(1);
-    expect(count(POS_SALES, '  const handleReceiptShareSend = useCallback(async (value) => {')).toBe(1);
+    expect(count(POS_SALES, '  const handleReceiptShareSend = useCallback(async (value, options) => {')).toBe(1);
     expect(POS_SALES).toContain('  useEffect(() => {\n    if (!showPaymentDialog && checkoutSettling) setCheckoutSettling(false);\n  }, [showPaymentDialog, checkoutSettling]);');
   });
 

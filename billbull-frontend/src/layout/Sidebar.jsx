@@ -9,7 +9,7 @@ import {
 } from "react-icons/fa";
 import {
   HelpCircle, Phone, MessageSquare, Building2, Layers,
-  Tag, Scale, Package, Warehouse, ClipboardList,
+  Tag, Handshake, Scale, Package, Warehouse, ClipboardList,
   ArrowRightLeft, Barcode, BookUser, FileText, ShoppingCart,
   File, FileSpreadsheet, Truck, Undo2, CreditCard,
   Printer, Settings, FilePlus, Inbox, BookOpen,
@@ -181,6 +181,8 @@ const Sidebar = ({ children }) => {
         { path: "/sales/payment",       label: "Payments",              module: "sales.payment",  icon: <CreditCard size={14} /> },
         { path: "/sales/templates",     label: "Print & Email Templates",module: "sales.templates",icon: <Printer size={14} /> },
         { path: "/sales/reports",        label: "Reports",              module: "sales.reports",  icon: <PieChart size={14} /> },
+        { path: "/sales/price-levels",  label: "Price Levels",          module: "sales.settings", icon: <Tag size={14} /> },
+        { path: "/sales/customer-prices", label: "Customer Prices",     module: "sales.customer", icon: <Handshake size={14} /> },
         { path: "/sales/settings",      label: "Configure & customize", module: "sales.settings", icon: <Settings size={14} /> },
       ],
     },

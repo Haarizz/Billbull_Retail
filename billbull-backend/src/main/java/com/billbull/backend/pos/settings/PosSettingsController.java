@@ -69,6 +69,20 @@ public class PosSettingsController {
     }
 
     /**
+     * Layout and print-template changes from POS Configure and the BillBull Console (Manage
+     * Layouts, Print Templates). Open to every till user — anyone who may read the POS settings —
+     * because the service writes only those appearance fields. Behaviour, approvals and every
+     * other setting still go through {@link #save} and need pos.settings edit.
+     */
+    @PostMapping("/appearance")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosSettings> saveAppearance(@RequestBody PosSettings settings) {
+        requireReader();
+        branchAccessService.assertTransactionBranchAccessible(settings != null ? settings.getBranchId() : null, LABEL);
+        return ResponseEntity.ok(service.saveAppearance(settings));
+    }
+
+    /**
      * Verify a supervisor PIN server-side (ARCHFIX S5). The PIN is no longer shipped to the client,
      * so the cashier's entered PIN is validated here against the stored BCrypt hash.
      */

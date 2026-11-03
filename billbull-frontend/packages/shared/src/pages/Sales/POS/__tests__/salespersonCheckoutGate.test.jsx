@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import React, { useCallback, useRef, useState } from 'react';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import POSTouchScreen from '../POSTouchScreen';
@@ -85,7 +85,7 @@ const CART = {
  * The real POSSales wiring in miniature: the shared gate handed to the real template through the
  * same `handleCheckout` prop, with the modal rendered off the same state the gate opens.
  */
-const Harness = ({ Template, salespersonRequired, verifiedSalesperson, spies, posTemplate }) => {
+const Harness = ({ Template, salespersonRequired, verifiedSalesperson, spies, posTemplate, quickCheckoutEnabled = true }) => {
   const [scanModalOpen, setScanModalOpen] = useState(false);
   const openSalespersonScanModal = useCallback(() => {
     spies.openSalespersonScanModal();
@@ -111,6 +111,7 @@ const Harness = ({ Template, salespersonRequired, verifiedSalesperson, spies, po
         selectedCustomerData={{ id: 'c1', name: 'Walk-in Customer' }}
         formatCurrency={(n) => `AED ${Number(n || 0).toFixed(2)}`}
         posTemplate={posTemplate}
+        quickCheckoutEnabled={quickCheckoutEnabled}
         handleCheckout={handleCheckout}
         salespersonRequired={salespersonRequired}
         verifiedSalesperson={verifiedSalesperson}
@@ -130,11 +131,24 @@ const Harness = ({ Template, salespersonRequired, verifiedSalesperson, spies, po
   );
 };
 
-const clickCheckout = () => {
+/**
+ * The layout's checkout trigger. Trade POS: its one Checkout button. Classic and Cart Focus have
+ * no Checkout button — the Quick Checkout rail's tenders are the trigger — so the Cash tender is
+ * clicked, and there must be no other "Checkout" button left to bypass the gate with. With Quick
+ * Checkout switched off they have their one Checkout button again, and no rail.
+ */
+const clickCheckout = (posTemplate, quick = true) => {
   const buttons = screen.getAllByRole('button')
     .filter(b => /checkout/i.test(b.textContent || ''));
-  expect(buttons).toHaveLength(1);
-  fireEvent.click(buttons[0]);
+  if (posTemplate === 'compact' || !quick) {
+    if (!quick) expect(screen.queryByTestId('quick-checkout-rail')).toBeNull();
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    return;
+  }
+  expect(buttons).toHaveLength(0);
+  fireEvent.click(within(screen.getByTestId('quick-checkout-rail'))
+    .getByRole('button', { name: /^Checkout with Cash/ }));
 };
 
 const expectSettlementOpened = (spies) => {
@@ -162,44 +176,47 @@ const LAYOUTS = [
   ['POSTouchScreen — Classic', POSTouchScreen, 'classic'],
   ['POSTouchScreen — Cart Focus', POSTouchScreen, 'focus'],
   ['TradePOSTouchScreen — compact', TradePOSTouchScreen, 'compact'],
+  // Quick Checkout switched off (pos_settings.layout_quick_checkout = false).
+  ['POSTouchScreen — Classic, Quick Checkout off', POSTouchScreen, 'classic', false],
+  ['POSTouchScreen — Cart Focus, Quick Checkout off', POSTouchScreen, 'focus', false],
 ];
 
-describe.each(LAYOUTS)('%s Checkout button', (_name, Template, posTemplate) => {
+describe.each(LAYOUTS)('%s Checkout button', (_name, Template, posTemplate, quick = true) => {
   let spies;
   beforeEach(() => { spies = makeSpies(); });
   afterEach(cleanup);
 
   it('REPRODUCTION: required + not verified -> opens the scan modal and stops there', () => {
-    render(<Harness Template={Template} posTemplate={posTemplate} spies={spies}
+    render(<Harness Template={Template} posTemplate={posTemplate} quickCheckoutEnabled={quick} spies={spies}
       salespersonRequired verifiedSalesperson={null} />);
-    clickCheckout();
+    clickCheckout(posTemplate, quick);
     expectRefusedWithModal(spies);
   });
 
   it('feature OFF -> straight to settlement, exactly as before the feature existed', () => {
-    render(<Harness Template={Template} posTemplate={posTemplate} spies={spies}
+    render(<Harness Template={Template} posTemplate={posTemplate} quickCheckoutEnabled={quick} spies={spies}
       salespersonRequired={false} verifiedSalesperson={null} />);
-    clickCheckout();
+    clickCheckout(posTemplate, quick);
     expectSettlementOpened(spies);
   });
 
   it('required + verified -> straight to settlement; the scan is never asked for twice', () => {
-    render(<Harness Template={Template} posTemplate={posTemplate} spies={spies}
+    render(<Harness Template={Template} posTemplate={posTemplate} quickCheckoutEnabled={quick} spies={spies}
       salespersonRequired verifiedSalesperson={{ id: 'e1', name: 'Asha', employeeCode: 'E-1' }} />);
-    clickCheckout();
+    clickCheckout(posTemplate, quick);
     expectSettlementOpened(spies);
   });
 
   it('verified, then cleared (Scan New) -> requires verification again', () => {
-    const { rerender } = render(<Harness Template={Template} posTemplate={posTemplate} spies={spies}
+    const { rerender } = render(<Harness Template={Template} posTemplate={posTemplate} quickCheckoutEnabled={quick} spies={spies}
       salespersonRequired verifiedSalesperson={{ id: 'e1', name: 'Asha', employeeCode: 'E-1' }} />);
-    clickCheckout();
+    clickCheckout(posTemplate, quick);
     expectSettlementOpened(spies);
 
     const second = makeSpies();
-    rerender(<Harness Template={Template} posTemplate={posTemplate} spies={second}
+    rerender(<Harness Template={Template} posTemplate={posTemplate} quickCheckoutEnabled={quick} spies={second}
       salespersonRequired verifiedSalesperson={null} />);
-    clickCheckout();
+    clickCheckout(posTemplate, quick);
     expectRefusedWithModal(second);
   });
 });
@@ -217,10 +234,16 @@ describe('POSTouchScreen cannot open settlement on its own', () => {
   it('opens settlement through handleCheckout and nothing else', () => {
     expect(TOUCH).not.toContain('setShowPaymentDialog(true)');
     expect(TOUCH).not.toContain("setCheckoutPhase('payment')");
-    // Both Checkout buttons (Classic and Cart Focus) share one helper.
-    expect(TOUCH.match(/onClick=\{startCheckout\}/g) || []).toHaveLength(2);
-    // P3: the Enter shortcut passes its quick-cash request; a click passes nothing extra.
-    expect(TOUCH).toContain("if (handleCheckout?.(typeof quickCash === 'string' ? { quickCash } : undefined) === false) return;");
+    // Classic and Cart Focus check out from the Quick Checkout rail, both through one helper.
+    expect(TOUCH.match(/<QuickCheckoutRail onPick=\{pickQuickTender\}/g) || []).toHaveLength(2);
+    // With Quick Checkout off, both layouts render the one shared Checkout button.
+    expect(TOUCH.match(/onClick=\{startCheckout\}/g) || []).toHaveLength(1);
+    expect(TOUCH.match(/\{!quickCheckoutEnabled && checkoutPanelButton\}/g) || []).toHaveLength(2);
+    // P3: the Enter shortcut passes its quick-cash request, the cart quick-pay bar its tender;
+    // a click passes nothing extra (checkoutOptions drops the event).
+    expect(TOUCH).toContain('if (handleCheckout?.(checkoutOptions(arg)) === false) return;');
+    // The quick-pay bar goes through the same helper, never around it.
+    expect(TOUCH).toContain('const pickQuickTender = useCallback((tender) => startCheckout({ tender }), [startCheckout]);');
   });
 });
 
@@ -254,7 +277,7 @@ describe('every other checkout trigger delegates to the same gate', () => {
   });
 
   it('the saved-orders Checkout calls the shared gate instead of re-implementing it', () => {
-    const handler = POS_SALES.slice(POS_SALES.indexOf('const handleOpenOrderAndCheckout = () => {'));
+    const handler = POS_SALES.slice(POS_SALES.indexOf('const handleOpenOrderAndCheckout = async () => {'));
     const body = handler.slice(0, handler.indexOf('};') + 2);
     expect(body).toContain('handleCheckout();');
     // It must not open the dialog itself, and must not carry its own copy of the condition.

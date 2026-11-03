@@ -40,8 +40,55 @@ export const TERMINAL_UNAVAILABLE_FALLBACK = {
   registerLabel: 'Register as New Terminal',
   hint: 'Ask an admin to restore it from Console > Terminals & Counters, or register this device as a brand-new terminal below (consumes a new terminal slot).',
 };
+// Backend 403 when a new terminal would exceed the branch cap (PosTerminalService.registerOrRefresh):
+// "Maximum number of terminals (N) reached for this branch." The server reports only the limit,
+// not how many terminals are in use, so only the limit is shown.
+const TERMINAL_LIMIT_PATTERN = /^Maximum number of terminals \((\d+)\) reached\b/i;
+
+export function terminalLimitConfig(limit) {
+  return {
+    title: 'Terminal Limit Reached',
+    message: `Branch terminal limit reached (limit: ${limit}). Archive an unused terminal or increase the branch terminal limit.`,
+    // Registering again would hit the same cap, so offer no register button.
+    allowRegisterNew: false,
+    hint: 'Ask an administrator to archive an unused terminal or raise the limit in Console > Terminals & Counters, then reload this page.',
+  };
+}
+
+// Server text that suggests an internal error rather than a message written for users.
+const INTERNAL_DETAIL_PATTERN = /exception|\bat [\w$.]+\(|\bsql|jdbc|hibernate|\b(org|java|javax|jakarta|com)\.[a-z]|constraint|syntax error|<\/?[a-z!]/i;
+const MAX_SERVER_MESSAGE_LENGTH = 200;
+
+// Returns the server message when it is safe to show a user, otherwise null.
+export function safeServerMessage(rawMessage) {
+  if (typeof rawMessage !== 'string') return null;
+  const text = rawMessage.trim();
+  if (!text || text.length > MAX_SERVER_MESSAGE_LENGTH || /[\r\n]/.test(text)) return null;
+  if (INTERNAL_DETAIL_PATTERN.test(text)) return null;
+  return text;
+}
+
 export function resolveTerminalUnavailableConfig(rawMessage) {
   const match = typeof rawMessage === 'string' ? rawMessage.match(/^Terminal is (\w+)$/) : null;
   const status = match ? match[1] : null;
-  return { status, ...(TERMINAL_UNAVAILABLE_STATUS_CONFIG[status] || TERMINAL_UNAVAILABLE_FALLBACK) };
+  if (TERMINAL_UNAVAILABLE_STATUS_CONFIG[status]) {
+    return { status, ...TERMINAL_UNAVAILABLE_STATUS_CONFIG[status] };
+  }
+  const serverMessage = safeServerMessage(rawMessage);
+  const limitMatch = serverMessage ? serverMessage.match(TERMINAL_LIMIT_PATTERN) : null;
+  if (limitMatch) {
+    return { status: null, ...terminalLimitConfig(Number(limitMatch[1])) };
+  }
+  if (serverMessage) {
+    return { status, ...TERMINAL_UNAVAILABLE_FALLBACK, message: serverMessage };
+  }
+  return { status, ...TERMINAL_UNAVAILABLE_FALLBACK };
 }
+
+// Asked before "Register as New Terminal" wipes this device's terminal identity and reloads.
+export const REGISTER_NEW_TERMINAL_CONFIRM = {
+  title: 'Register as a new terminal?',
+  message: 'This will assign a new independent terminal to this device.',
+  confirmLabel: 'Register new terminal',
+  tone: 'warning',
+};

@@ -27,6 +27,9 @@ export function usePosBehaviourSettings({ posSettings, setPosSettings, businessD
     setSettingsDraft({
       requireSupervisorForVoid: !!posSettings?.requireSupervisorForVoid,
       requireSupervisorForDayClose: !!posSettings?.requireSupervisorForDayClose,
+      // Closing Approval — an administrator must approve session (X) / Business Day (Z) closes.
+      requireAdminApprovalForSessionClose: !!posSettings?.requireAdminApprovalForSessionClose,
+      requireAdminApprovalForDayClose: !!posSettings?.requireAdminApprovalForDayClose,
       supervisorApprovalMode: posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN',
       requirePriceOverrideApproval: !!posSettings?.requirePriceOverrideApproval,
       // Who may use the POS Actions/Functions buttons — ALL_USERS | SUPERVISOR_PASSWORD |
@@ -43,6 +46,8 @@ export function usePosBehaviourSettings({ posSettings, setPosSettings, businessD
       supervisorPin: '',
       voidMode: posSettings?.voidMode === 'DELETE' ? 'DELETE' : 'VOID',
       productEntryMode: posSettings?.productEntryMode || 'DIRECT_ADD',
+      // Mandatory Customer — when on, a sale cannot be settled for the walk-in customer.
+      requireCustomer: !!posSettings?.requireCustomer,
       cartViewMode: posSettings?.cartViewMode === 'DETAILED' ? 'DETAILED' : 'MINIMAL',
       cartShowBarcode: posSettings?.cartShowBarcode !== false,
       cartShowProductCode: posSettings?.cartShowProductCode !== false,

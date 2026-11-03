@@ -225,7 +225,7 @@ class DocumentSendBranchScopeTest {
         salesOrders = new SalesOrderController(salesOrderService, mock(SalesOrderAttachmentRepository.class),
                 mock(AuditLogService.class), emailSender, permissions, whatsAppSender, company, "uploads/");
         invoices = new SalesInvoiceController(invoiceService, contacts, permissions, emailSender,
-                mock(SalespersonAttributionService.class), whatsAppSender, company);
+                mock(SalespersonAttributionService.class), whatsAppSender, company, null);
         deliveryNotes = new DeliveryNoteController(deliveryNoteService, emailSender, permissions);
         proformas = new ProformaController(proformaService, mock(AuditLogService.class), emailSender, permissions);
         receiptVouchers = new ReceiptVoucherController(receiptVoucherService, new ObjectMapper(),

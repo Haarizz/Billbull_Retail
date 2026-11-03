@@ -245,6 +245,10 @@ public class SalesInvoiceHistoryService {
         compare(changes, "Salesperson", existing.getSalesperson(), incoming.getSalesperson());
         compare(changes, "Branch", existing.getBranchId(), incoming.getBranchId());
         compare(changes, "Notes", existing.getCustomerNotes(), incoming.getCustomerNotes());
+        // Terms run to paragraphs, so the history records that they changed, not both texts.
+        if (!Objects.equals(normalize(existing.getTermsConditions()), normalize(incoming.getTermsConditions()))) {
+            changes.add("Terms & Conditions updated");
+        }
         compareMoney(changes, "Invoice total", existing.getInvoiceTotal(), incoming.getInvoiceTotal());
         compareMoney(changes, "Discount", existing.getBillDiscountAmount(), incoming.getBillDiscountAmount());
         compareMoney(changes, "Delivery charge", existing.getDeliveryCharge(), incoming.getDeliveryCharge());

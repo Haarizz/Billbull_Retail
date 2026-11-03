@@ -11,6 +11,16 @@ export const POS_BASE = '/pos/';
 export const POS_DEV_PORT = 5174;
 const devBackend = process.env.BILLBULL_DEV_BACKEND || 'http://localhost:8080';
 
+// The browser's Origin (localhost:5174) is not in the backend CORS allow-list, so Spring would
+// 403 every proxied call. Drop it: to the backend the request then looks same-origin, as in prod.
+const devProxy = {
+  target: devBackend,
+  changeOrigin: true,
+  configure: (proxy) => {
+    proxy.on('proxyReq', (proxyReq) => proxyReq.removeHeader('origin'));
+  },
+};
+
 // Standalone POS till. Served from /pos/ on the tenant's existing origin; API calls stay
 // same-origin /api/** (axiosConfig falls back to window.location.origin when VITE_API_BASE_URL
 // is empty, as in .env.production). Env files are Retail's (envDir) so both apps build with the
@@ -36,16 +46,16 @@ export default defineConfig(({ command }) => {
       port: POS_DEV_PORT,
       strictPort: true,
       proxy: {
-        '/api': { target: devBackend, changeOrigin: true },
-        '/uploads': { target: devBackend, changeOrigin: true },
+        '/api': devProxy,
+        '/uploads': devProxy,
       },
     },
     preview: {
       port: POS_DEV_PORT,
       strictPort: true,
       proxy: {
-        '/api': { target: devBackend, changeOrigin: true },
-        '/uploads': { target: devBackend, changeOrigin: true },
+        '/api': devProxy,
+        '/uploads': devProxy,
       },
     },
     build: {

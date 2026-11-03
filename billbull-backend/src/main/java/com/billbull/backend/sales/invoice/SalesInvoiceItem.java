@@ -10,7 +10,18 @@ import com.billbull.backend.sales.delivery.DeliveryBatchSelectionResponse;
 
 @Entity
 @Table(name = "sales_invoice_items")
-public class SalesInvoiceItem {
+public class SalesInvoiceItem implements com.billbull.backend.sales.pricing.PriceStampedLine {
+
+    /** The quantity tier (sales.pricing.ProductQuantityTier) the line was resolved from, if any (V129). */
+    @Column(name = "quantity_tier_id")
+    private Long quantityTierId;
+    /** That tier's threshold, in base units. */
+    @Column(name = "tier_min_quantity", precision = 15, scale = 3)
+    private java.math.BigDecimal tierMinQuantity;
+    /** The document's paid base-unit quantity of the product that qualified for the tier. */
+    @Column(name = "tier_eligible_quantity", precision = 15, scale = 3)
+    private java.math.BigDecimal tierEligibleQuantity;
+
 
     @Id
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "sales_inv_item_seq_gen")
@@ -132,6 +143,42 @@ public class SalesInvoiceItem {
     // Used to track partial delivery recognition and prevent over-posting.
     private BigDecimal recognizedRevenue = BigDecimal.ZERO;
     private BigDecimal recognizedCogs = BigDecimal.ZERO;
+
+    // How this line was priced (V126), stamped by the server on save — never trusted from the
+    // client. `price` above stays the charged price; these record what the price level resolved to.
+    @Column(name = "price_level_id")
+    private Long priceLevelId;
+    @Column(name = "price_level_name", length = 100)
+    private String priceLevelName;
+    /** sales.pricing.PriceSource name. */
+    @Column(name = "price_source", length = 30)
+    private String priceSource;
+    @Column(name = "resolved_unit_price", precision = 15, scale = 2)
+    private BigDecimal resolvedUnitPrice;
+    /** The charged price differs from the resolved one (a manual price edit). */
+    @Column(name = "price_overridden")
+    private Boolean priceOverridden;
+    /**
+     * The customer-specific price mapping (sales.pricing.CustomerProductPrice, V128) the line was
+     * resolved from, when price_source is CUSTOMER_SPECIFIC*. A reference only: no foreign key, and
+     * changing or removing the mapping later never touches this line's charged price.
+     */
+    @Column(name = "customer_price_id")
+    private Long customerPriceId;
+
+    public Long getCustomerPriceId() { return customerPriceId; }
+    public void setCustomerPriceId(Long customerPriceId) { this.customerPriceId = customerPriceId; }
+
+    public Long getPriceLevelId() { return priceLevelId; }
+    public void setPriceLevelId(Long priceLevelId) { this.priceLevelId = priceLevelId; }
+    public String getPriceLevelName() { return priceLevelName; }
+    public void setPriceLevelName(String priceLevelName) { this.priceLevelName = priceLevelName; }
+    public String getPriceSource() { return priceSource; }
+    public void setPriceSource(String priceSource) { this.priceSource = priceSource; }
+    public BigDecimal getResolvedUnitPrice() { return resolvedUnitPrice; }
+    public void setResolvedUnitPrice(BigDecimal resolvedUnitPrice) { this.resolvedUnitPrice = resolvedUnitPrice; }
+    public Boolean getPriceOverridden() { return priceOverridden; }
+    public void setPriceOverridden(Boolean priceOverridden) { this.priceOverridden = priceOverridden; }
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "sales_invoice_id")
@@ -461,4 +508,16 @@ public class SalesInvoiceItem {
     public void setRecognizedCogs(BigDecimal recognizedCogs) {
         this.recognizedCogs = recognizedCogs;
     }
+
+    public Long getQuantityTierId() { return quantityTierId; }
+    public void setQuantityTierId(Long quantityTierId) { this.quantityTierId = quantityTierId; }
+    public java.math.BigDecimal getTierMinQuantity() { return tierMinQuantity; }
+    public void setTierMinQuantity(java.math.BigDecimal tierMinQuantity) { this.tierMinQuantity = tierMinQuantity; }
+    public java.math.BigDecimal getTierEligibleQuantity() { return tierEligibleQuantity; }
+    public void setTierEligibleQuantity(java.math.BigDecimal tierEligibleQuantity) { this.tierEligibleQuantity = tierEligibleQuantity; }
+
+    @Override
+    public java.math.BigDecimal pricingQuantity() { return quantity != null ? java.math.BigDecimal.valueOf(quantity) : null; }
+    @Override
+    public boolean pricingVoided() { return isVoided(); }
 }

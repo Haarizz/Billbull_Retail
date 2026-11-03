@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'">
+  <title>BillBull POS – Offline</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="card">
+    <div class="brand"><img class="logo" src="../assets/icon.png" alt=""><div class="brand-name">BillBull POS</div></div>
+    <h1>Can't reach the BillBull server</h1>
+    <p>Check this PC's internet or network connection. The app tries again automatically.</p>
+    <div class="hint">Server: <code id="server">–</code></div>
+    <div class="status error" id="reason"></div>
+    <div class="actions">
+      <button class="primary" id="retry" type="button">Try again</button>
+      <button class="secondary" id="setup" type="button">Change server</button>
+    </div>
+    <div class="status" id="countdown"></div>
+  </main>
+  <script src="offline.js"></script>
+</body>
+</html>

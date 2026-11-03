@@ -326,7 +326,13 @@ export function buildXReportViewModel(xReportData, opts = {}) {
         title: '8. Return / Refund Summary', type: 'table',
         cols: ['Description', 'Count', 'Amount'],
         rows: [
-          ['Total Refunds', String(totalRefundCount), fmt(refundTotal)],
+          ['Sales Returns', String(xSummary.salesReturnCount ?? 0), salesReturnValue > 0 ? `(${fmt(salesReturnValue)})` : fmt(0)],
+          ['  - Cash Refund', String(xSummary.returnCashRefundCount ?? 0), fmt(xSummary.returnCashRefundTotal ?? 0)],
+          ['  - Card Refund', String(xSummary.returnCardRefundCount ?? 0), fmt(xSummary.returnCardRefundTotal ?? 0)],
+          ['  - Bank Transfer', String(xSummary.returnBankRefundCount ?? 0), fmt(xSummary.returnBankRefundTotal ?? 0)],
+          ['  - Credit Voucher', String(xSummary.returnCreditVoucherCount ?? 0), fmt(xSummary.returnCreditVoucherTotal ?? 0)],
+          ['  - Customer Credit', String(xSummary.returnCustomerCreditCount ?? 0), fmt(xSummary.returnCustomerCreditTotal ?? 0)],
+          ['Total Refunds (Tender)', String(totalRefundCount), fmt(refundTotal)],
           ['Card Refunds', String(cardRefundCount), fmt(cardRefundTotal)],
         ],
       },
@@ -614,7 +620,9 @@ export function buildZReportViewModel(zReportData, opts = {}) {
         rows: [
           ...cardTypeBreakdown.map(row => [row.cardType, fmt(row.amount ?? 0)]),
           ['Total Card Sales', fmt(cardSalesV)],
-          ['Net Card Settlement Expected', fmt(cardSalesV)],
+          // Includes Sales Returns settled to card (backend cardRefundSales).
+          ['Card Refunds', Number(zSummary.cardRefundSales ?? 0) > 0 ? `(${fmt(zSummary.cardRefundSales)})` : fmt(0)],
+          ['Net Card Settlement Expected', fmt(cardSalesV - Number(zSummary.cardRefundSales ?? 0))],
         ],
       },
       {

@@ -285,6 +285,34 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
          * ranked id the caller may not see simply does not come back. No ordering is
          * promised — the caller holds the rank and re-imposes it.
          */
+        /**
+         * Barcode Print → Quick Print → Bulk by classification. Every filter is optional:
+         * a null id or blank category leaves that dimension open. Category is the product's
+         * free-text category name, compared case-insensitively.
+         */
+        @Query("SELECT p FROM Product p " +
+                        "WHERE p.isActive = true " +
+                        "AND (:departmentId IS NULL OR p.department.id = :departmentId) " +
+                        "AND (:subDepartmentId IS NULL OR p.subDepartment.id = :subDepartmentId) " +
+                        "AND (:category = '' OR LOWER(p.category) = LOWER(:category))")
+        Page<Product> findActiveByClassification(
+                        @org.springframework.data.repository.query.Param("departmentId") Long departmentId,
+                        @org.springframework.data.repository.query.Param("subDepartmentId") Long subDepartmentId,
+                        @org.springframework.data.repository.query.Param("category") String category,
+                        Pageable pageable);
+
+        @Query("SELECT p FROM Product p " +
+                        "WHERE p.isActive = true AND (p.branch.id IN :branchIds OR p.branch IS NULL) " +
+                        "AND (:departmentId IS NULL OR p.department.id = :departmentId) " +
+                        "AND (:subDepartmentId IS NULL OR p.subDepartment.id = :subDepartmentId) " +
+                        "AND (:category = '' OR LOWER(p.category) = LOWER(:category))")
+        Page<Product> findActiveByClassificationInBranchScope(
+                        @org.springframework.data.repository.query.Param("departmentId") Long departmentId,
+                        @org.springframework.data.repository.query.Param("subDepartmentId") Long subDepartmentId,
+                        @org.springframework.data.repository.query.Param("category") String category,
+                        @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds,
+                        Pageable pageable);
+
         @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
                         "WHERE p.isActive = true AND p.id IN :ids")
         List<Product> findActiveForListByIds(

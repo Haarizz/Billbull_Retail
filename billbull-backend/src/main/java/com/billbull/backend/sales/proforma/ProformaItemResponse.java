@@ -157,4 +157,34 @@ public class ProformaItemResponse {
 	public void setFooterDiscount(BigDecimal footerDiscount) {
 		this.footerDiscount = footerDiscount;
 	}
+
+	// How the line was priced (server-stamped, Pricing Phase 2.1 / 3).
+	private Long priceLevelId;
+	private String priceLevelName;
+	private String priceSource;
+	private BigDecimal resolvedUnitPrice;
+	private Boolean priceOverridden;
+	private Long customerPriceId;
+	private Long quantityTierId;
+	private BigDecimal tierMinQuantity;
+	private BigDecimal tierEligibleQuantity;
+
+	public Long getPriceLevelId() { return priceLevelId; }
+	public void setPriceLevelId(Long v) { this.priceLevelId = v; }
+	public String getPriceLevelName() { return priceLevelName; }
+	public void setPriceLevelName(String v) { this.priceLevelName = v; }
+	public String getPriceSource() { return priceSource; }
+	public void setPriceSource(String v) { this.priceSource = v; }
+	public BigDecimal getResolvedUnitPrice() { return resolvedUnitPrice; }
+	public void setResolvedUnitPrice(BigDecimal v) { this.resolvedUnitPrice = v; }
+	public Boolean getPriceOverridden() { return priceOverridden; }
+	public void setPriceOverridden(Boolean v) { this.priceOverridden = v; }
+	public Long getCustomerPriceId() { return customerPriceId; }
+	public void setCustomerPriceId(Long v) { this.customerPriceId = v; }
+	public Long getQuantityTierId() { return quantityTierId; }
+	public void setQuantityTierId(Long v) { this.quantityTierId = v; }
+	public BigDecimal getTierMinQuantity() { return tierMinQuantity; }
+	public void setTierMinQuantity(BigDecimal v) { this.tierMinQuantity = v; }
+	public BigDecimal getTierEligibleQuantity() { return tierEligibleQuantity; }
+	public void setTierEligibleQuantity(BigDecimal v) { this.tierEligibleQuantity = v; }
 }

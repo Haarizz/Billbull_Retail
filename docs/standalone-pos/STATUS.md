@@ -19,7 +19,7 @@ Why the workspace sits inside `billbull-frontend/` rather than at the repo root,
 - [x] Builds for `/pos/` (`/pos/assets/...`) and never touches Retail `dist/`.
 - [x] Login, till-permission gate, one-branch boot gate, error boundary, session-expiry lock. Idle lock is the existing POS one, unchanged.
 - [x] Classic, Compact and Cart Focus render, and each completed a real sale in the standalone app (runtime smoke).
-- [x] POS Console and all in-workspace overlays reachable. "Terminals & Counters" administration is hidden on the till and stays in Retail. No customer display exists to carry over.
+- [x] POS Console and all in-workspace overlays reachable. "Terminals & Counters" administration is available on the till as well as in Retail. No customer display exists to carry over.
 - [x] No Retail sidebar, back-office routes, notification centre or global search; no app-to-app imports.
 
 ### Shared boundary

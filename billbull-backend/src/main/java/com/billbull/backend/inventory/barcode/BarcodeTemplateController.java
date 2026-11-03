@@ -20,12 +20,48 @@ public class BarcodeTemplateController {
 
     private static final String MODULE = "inventory.barcode";
 
+    /** Customer-specific label prices expose negotiated prices: same view rights as the price list. */
+    static final String[] CUSTOMER_PRICE_MODULES = { "sales.customer", "sales.settings" };
+
     private final BarcodeTemplateService service;
     private final ModulePermissionService modulePermissionService;
+    private final BarcodeLabelPriceService labelPriceService;
 
-    public BarcodeTemplateController(BarcodeTemplateService service, ModulePermissionService modulePermissionService) {
+    public BarcodeTemplateController(BarcodeTemplateService service, ModulePermissionService modulePermissionService,
+                                     BarcodeLabelPriceService labelPriceService) {
         this.service = service;
         this.modulePermissionService = modulePermissionService;
+        this.labelPriceService = labelPriceService;
+    }
+
+    /** The price sources a label can show — the configured price levels included. */
+    @GetMapping("/price-sources")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<LabelPriceModels.SourceOption>> priceSources() {
+        modulePermissionService.requireCanView(MODULE);
+        return ResponseEntity.ok(labelPriceService.sources());
+    }
+
+    /**
+     * The price each label shows, resolved on the server for the chosen source, branch, optional
+     * customer and optional pricing quantity. Preview, browser print and Zebra print all use this.
+     */
+    @PostMapping("/label-prices")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<LabelPriceModels.Response> labelPrices(@RequestBody LabelPriceModels.Request request) {
+        modulePermissionService.requireCanView(MODULE);
+        if (isCustomerSource(request.getSource())) {
+            modulePermissionService.requireCanViewAny(CUSTOMER_PRICE_MODULES);
+        }
+        return ResponseEntity.ok(labelPriceService.resolve(request));
+    }
+
+    private static boolean isCustomerSource(String raw) {
+        try {
+            return LabelPriceSource.parse(raw).kind() == LabelPriceSource.Kind.CUSTOMER;
+        } catch (IllegalArgumentException ex) {
+            return false;
+        }
     }
 
     @GetMapping

@@ -81,7 +81,7 @@ import { CurrencyAmount } from '../POSCurrency';
  *   `Zap` (lucide) is used ONLY here in POSSales.jsx — twice, at 9228 and 9252 — so on
  *   extraction the `Zap,` entry in the POSSales lucide import (POSSales.jsx:104) becomes dead
  *   and moves to the child. Asserted in the source contract.
- *   `Badge` is NOT exclusive (5 `<Badge` occurrences in POSSales) and must stay imported there.
+ *   `Badge` is used only by this region in POSSales (2 `<Badge` occurrences), so it would move with it.
  *   Dialog/Button primitives are shared throughout POSSales.
  *
  * (10) CROSS-FEATURE CALLBACKS AND HANDOFFS
@@ -563,8 +563,8 @@ describe('source contract', () => {
   it('finds the region exactly once, at the pinned boundary', () => {
     expect(START).toBeGreaterThan(-1);
     expect(LINES.indexOf(ANCHOR, START + 1)).toBe(-1);
-    expect(START + 1).toBe(9307); // 1-indexed line 9307 (P2 overlay declarations: +30; P2.6 scanner-field import: +1; P3 shortcuts: +11; history preview items extracted: -52; POS → Orders take-up + PI Flow delivery: +39; Close Day confirm modal: +9)
-    expect(END + 1).toBe(9345);
+    expect(START + 1).toBe(9360); // 1-indexed line 9360 (P2 overlay declarations: +30; P2.6 scanner-field import: +1; P3 shortcuts: +11; history preview items extracted: -52; POS → Orders take-up + PI Flow delivery: +39; Close Day confirm modal: +9; Mandatory Customer checkout gate: +5; Closing Approval: +10; POS packing units + price levels: +35; POS home page redesign: -5; Quick Checkout layout toggle: +4; X/Z returns + card refund rows: +4)
+    expect(END + 1).toBe(9398);
     expect(LIVE_REGION.split('\n')).toHaveLength(39);
   });
 
@@ -635,13 +635,15 @@ describe('source contract', () => {
 
   it('`Zap` is used ONLY by this region in POSSales — it becomes the child\'s import', () => {
     const zapLines = LINES.map((l, i) => [i + 1, l]).filter(([, l]) => l.includes('Zap'));
-    expect(zapLines.map(([n]) => n)).toEqual([104, 9311, 9335]);
+    expect(zapLines.map(([n]) => n)).toEqual([104, 9364, 9388]);
     expect(LINES[103]).toBe('  Zap,'); // the lucide import entry, line 104
     expect(LIVE_REGION.split('<Zap ').length - 1).toBe(2);
   });
 
-  it('`Badge` is NOT exclusive and must stay imported by POSSales', () => {
-    expect(PARENT.split('<Badge').length - 1).toBeGreaterThan(2);
+  it('`Badge` is used ONLY by this region in POSSales — it would move with the extraction', () => {
+    // The POS home page redesign dropped the dashboard's status Badges, so the region's two
+    // `<Badge` uses are now the only ones; extracting the region takes the import with it.
+    expect(PARENT.split('<Badge').length - 1).toBe(2);
   });
 
   it('appliedCoupon / couponDiscount are SHARED with the extracted CouponsDialog', () => {

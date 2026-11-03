@@ -87,6 +87,9 @@ export function useCheckout({
                   //   requestApproval }
   posReset,       // { syncPosData, setReceivedAmount, setSelectedCardType,
                   //   setSelectedCreditCustomer, setLastScannedItem }
+  pricing,        // { priceLevelId, pending } - the cashier's explicit price level (null = the
+                  //   customer's default) and whether line prices are still being re-resolved.
+                  //   Optional: absent means default pricing, exactly as before price levels.
 } = {}) {
   // Checkout-owned state. Every setter is exposed: POSSales has other writers (the
   // dialog-close effects, the reprint path) and POSTouchScreen drives three of them
@@ -133,6 +136,11 @@ export function useCheckout({
   const settleLockRef = useRef(false);
   const processPayment = async (overrideCreds = null) => {
     if (currentInvoice.items.length === 0 || checkoutLoading) return;
+    if (pricing?.pending) {
+      // Lines are being re-priced for a new price level; settling now would charge the old price.
+      setCheckoutError('Prices are being updated for the selected price level. Please try again in a moment.');
+      return;
+    }
     if (settleLockRef.current) return;
     settleLockRef.current = true;
     try {
@@ -270,6 +278,8 @@ export function useCheckout({
       const payload = {
         customerCode: customer.id !== 'walk-in' ? (customer.code || customer.id) : 'WALK-IN',
         customerName: customer.name,
+        // Explicit price level only; the server resolves the customer's default itself.
+        priceLevelId: pricing?.priceLevelId ?? null,
         paymentMode,
         combinedPaymentMode,
         // Ordered tender allocations — the backend's source of truth for the payment

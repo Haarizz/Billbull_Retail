@@ -50,12 +50,11 @@ public class PosSession extends BaseEntity {
     @Column(name = "closed_by_display_name")
     private String closedByDisplayName;
 
-    /** Accounting bucket — copied from the Business Date pointer at open time
-     *  ({@code PosBusinessDateService.getCurrentBusinessDate}). Drives everything
-     *  outside the Day Close domain (cash-movement businessDate/GL date, X-Report
-     *  numbering/snapshot date, advance-receipt date, session history). Intentionally
-     *  left as-is by the Day Close session-driven resolution work — see
-     *  {@link #tradingDate} for that. */
+    /** Accounting bucket. Drives everything outside the Day Close domain (cash-movement
+     *  businessDate/GL date, X-Report numbering/snapshot date, advance-receipt date, session
+     *  history). Set at open to the same Business Day as {@link #tradingDate}. Sessions opened
+     *  before that change copied the stored branch Business Date pointer instead, which had
+     *  fallen behind the calendar on idle days, so on those rows the two can differ. */
     @Column(name = "session_date")
     private LocalDate sessionDate;
 

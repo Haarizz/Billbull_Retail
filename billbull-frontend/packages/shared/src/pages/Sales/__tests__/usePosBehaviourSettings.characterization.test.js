@@ -64,6 +64,9 @@ describe('beginEditSettings — draft seeding', () => {
     expect(view.result.current.settingsDraft).toEqual({
       requireSupervisorForVoid: false,
       requireSupervisorForDayClose: false,
+      // Closing Approval — off unless the branch opted in.
+      requireAdminApprovalForSessionClose: false,
+      requireAdminApprovalForDayClose: false,
       supervisorApprovalMode: 'PIN',
       requirePriceOverrideApproval: false,
       // Action Button Access — seeded from the stored value, so an edit of any other setting
@@ -77,6 +80,8 @@ describe('beginEditSettings — draft seeding', () => {
       supervisorPin: '',
       voidMode: 'VOID',
       productEntryMode: 'DIRECT_ADD',
+      // Mandatory Customer — off unless the branch turned it on.
+      requireCustomer: false,
       cartViewMode: 'MINIMAL',
       cartShowBarcode: true,
       cartShowProductCode: true,

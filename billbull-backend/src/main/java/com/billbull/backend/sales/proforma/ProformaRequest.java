@@ -30,5 +30,8 @@ public class ProformaRequest {
     public BigDecimal billDiscountAmount;
     public Boolean taxInclusive;
 
+    /** The level chosen on the document, or null for the customer's / the default (Pricing Phase 2.1). */
+    public Long priceLevelId;
+
     public List<ProformaItemRequest> items;
 }

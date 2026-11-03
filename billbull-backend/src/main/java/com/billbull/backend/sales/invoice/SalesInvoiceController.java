@@ -6,6 +6,9 @@ import org.springframework.web.bind.annotation.*;
 import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.inventory.batch.BatchSelectionRequest;
 import com.billbull.backend.settings.company.CompanyProfileService;
+import com.billbull.backend.sales.settings.SalesSettingsService;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import com.billbull.backend.settings.email.DocumentEmailSender;
 import com.billbull.backend.settings.whatsapp.DocumentWhatsAppSender;
 import com.billbull.backend.settings.whatsapp.WhatsAppApiException;
@@ -28,6 +31,7 @@ public class SalesInvoiceController {
     private final SalespersonAttributionService salespersonAttributionService;
     private final DocumentWhatsAppSender whatsAppSender;
     private final CompanyProfileService companyProfileService;
+    private final SalesSettingsService salesSettingsService;
 
     public SalesInvoiceController(SalesInvoiceService service,
                                   InvoiceCustomerContactService customerContactService,
@@ -35,7 +39,8 @@ public class SalesInvoiceController {
                                   DocumentEmailSender emailSender,
                                   SalespersonAttributionService salespersonAttributionService,
                                   DocumentWhatsAppSender whatsAppSender,
-                                  CompanyProfileService companyProfileService) {
+                                  CompanyProfileService companyProfileService,
+                                  SalesSettingsService salesSettingsService) {
         this.service = service;
         this.customerContactService = customerContactService;
         this.modulePermissionService = modulePermissionService;
@@ -43,6 +48,7 @@ public class SalesInvoiceController {
         this.salespersonAttributionService = salespersonAttributionService;
         this.whatsAppSender = whatsAppSender;
         this.companyProfileService = companyProfileService;
+        this.salesSettingsService = salesSettingsService;
     }
 
     /**
@@ -238,7 +244,32 @@ public class SalesInvoiceController {
         // so current back-office behaviour is unchanged. The legacy `salesperson` String is
         // untouched and keeps flowing through as before.
         salespersonAttributionService.applyTo(invoice);
+        assertCustomerSelectedIfRequired(invoice);
         return service.save(invoice);
+    }
+
+    /**
+     * Sales → Configure &amp; customize → Mandatory Customer. When
+     * {@code customerRequiredOnSalesInvoice} is on, a back-office invoice must name a real
+     * customer: no customer, or the walk-in customer, is refused. Off by default.
+     */
+    void assertCustomerSelectedIfRequired(SalesInvoice invoice) {
+        if (salesSettingsService == null || invoice == null) return;
+        if (!salesSettingsService.getSettings().isCustomerRequiredOnSalesInvoice()) return;
+        if (isWalkInOrBlankCustomer(invoice.getCustomerCode(), invoice.getCustomerName())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A customer must be selected for this invoice. Walk-in invoices are not allowed.");
+        }
+    }
+
+    static boolean isWalkInOrBlankCustomer(String code, String name) {
+        String c = code == null ? "" : code.trim();
+        String n = name == null ? "" : name.trim().toLowerCase();
+        return c.isEmpty()
+                || "WALK-IN".equalsIgnoreCase(c)
+                || "WALKIN".equalsIgnoreCase(c)
+                || n.contains("walk-in")
+                || n.contains("walkin");
     }
 
     @DeleteMapping("/{id}")

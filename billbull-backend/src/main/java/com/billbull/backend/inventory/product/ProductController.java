@@ -216,6 +216,20 @@ public class ProductController {
         return ResponseEntity.ok(service.searchProducts(q));
     }
 
+    // -------------------------------------------------
+    // BY CLASSIFICATION (Barcode Print → bulk print by department / sub-dept / category)
+    // -------------------------------------------------
+    @GetMapping("/by-classification")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<java.util.Map<String, Object>> byClassification(
+            @RequestParam(required = false) Long departmentId,
+            @RequestParam(required = false) Long subDepartmentId,
+            @RequestParam(required = false) String category,
+            @RequestParam(defaultValue = "200") int size) {
+        modulePermissionService.requireCanView("inventory.product");
+        return ResponseEntity.ok(service.findByClassification(departmentId, subDepartmentId, category, size));
+    }
+
     @GetMapping("/validate-duplicate")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<ProductAggregateResponse>> validateDuplicate(

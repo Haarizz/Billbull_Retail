@@ -86,11 +86,93 @@ public class SalesOrderService {
         this.receiptVoucherRepository = receiptVoucherRepository;
     }
 
+    /** THE salesperson resolver, shared with POS checkout and the invoice path. Setter-injected so
+     *  the constructor — and every test that builds this service through it — is unchanged. */
+    private com.billbull.backend.hr.employees.SalespersonService salespersonService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSalespersonService(com.billbull.backend.hr.employees.SalespersonService salespersonService) {
+        this.salespersonService = salespersonService;
+    }
+
+    /** The shared price resolver (Pricing Phase 2.1); null in hand-built tests = don't stamp. */
+    private com.billbull.backend.sales.pricing.PricingResolutionService pricingResolutionService;
+    private com.billbull.backend.sales.pricing.SourceDocumentPrices sourceDocumentPrices;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setPricingResolutionService(
+            com.billbull.backend.sales.pricing.PricingResolutionService pricingResolutionService) {
+        this.pricingResolutionService = pricingResolutionService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setSourceDocumentPrices(com.billbull.backend.sales.pricing.SourceDocumentPrices sourceDocumentPrices) {
+        this.sourceDocumentPrices = sourceDocumentPrices;
+    }
+
+    /**
+     * Re-resolves and stamps every line on the order's trusted branch, customer and date. The order's
+     * line money is computed by the editor, so prices are never filled in here: a client price that
+     * differs from the resolved one is kept as a manual price, flagged {@code priceOverridden}. A line
+     * unchanged since the last save keeps its pricing record; one carrying its quotation's or
+     * pro-forma's price is priced by that document.
+     */
+    void applyPricing(SalesOrder order, SalesOrder existingOrder,
+                      List<com.billbull.backend.sales.pricing.PricingModels.CarriedPrice> previous) {
+        if (pricingResolutionService == null) return;
+        var level = pricingResolutionService.applyToLines(
+                new com.billbull.backend.sales.pricing.PricingModels.DocumentPricing(
+                        null, order.getCustomerCode(), order.getPriceLevelId(),
+                        existingOrder != null ? existingOrder.getPriceLevelId() : null,
+                        order.getBranch() != null ? order.getBranch().getId() : null,
+                        salesSettingsService != null ? activePricePolicy() : null,
+                        order.getOrderDate(), false, previous,
+                        sourceDocumentPrices != null
+                                ? sourceDocumentPrices.forDocuments(order.getLinkedQuotation(), null,
+                                        order.getLinkedProforma())
+                                : List.of()),
+                order.getItems());
+        order.setPriceLevelId(level.id());
+        order.setPriceLevelName(level.name());
+        order.setPriceLevelSource(level.source() != null ? level.source().name() : null);
+    }
+
     private com.billbull.backend.sales.settings.SalesItemPricePolicy activePricePolicy() {
         com.billbull.backend.sales.settings.SalesSettings settings = salesSettingsService.getSettings();
         return settings != null && settings.getSalesItemPricePolicy() != null
                 ? settings.getSalesItemPricePolicy()
                 : com.billbull.backend.sales.settings.SalesItemPricePolicy.RETAIL;
+    }
+
+    /**
+     * Normalises the order's salesperson in place: the identity written is re-read from the
+     * employee row, never taken from the client's display name. Nobody named → unassigned.
+     *
+     * <p>An unchanged attribution on an existing order is kept as persisted without re-checking
+     * eligibility, so an order whose salesperson has since left can still be edited. A newly
+     * named employee must be active and salesperson-eligible (same 400 as the invoice and POS).
+     */
+    void resolveSalesperson(SalesOrder order, SalesOrder existingOrder) {
+        Long id = order.getSalespersonEmployeeId();
+        String code = order.getSalespersonEmployeeCode();
+        boolean hasCode = code != null && !code.isBlank();
+        if (id == null && !hasCode) {
+            order.setSalespersonEmployeeId(null);
+            order.setSalespersonEmployeeCode(null);
+            order.setSalespersonName(null);
+            return;
+        }
+        if (existingOrder != null && existingOrder.getSalespersonEmployeeId() != null
+                && existingOrder.getSalespersonEmployeeId().equals(id)) {
+            order.setSalespersonEmployeeCode(existingOrder.getSalespersonEmployeeCode());
+            order.setSalespersonName(existingOrder.getSalespersonName());
+            return;
+        }
+        if (salespersonService == null) return;
+        var employee = salespersonService.resolveEligible(id, code);
+        order.setSalespersonEmployeeId(employee.getId());
+        order.setSalespersonEmployeeCode(employee.getEmployeeCode());
+        order.setSalespersonName(com.billbull.backend.hr.employees.SalespersonService.fullName(employee));
     }
 
     @Transactional
@@ -143,6 +225,11 @@ public class SalesOrderService {
         } else {
             order.setSoNumber(existingOrder.getSoNumber());
         }
+
+        resolveSalesperson(order, existingOrder);
+        applyPricing(order, existingOrder, existingOrder != null
+                ? com.billbull.backend.sales.pricing.PricingModels.CarriedPrice.of(existingOrder.getItems())
+                : List.of());
 
         BigDecimal subTotal = BigDecimal.ZERO;
         BigDecimal tax = BigDecimal.ZERO;

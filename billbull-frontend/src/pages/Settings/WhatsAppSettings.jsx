@@ -123,7 +123,11 @@ export default function WhatsAppSettings() {
             const res = await testWhatsAppConnection();
             setTestResult({ ok: true, data: res.data });
         } catch (err) {
-            setTestResult({ ok: false, message: err?.response?.data || 'Connection test failed.' });
+            const data = err?.response?.data;
+            const message = (typeof data === 'string' && data.trim())
+                || (typeof data?.message === 'string' && data.message.trim())
+                || 'Connection test failed.';
+            setTestResult({ ok: false, message });
         } finally {
             setTesting(false);
         }

@@ -170,3 +170,16 @@ export const getTopSoldProducts = async (page = 0, size = 100, signal = undefine
   const res = await api.get(`/api/products/top-sold?page=${page}&size=${size}`, { signal });
   return res.data;
 };
+
+// --------------------
+// BY CLASSIFICATION (Barcode Print → bulk print by department / sub-dept / category)
+// Returns { content: ProductAggregateResponse[], totalElements } — capped server-side at 200.
+// --------------------
+export const getProductsByClassification = async ({ departmentId, subDepartmentId, category, size = 200 } = {}, signal = undefined) => {
+  const params = new URLSearchParams({ size });
+  if (departmentId) params.append("departmentId", departmentId);
+  if (subDepartmentId) params.append("subDepartmentId", subDepartmentId);
+  if (category && String(category).trim()) params.append("category", String(category).trim());
+  const res = await api.get(`/api/products/by-classification?${params.toString()}`, { signal });
+  return res.data;
+};

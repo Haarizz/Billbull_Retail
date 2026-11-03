@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Hash, Tag, Percent, X, Delete, CornerDownLeft, ArrowUp, ArrowDown, Lock, Package } from 'lucide-react';
+import { Hash, Tag, Percent, X, Delete, CornerDownLeft, ArrowUp, ArrowDown, Lock, Package, Boxes, Check, Loader2 } from 'lucide-react';
 import { DirhamSymbol } from '../../POSCurrency';
 import { createBurstTracker } from '../../device/scanner/scanGuard';
+import { lineUnitLocked, sameUnit, unitOfLine, unitPriceFor } from './lineUnits';
 
 /**
  * Alter Item — one dialog for a cart line's Quantity, Unit Price and Discount (Classic and Cart
@@ -31,8 +32,13 @@ import { createBurstTracker } from '../../device/scanner/scanGuard';
  * <p>`variant="panel"` renders the same editor inline (Cart Focus puts it in place of the last-item
  * card and scan keypad in its middle column) instead of as a centred overlay. Behaviour is shared;
  * only the layout differs.
+ *
+ * <p>Unit: the packing units the product sells in (piece, box, carton …), loaded through
+ * `loadUnits(item)` with server-resolved prices. Picking one re-prices the line per that unit
+ * (unless a price is keyed too). In this section the keypad digits pick a unit by its number, and
+ * ←/→ step through the list. Locked for batch/serial lines and Sales Order lines.
  */
-const MODES = ['qty', 'price', 'discount'];
+const MODES = ['qty', 'price', 'discount', 'unit'];
 
 const SECTIONS = {
   qty: {
@@ -50,6 +56,16 @@ const SECTIONS = {
     active: 'border-[#F5C742] bg-[#FFF8E7] ring-4 ring-[#F5C742]/25',
     icon: 'bg-[#F5C742] text-[#1E293B]', text: 'text-[#B8942E]',
   },
+  unit: {
+    label: 'Unit', short: 'Unit', key: 'U', Icon: Boxes, fieldLabel: 'Unit no.',
+    active: 'border-[#327F74] bg-[#327F74]/5 ring-4 ring-[#327F74]/15',
+    icon: 'bg-[#327F74] text-white', text: 'text-[#327F74]',
+  },
+};
+
+const fmtConversion = (c) => {
+  const n = Number(c);
+  return Number.isFinite(n) ? String(Number(n.toFixed(3))) : '1';
 };
 
 // Same section keys as the sale-screen shortcuts (posShortcuts.SALE_FUNCTION_KEYS).
@@ -89,6 +105,8 @@ const AlterItemModal = ({
   suppressLegacyScan = false,
   onScanRefused,
   variant = 'dialog',
+  // (item) => Promise<unit option[]> — the product's sale units, priced. Absent: no Unit section.
+  loadUnits,
 }) => {
   // Keystroke timing on the field, so a scan can be told apart from a typed value.
   const [burst] = useState(() => createBurstTracker());
@@ -97,6 +115,30 @@ const AlterItemModal = ({
   const [drafts, setDrafts] = useState({ qty: '', price: '', discount: '' });
   const draftOf = (m) => (m === mode ? value : drafts[m]);
   const qtyLocked = Boolean(item.batchControlled);
+
+  // Sale units: null while loading, [] when there are none (or they could not be loaded).
+  const [units, setUnits] = useState(loadUnits ? null : []);
+  const [unitsError, setUnitsError] = useState('');
+  const [unitDraft, setUnitDraft] = useState(null);
+  useEffect(() => {
+    if (!loadUnits) return undefined;
+    let cancelled = false;
+    Promise.resolve(loadUnits(item))
+      .then((list) => { if (!cancelled) setUnits(Array.isArray(list) ? list : []); })
+      .catch((err) => {
+        if (cancelled) return;
+        setUnits([]);
+        setUnitsError(err?.response?.data?.message || 'Units could not be loaded.');
+      });
+    return () => { cancelled = true; };
+    // One load per opened line (the dialog is keyed by line id).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const currentUnit = unitOfLine(item, units);
+  const unitLocked = !loadUnits || lineUnitLocked(item) || (Array.isArray(units) && units.length < 2);
+  const chosenUnit = unitDraft && !sameUnit(unitDraft.unit, currentUnit?.unit) ? unitDraft : null;
+  const pickUnit = (u) => setUnitDraft(u && !sameUnit(u.unit, currentUnit?.unit) ? u : null);
+  const isLocked = (m) => (m === 'qty' && qtyLocked) || (m === 'unit' && unitLocked);
   // Backdrop dismissal needs a press that both starts and ends on the backdrop, after the grace
   // window — so a tap that began on the cart row (before the dialog existed) can never close it.
   const openedAtRef = useRef(0);
@@ -115,18 +157,20 @@ const AlterItemModal = ({
   useEffect(() => {
     // A batch/serial line is one unit by definition — never open on a field it cannot change.
     if (qtyLocked && mode === 'qty') onModeChange('price');
-  }, [qtyLocked, mode, onModeChange]);
+    // A product that turns out to sell in one unit only has nothing to pick.
+    if (unitLocked && mode === 'unit') onModeChange(qtyLocked ? 'price' : 'qty');
+  }, [qtyLocked, unitLocked, mode, onModeChange]);
 
   const switchMode = (next) => {
     if (next === mode || !MODES.includes(next)) return;
-    if (next === 'qty' && qtyLocked) return;
+    if (isLocked(next)) return;
     setDrafts((d) => ({ ...d, [mode]: value }));
     onValueChange(drafts[next] || '');
     onModeChange(next);
   };
 
   const step = (dir) => {
-    const usable = MODES.filter((m) => !(m === 'qty' && qtyLocked));
+    const usable = MODES.filter((m) => !isLocked(m) || m === mode);
     const idx = usable.indexOf(mode);
     switchMode(usable[(idx + dir + usable.length) % usable.length]);
   };
@@ -139,7 +183,7 @@ const AlterItemModal = ({
     const quantity = qtyDraft != null && qtyDraft > 0 && !qtyLocked ? Math.round(qtyDraft) : null;
     const price = priceDraft != null && priceDraft > 0 ? priceDraft : null;
     const q = quantity ?? item.quantity;
-    const p = price ?? item.price;
+    const p = price ?? (chosenUnit ? unitPriceFor(item, chosenUnit) : item.price);
     const gross = q * p;
     let discount = null;
     if (discDraft != null && draftOf('discount') !== '') {
@@ -152,16 +196,31 @@ const AlterItemModal = ({
       quantity, price, discount, q, p, d,
       total: gross * (1 - d / 100),
       currentTotal: item.quantity * item.price * (1 - (Number(item.discount) || 0) / 100),
-      changed: quantity != null || price != null || discount != null,
+      changed: quantity != null || price != null || discount != null || chosenUnit != null,
     };
   })();
 
   const apply = () => {
     if (!preview.changed) return;
-    onApply({ quantity: preview.quantity, price: preview.price, discount: preview.discount });
+    onApply({ quantity: preview.quantity, price: preview.price, discount: preview.discount, unit: chosenUnit });
   };
 
-  const press = (k) => onValueChange(sanitize(`${value}${k}`));
+  // In the Unit section a digit picks that unit by its number in the list.
+  const pickUnitByNumber = (k) => {
+    const n = Number(k);
+    if (Array.isArray(units) && n >= 1 && n <= units.length) pickUnit(units[n - 1]);
+  };
+  const stepUnit = (dir) => {
+    if (!Array.isArray(units) || units.length === 0) return;
+    const shown = chosenUnit || currentUnit;
+    const idx = Math.max(0, units.findIndex((u) => sameUnit(u.unit, shown?.unit)));
+    pickUnit(units[(idx + dir + units.length) % units.length]);
+  };
+
+  const press = (k) => {
+    if (mode === 'unit') { pickUnitByNumber(k); return; }
+    onValueChange(sanitize(`${value}${k}`));
+  };
 
   const onKeyDown = (e) => {
     const { key } = e;
@@ -184,23 +243,33 @@ const AlterItemModal = ({
       onDiscountTypeChange(discountType === 'percent' ? 'amount' : 'percent');
       return;
     }
-    if (key === 'Delete') { handled(); onValueChange(''); return; }
+    if (mode === 'unit' && (key === 'ArrowLeft' || key === 'ArrowRight')) {
+      handled();
+      stepUnit(key === 'ArrowRight' ? 1 : -1);
+      return;
+    }
+    if (key === 'Delete') { handled(); if (mode === 'unit') setUnitDraft(null); else onValueChange(''); return; }
     if (e.ctrlKey || e.metaKey || e.altKey || key.length !== 1) return;
     const lower = key.toLowerCase();
     if (lower === 'q') { handled(); switchMode('qty'); return; }
     if (lower === 'p') { handled(); switchMode('price'); return; }
     if (lower === 'd') { handled(); switchMode('discount'); return; }
+    if (lower === 'u') { handled(); switchMode('unit'); return; }
+    if (mode === 'unit') { handled(); pickUnitByNumber(key); return; }
     if (mode === 'discount' && key === '%') { handled(); onDiscountTypeChange('percent'); return; }
     if (mode === 'discount' && lower === 'a') { handled(); onDiscountTypeChange('amount'); return; }
   };
 
+  const lineUnitName = currentUnit?.unit || item.unit || null;
   const currentLabel = (m) => {
     if (m === 'qty') return `× ${item.quantity}`;
     if (m === 'price') return formatCurrency(item.price);
+    if (m === 'unit') return units === null && loadUnits ? '…' : (lineUnitName || '—');
     return Number(item.discount) > 0 ? `${Number(item.discount).toFixed(2).replace(/\.00$/, '')}%` : 'None';
   };
 
   const draftLabel = (m) => {
+    if (m === 'unit') return chosenUnit ? chosenUnit.unit : null;
     const raw = draftOf(m);
     if (raw === '' || raw == null) return null;
     if (m === 'qty') return qtyLocked ? null : `× ${Math.round(num(raw) || 0)}`;
@@ -221,12 +290,81 @@ const AlterItemModal = ({
       inputMode="decimal"
       autoFocus
       autoComplete="off"
-      aria-label={fieldLabel}
-      placeholder={mode === 'qty' ? String(item.quantity) : mode === 'price' ? Number(item.price).toFixed(2) : String(Number(item.discount) || 0)}
-      value={value}
-      onChange={(e) => onValueChange(sanitize(e.target.value))}
+      aria-label={mode === 'unit' ? 'Unit — key its number' : fieldLabel}
+      placeholder={mode === 'unit'
+        ? ((chosenUnit || currentUnit)?.unit || '—')
+        : mode === 'qty' ? String(item.quantity) : mode === 'price' ? Number(item.price).toFixed(2) : String(Number(item.discount) || 0)}
+      value={mode === 'unit' ? '' : value}
+      onChange={(e) => { if (mode !== 'unit') onValueChange(sanitize(e.target.value)); }}
       className={className}
     />
+  );
+
+  // The packing units, as the prototype lays them out: multiplier badge, name, price per unit.
+  const baseUnit = Array.isArray(units) ? units.find((u) => u.base) : null;
+  const baseLabel = baseUnit?.symbol || baseUnit?.unit || 'pc';
+  const shownUnit = chosenUnit || currentUnit;
+  const unitList = (
+    <div role="radiogroup" aria-label="Packing unit" className="flex flex-col gap-2">
+      <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">Select packing unit</p>
+      {units === null && (
+        <p className="flex items-center gap-2 rounded-xl border border-dashed border-gray-200 px-4 py-6 text-sm text-gray-500">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading units…
+        </p>
+      )}
+      {Array.isArray(units) && units.length < 2 && (
+        <p className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-500">
+          {unitsError || 'This item is sold in one unit only.'}
+        </p>
+      )}
+      {Array.isArray(units) && units.length >= 2 && units.map((u, i) => {
+        const selected = sameUnit(u.unit, shownUnit?.unit);
+        const conv = Number(u.conversion) || 1;
+        // The line's own unit shows what the line charges now (it may carry a keyed price).
+        const price = sameUnit(u.unit, currentUnit?.unit) ? Number(item.price) || 0 : unitPriceFor(item, u);
+        return (
+          <button
+            key={u.unit}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            aria-label={`${u.unit} (${i + 1})`}
+            onMouseDown={keepFocus}
+            onClick={() => pickUnit(u)}
+            className={`flex items-center gap-3 rounded-xl border-2 px-3 py-3 text-left transition-all ${
+              selected
+                ? 'border-[#327F74] bg-[#327F74]/5 ring-4 ring-[#327F74]/10'
+                : 'border-gray-200 bg-white hover:border-[#327F74]/40 hover:bg-gray-50'
+            }`}
+          >
+            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-xs font-black tabular-nums ${
+              selected ? 'bg-[#327F74] text-white' : 'bg-gray-100 text-gray-600'
+            }`}
+            >
+              {fmtConversion(conv)}×
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-bold text-[#1E293B]">{u.unit}</span>
+              <span className="block truncate text-[11px] text-gray-500">
+                {u.base ? (code || 'Base unit') : `${fmtConversion(conv)} × ${baseLabel}`}
+                <kbd className="ml-2 rounded border border-gray-200 bg-white px-1 text-[9px] font-semibold text-gray-400">{i + 1}</kbd>
+              </span>
+            </span>
+            <span className="shrink-0 text-right">
+              <span className={`block text-sm font-black tabular-nums ${selected ? 'text-[#327F74]' : 'text-[#1E293B]'}`}>{formatCurrency(price)}</span>
+              {!u.base && conv > 0 && (
+                <span className="block text-[10px] tabular-nums text-gray-400">{formatCurrency(price / conv)}/{baseLabel}</span>
+              )}
+            </span>
+            {selected && (
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#327F74] text-white">
+                <Check className="h-3 w-3" strokeWidth={3} />
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
   );
 
   const discountToggle = (track, on, off) => mode === 'discount' && (
@@ -288,11 +426,11 @@ const AlterItemModal = ({
             </div>
           </div>
 
-          <div role="tablist" aria-label="Field to alter" className="grid grid-cols-3 gap-2">
+          <div role="tablist" aria-label="Field to alter" className="grid grid-cols-2 gap-2">
             {MODES.map((m) => {
               const s = SECTIONS[m];
               const isActive = m === mode;
-              const locked = m === 'qty' && qtyLocked;
+              const locked = isLocked(m);
               const draft = draftLabel(m);
               return (
                 <button
@@ -334,6 +472,7 @@ const AlterItemModal = ({
         </div>
 
         <div className="flex flex-1 flex-col gap-2 p-4">
+          {mode === 'unit' ? unitList : (
           <div className="grid grid-cols-3 gap-2">
             {['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0'].map((k) => (
               <button
@@ -358,11 +497,12 @@ const AlterItemModal = ({
               <Delete className="h-5 w-5" />
             </button>
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          )}
+          <div className="mt-auto grid grid-cols-2 gap-2">
             <button
               type="button"
               onMouseDown={keepFocus}
-              onClick={() => onValueChange('')}
+              onClick={() => (mode === 'unit' ? setUnitDraft(null) : onValueChange(''))}
               className="h-12 rounded-xl border border-red-200 bg-red-50 text-sm font-bold text-red-500 transition-colors hover:bg-red-100"
             >
               Clear
@@ -427,7 +567,7 @@ const AlterItemModal = ({
             {MODES.map((m) => {
               const s = SECTIONS[m];
               const isActive = m === mode;
-              const locked = m === 'qty' && qtyLocked;
+              const locked = isLocked(m);
               const draft = draftLabel(m);
               return (
                 <button
@@ -454,7 +594,13 @@ const AlterItemModal = ({
                     <span className="mt-0.5 flex items-center gap-1 truncate text-[11px] tabular-nums">
                       <span className={draft ? 'text-gray-400 line-through' : 'text-gray-500'}>{currentLabel(m)}</span>
                       {draft && <span className={`font-bold ${s.text}`}>→ {draft}</span>}
-                      {locked && <span className="text-gray-400">· batch line</span>}
+                      {locked && m === 'qty' && <span className="text-gray-400">· batch line</span>}
+                      {locked && m === 'unit' && lineUnitLocked(item) && (
+                        <span className="text-gray-400">· {item.batchControlled ? 'batch line' : 'order line'}</span>
+                      )}
+                      {locked && m === 'unit' && !lineUnitLocked(item) && Array.isArray(units) && (
+                        <span className="text-gray-400">· single unit</span>
+                      )}
                     </span>
                   </span>
                 </button>
@@ -480,6 +626,7 @@ const AlterItemModal = ({
               {field('min-w-0 flex-1 bg-transparent text-right font-mono text-2xl font-bold text-[#1E293B] placeholder:text-gray-300 focus:outline-none')}
             </label>
 
+            {mode === 'unit' ? <div className="min-h-54">{unitList}</div> : (
             <div className="grid grid-cols-3 gap-1.5">
               {['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0'].map((k) => (
                 <button
@@ -502,12 +649,13 @@ const AlterItemModal = ({
                 <Delete className="h-5 w-5" />
               </button>
             </div>
+            )}
 
             <div className="grid grid-cols-[1fr_2fr] gap-1.5">
               <button
                 type="button"
                 onMouseDown={keepFocus}
-                onClick={() => onValueChange('')}
+                onClick={() => (mode === 'unit' ? setUnitDraft(null) : onValueChange(''))}
                 className="h-12 rounded-xl border border-red-200 bg-red-50 text-sm font-bold text-red-600 transition-colors hover:bg-red-100"
               >
                 Clear
@@ -528,8 +676,9 @@ const AlterItemModal = ({
         {/* Keyboard legend */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-gray-100 bg-gray-50/80 px-5 py-2 text-[10px] text-gray-500 rounded-b-2xl">
           <span className="flex items-center gap-1"><ArrowUp className="h-3 w-3" /><ArrowDown className="h-3 w-3" /> / Tab switch field</span>
-          <span><b className="text-gray-600">Q P D</b> or <b className="text-gray-600">F4 F9 F8</b> jump</span>
+          <span><b className="text-gray-600">Q P D U</b> or <b className="text-gray-600">F4 F9 F8</b> jump</span>
           {mode === 'discount' && <span><b className="text-gray-600">← →</b> % / amount</span>}
+          {mode === 'unit' && <span><b className="text-gray-600">1–9</b> or <b className="text-gray-600">← →</b> pick unit</span>}
           <span><b className="text-gray-600">Enter</b> apply</span>
           <span><b className="text-gray-600">Esc</b> cancel</span>
         </div>

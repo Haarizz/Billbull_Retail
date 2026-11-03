@@ -3,6 +3,7 @@ import { getStockAvailability } from '../../../api/stockAvailabilityApi';
 import { getItemPriceHistory } from '../../../api/salesInvoiceApi';
 import { resolveLineTaxRate } from '../../../utils/vatMath';
 import POSItemEntryModal from './POSItemEntryModal';
+import { lineUnitLocked, sameUnit, unitOfLine, unitPriceFor } from '../../../pages/Sales/POS/features/cart/lineUnits';
 
 const EMPTY_OBJ = {};
 
@@ -41,7 +42,9 @@ const POSItemEntryContainer = ({
     showStock = true,
     showPriceHistory = true,
     showRecentSales = true,
-    posSettings = {}
+    posSettings = {},
+    // (line or product) => Promise<unit option[]> — the packing units it sells in, priced.
+    loadUnits = null
 }) => {
     // --- Data State ---
     const [stockData, setStockData] = useState(null);
@@ -69,6 +72,41 @@ const POSItemEntryContainer = ({
 
     // Resolve the active entity based on mode
     const activeEntity = mode === 'edit' ? invoiceLine : product;
+
+    // --- Packing units (piece / box / carton) ---
+    // null while loading; [] when the item sells in one unit only. Batch/serial and Sales Order
+    // lines keep their unit.
+    const [units, setUnits] = useState(null);
+    const [localUnit, setLocalUnit] = useState(null);
+    const unitLocked = lockQuantity || lineUnitLocked(activeEntity)
+        || (mode === 'add' && Boolean(activeEntity?.isBatch || activeEntity?.isSerial));
+    useEffect(() => {
+        setUnits(null);
+        setLocalUnit(null);
+        if (!isOpen || !activeEntity || !loadUnits || unitLocked) { setUnits([]); return undefined; }
+        let cancelled = false;
+        const target = mode === 'edit' ? activeEntity : { productId: activeEntity.id, code: activeEntity.code };
+        Promise.resolve(loadUnits(target))
+            .then((list) => {
+                if (cancelled) return;
+                const loaded = Array.isArray(list) ? list : [];
+                setUnits(loaded);
+                setLocalUnit(unitOfLine(mode === 'edit' ? activeEntity : {}, loaded));
+            })
+            .catch(() => { if (!cancelled) setUnits([]); });
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen, activeEntity, mode]);
+
+    // Picking a unit re-prices the entry per that unit (the line's own unit keeps its price).
+    const handleChangeUnit = (unit) => {
+        if (!unit || sameUnit(unit.unit, localUnit?.unit)) return;
+        setLocalUnit(unit);
+        setSelectedPriceRef({ source: null, index: null });
+        const current = mode === 'edit' ? unitOfLine(activeEntity, units) : null;
+        if (current && sameUnit(unit.unit, current.unit)) setLocalPrice(activeEntity.price ?? 0);
+        else setLocalPrice(unitPriceFor(mode === 'edit' ? activeEntity : { price: activeEntity.price }, unit));
+    };
 
     useEffect(() => {
         if (isOpen && activeEntity) {
@@ -197,6 +235,12 @@ const POSItemEntryContainer = ({
             discount: discountPercent,
         };
 
+        // A base unit on a new line needs nothing; any other unit (or a change on a line) is sent.
+        if (localUnit && Array.isArray(units) && units.length > 1 && !unitLocked
+            && (mode === 'edit' || !localUnit.base)) {
+            payload.unit = localUnit;
+        }
+
         if (mode === 'add') {
             payload.product = activeEntity;
         } else if (mode === 'edit') {
@@ -265,6 +309,9 @@ const POSItemEntryContainer = ({
             onChangeDiscount={setLocalDisc}
             discountMode={discountMode}
             onChangeDiscountMode={handleDiscountModeChange}
+            units={unitLocked ? [] : units}
+            unit={localUnit}
+            onChangeUnit={handleChangeUnit}
         />
     );
 };

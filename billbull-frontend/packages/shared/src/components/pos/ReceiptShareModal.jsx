@@ -3,6 +3,7 @@ import { Mail, MessageCircle, Smartphone, X } from 'lucide-react';
 
 import { usePosInputV2, usePosOverlay } from '../../pages/Sales/POS/input/PosOverlayContext';
 import { POS_SCOPES } from '../../pages/Sales/POS/input/posScope';
+import { defaultReceiptEmailMessage, emailMessageToHtml } from '../../utils/emailMessage';
 
 /**
  * One modal drives all three POS "Share Receipt" channels (SMS, WhatsApp,
@@ -69,6 +70,8 @@ const RECEIPT_SHARE_CHANNELS = {
     sendClass: 'bg-[#2563EB] hover:bg-[#1D4ED8] focus-visible:ring-[#2563EB]',
     validate: isValidEmail,
     invalidMessage: 'Enter a valid email address.',
+    // The cashier can edit the email body; it goes out as `messageHtml`.
+    hasMessage: true,
   },
 };
 
@@ -79,12 +82,14 @@ const RECEIPT_SHARE_CHANNELS = {
  *
  * @param {string}   channel  key of RECEIPT_SHARE_CHANNELS
  * @param {string}   initialValue  pre-filled customer mobile/email ('' for walk-in)
- * @param {Function} onSend  async (value) => void; throwing keeps the dialog open
+ * @param {Function} onSend  async (value, { messageHtml }) => void; messageHtml only for
+ *                           email ('' when the message was cleared); throwing keeps the dialog open
  * @param {Function} onClose
  */
 export default function ReceiptShareModal({ channel, initialValue = '', onSend, onClose }) {
   const config = channel ? RECEIPT_SHARE_CHANNELS[channel] : null;
   const [value, setValue] = useState(initialValue || '');
+  const [message, setMessage] = useState(() => (config?.hasMessage ? defaultReceiptEmailMessage() : ''));
   const [touched, setTouched] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
@@ -117,14 +122,15 @@ export default function ReceiptShareModal({ channel, initialValue = '', onSend, 
     setSending(true);
     setError('');
     try {
-      await onSend?.(value.trim());
+      if (config.hasMessage) await onSend?.(value.trim(), { messageHtml: emailMessageToHtml(message) });
+      else await onSend?.(value.trim());
       onClose?.();
     } catch (err) {
       // Keep the dialog — and the typed value — so the cashier can retry.
       setError(err?.response?.data?.message || err?.message || 'Failed to send. Please try again.');
       setSending(false);
     }
-  }, [config, sending, value, onSend, onClose]);
+  }, [config, sending, value, message, onSend, onClose]);
 
   // Esc closes. posInputV2: delivered by the POS input controller through this registration;
   // otherwise the legacy window listener below does it.
@@ -214,6 +220,22 @@ export default function ReceiptShareModal({ channel, initialValue = '', onSend, 
               </p>
             )}
           </div>
+
+          {config.hasMessage && (
+            <div className="space-y-1.5">
+              <label htmlFor={`${fieldId}-message`} className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Message
+              </label>
+              <textarea
+                id={`${fieldId}-message`}
+                value={message}
+                disabled={sending}
+                onChange={(e) => setMessage(e.target.value)}
+                rows={4}
+                className="w-full rounded-xl border-2 border-slate-200 focus:border-slate-400 px-3.5 py-2 text-sm text-[#1E293B] placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-400 focus:outline-none resize-y transition-colors"
+              />
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <button

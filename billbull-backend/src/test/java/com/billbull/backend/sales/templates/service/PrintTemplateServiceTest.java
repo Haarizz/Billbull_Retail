@@ -114,6 +114,34 @@ class PrintTemplateServiceTest {
         verify(printTemplateRepository, never()).findByCategoryAndBranchId(any(), any());
     }
 
+    @Test
+    void updateTermsChangesOnlyTheTermsAndTheDesignerCopy() {
+        PrintTemplate stored = template(3L, "Sales Invoice", null, true);
+        stored.setName("Default Sales Invoice");
+        stored.setTermsContent("Old terms");
+        stored.setColumns("{\"qty\":true}");
+        stored.setDisplayOptions("{\"showTerms\":true,\"salesDesignerSettings\":{\"termsText\":\"Old terms\",\"accentColor\":\"#F5C742\"}}");
+        when(printTemplateRepository.findById(3L)).thenReturn(java.util.Optional.of(stored));
+        when(printTemplateRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PrintTemplate saved = service.updateTerms(3L, "1. New warranty terms");
+
+        assertEquals("1. New warranty terms", saved.getTermsContent());
+        assertTrue(saved.getDisplayOptions().contains("\"termsText\":\"1. New warranty terms\""));
+        assertTrue(saved.getDisplayOptions().contains("\"accentColor\":\"#F5C742\""));
+        assertTrue(saved.getDisplayOptions().contains("\"showTerms\":true"));
+        assertEquals("{\"qty\":true}", saved.getColumns());
+        assertEquals("Default Sales Invoice", saved.getName());
+        assertTrue(saved.isDefault());
+    }
+
+    @Test
+    void withDesignerTermsLeavesOptionsWithoutDesignerSettingsAlone() {
+        assertEquals("{\"showTerms\":true}", PrintTemplateService.withDesignerTerms("{\"showTerms\":true}", "x"));
+        assertEquals("not json", PrintTemplateService.withDesignerTerms("not json", "x"));
+        assertEquals(null, PrintTemplateService.withDesignerTerms(null, "x"));
+    }
+
     private PrintTemplate template(Long id, String category, Long branchId, boolean isDefault) {
         PrintTemplate t = new PrintTemplate();
         t.setId(id);

@@ -8,7 +8,10 @@ import java.time.LocalDateTime;
 /**
  * Tracks the current Business Date per branch, independent of the server clock.
  * Advances only via {@link PosBusinessDateService#advanceBusinessDate}, called once
- * at the tail of a successful Day Close — never derived from {@code LocalDate.now()}.
+ * at the tail of a successful Day Close, to the day after the closed date (never
+ * backwards) — never derived from {@code LocalDate.now()}. Between closes it can lag
+ * the calendar across idle days; new sessions take their date from the Business Day
+ * engine, not from this pointer.
  * Deliberately has no OPEN/CLOSED status field: whether the current business date is
  * closed is answered by {@code PosDayCloseRepository.existsByBranchIdAndCloseDate},
  * which stays the single source of truth for that question.

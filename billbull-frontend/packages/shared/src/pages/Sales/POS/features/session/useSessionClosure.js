@@ -88,6 +88,7 @@ export function useSessionClosure({
   },
   setCurrentView, setSessionNowMs, businessDayRefreshRef,
   loadersRef,
+  adminCloseApproval,
 }) {
   // Supervisor-authorized "Cancel Closure". Credentials are verified server-side against a
   // supervisor role — this dialog only collects them, it never decides anything.
@@ -264,10 +265,13 @@ export function useSessionClosure({
             // it once; a second tab retrying the same close is refused again.
             varianceApprovalToken: varianceGrantRef.current?.sessionId === targetSession.id
               ? varianceGrantRef.current.token : undefined,
+            // Closing Approval (Console → Behavior): present once an administrator approved.
+            adminApprovalToken: adminCloseApproval?.tokenFor('SESSION_CLOSE', targetSession.id),
           });
           // The grant is single-use server-side; drop it either way.
           closureAuthGrantRef.current = null;
           forceCloseContextRef.current = null;
+          adminCloseApproval?.clear();
 
           if (targetSession.id === currentSession?.id) {
             setCurrentSession(closed);
@@ -293,6 +297,17 @@ export function useSessionClosure({
           setVarianceApproval(data);
           setVarianceApprovalError('');
           setCloseSessionError('');
+          return;
+        }
+        // The branch requires an administrator to approve session closes. Ask, then retry this
+        // same close; nothing was written by the refused attempt.
+        if (data?.code === 'ADMIN_APPROVAL_REQUIRED' && adminCloseApproval) {
+          setCloseSessionError('');
+          adminCloseApproval.request({
+            action: 'SESSION_CLOSE',
+            targetId: targetSession.id,
+            onApproved: () => closeSession({ loadDaySummary, syncPosData }),
+          });
           return;
         }
         const msg = data?.message || data?.error || err?.message;

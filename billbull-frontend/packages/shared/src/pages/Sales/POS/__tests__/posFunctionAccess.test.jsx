@@ -275,7 +275,9 @@ describe('no template can bypass the gate', () => {
   });
 
   it('the Console exposes all three modes on the Behavior tab', () => {
-    const CONSOLE = read('../POSConsole.jsx');
+    // The Behavior tab body lives in its own component; POSConsole only mounts it.
+    expect(read('../POSConsole.jsx')).toContain('<PosBehaviorSettings');
+    const CONSOLE = read('../features/settings/PosBehaviorSettings.jsx');
     expect(CONSOLE).toContain('Action Button Access');
     expect(CONSOLE).toContain('patch({ posFunctionAccessMode: val })');
     ['ALL_USERS', 'SUPERVISOR_PASSWORD', 'SUPERVISOR_ONLY'].forEach((mode) => {

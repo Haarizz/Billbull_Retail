@@ -76,6 +76,26 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
     private String branchName;
     private String branchCode;
 
+    /**
+     * The price level the transaction priced at (V126). Sent by the client only to choose a level
+     * explicitly; on save the server resolves and overwrites all three fields
+     * (sales.pricing.PricingResolutionService#applyToInvoice).
+     */
+    @Column(name = "price_level_id")
+    private Long priceLevelId;
+    @Column(name = "price_level_name", length = 100)
+    private String priceLevelName;
+    /** TRANSACTION, CUSTOMER or DEFAULT — see sales.pricing.PriceLevelSource. */
+    @Column(name = "price_level_source", length = 20)
+    private String priceLevelSource;
+
+    public Long getPriceLevelId() { return priceLevelId; }
+    public void setPriceLevelId(Long priceLevelId) { this.priceLevelId = priceLevelId; }
+    public String getPriceLevelName() { return priceLevelName; }
+    public void setPriceLevelName(String priceLevelName) { this.priceLevelName = priceLevelName; }
+    public String getPriceLevelSource() { return priceLevelSource; }
+    public void setPriceLevelSource(String priceLevelSource) { this.priceLevelSource = priceLevelSource; }
+
     /** Navigable view of {@link #branchId}. Read-only — writes go through {@link #setBranchId(Long)}. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "branch_id", insertable = false, updatable = false)
@@ -154,6 +174,15 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
 
     @Column(length = 1000)
     private String internalNotes;
+
+    /**
+     * Terms & Conditions printed on this invoice. Pre-filled from the default Sales Invoice print
+     * template when the invoice is created and editable per invoice, so a reprint always shows the
+     * terms the customer was given even after the template's default changes. Null (invoices saved
+     * before V131, POS bills) prints the template's own terms; an empty string prints none.
+     */
+    @Column(name = "terms_conditions", columnDefinition = "TEXT")
+    private String termsConditions;
 
     @Enumerated(EnumType.STRING)
     private SalesInvoiceStatus status;
@@ -651,6 +680,14 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
 
     public void setInternalNotes(String internalNotes) {
         this.internalNotes = internalNotes;
+    }
+
+    public String getTermsConditions() {
+        return termsConditions;
+    }
+
+    public void setTermsConditions(String termsConditions) {
+        this.termsConditions = termsConditions;
     }
 
     public SalesInvoiceStatus getStatus() {

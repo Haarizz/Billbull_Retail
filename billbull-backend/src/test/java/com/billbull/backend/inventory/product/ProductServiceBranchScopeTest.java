@@ -2,6 +2,8 @@ package com.billbull.backend.inventory.product;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -12,7 +14,10 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.billbull.backend.inventory.brand.BrandRepository;
@@ -106,6 +111,44 @@ class ProductServiceBranchScopeTest {
 
         verify(productRepo).findAllActiveInBranchScope(scope.branchIds());
         verify(productRepo, never()).findAllByIsActiveTrue();
+    }
+
+    // ─────────────────── barcode bulk print by classification ───────────────────
+
+    @Test
+    void classificationWithNoFilterReturnsNothingAndSkipsTheQuery() {
+        java.util.Map<String, Object> out = service().findByClassification(null, null, "  ", 200);
+
+        assertThat((List<?>) out.get("content")).isEmpty();
+        assertThat(out.get("totalElements")).isEqualTo(0L);
+        verify(productRepo, never()).findActiveByClassification(any(), any(), any(), any());
+        verify(productRepo, never()).findActiveByClassificationInBranchScope(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void classificationToggleOffUsesUnscopedQueryAndCapsTheSize() {
+        when(branchScopeResolver.activeListScope()).thenReturn(Optional.empty());
+        when(productRepo.findActiveByClassification(eq(5L), isNull(), eq("Input Devices"), any()))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service().findByClassification(5L, null, " Input Devices ", 10_000);
+
+        ArgumentCaptor<Pageable> page = ArgumentCaptor.forClass(Pageable.class);
+        verify(productRepo).findActiveByClassification(eq(5L), isNull(), eq("Input Devices"), page.capture());
+        assertThat(page.getValue().getPageSize()).isEqualTo(ProductService.CLASSIFICATION_MAX_SIZE);
+        verify(productRepo, never()).findActiveByClassificationInBranchScope(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void classificationToggleOnUsesBranchScopedQuery() {
+        ListScope scope = scopeOf(3L);
+        when(branchScopeResolver.activeListScope()).thenReturn(Optional.of(scope));
+        when(productRepo.findActiveByClassificationInBranchScope(isNull(), eq(7L), eq(""), eq(scope.branchIds()), any()))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service().findByClassification(null, 7L, null, 50);
+
+        verify(productRepo, never()).findActiveByClassification(any(), any(), any(), any());
     }
 
     // ─────────────────── branch-first code/SKU resolution ───────────────────

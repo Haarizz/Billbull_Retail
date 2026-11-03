@@ -79,6 +79,9 @@ public class Customer {
     // BUSINESS
     // =========================
     private String priceList;
+    /** The customer's default price level (V126). The legacy {@link #priceList} label is kept in step. */
+    @Column(name = "price_level_id")
+    private Long priceLevelId;
     private String currency;
     private String salesman;
     private String taxGroup;
@@ -252,6 +255,8 @@ public class Customer {
 
     public String getPriceList() { return priceList; }
     public void setPriceList(String priceList) { this.priceList = priceList; }
+    public Long getPriceLevelId() { return priceLevelId; }
+    public void setPriceLevelId(Long priceLevelId) { this.priceLevelId = priceLevelId; }
 
     public String getCurrency() { return currency; }
     public void setCurrency(String currency) { this.currency = currency; }

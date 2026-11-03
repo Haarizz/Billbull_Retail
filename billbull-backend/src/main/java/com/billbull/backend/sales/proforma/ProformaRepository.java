@@ -15,6 +15,8 @@ public interface ProformaRepository extends JpaRepository<ProformaInvoice, Long>
 
     boolean existsByPiNumber(String piNumber);
 
+    java.util.Optional<ProformaInvoice> findFirstByPiNumberOrderByIdDesc(String piNumber);
+
     @Query("SELECT pi.piNumber FROM ProformaInvoice pi WHERE pi.piNumber LIKE CONCAT(:prefix, '%')")
     List<String> findPiNumbersByPrefix(@Param("prefix") String prefix);
 

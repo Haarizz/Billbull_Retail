@@ -151,7 +151,7 @@ class DocumentSendAuthorizationTest {
                 mock(AuditLogService.class), emailSender, permissions, whatsAppSender, companyProfileService,
                 "uploads/");
         invoices = new SalesInvoiceController(invoiceService, customerContactService, permissions, emailSender,
-                mock(SalespersonAttributionService.class), whatsAppSender, companyProfileService);
+                mock(SalespersonAttributionService.class), whatsAppSender, companyProfileService, null);
         deliveryNotes = new DeliveryNoteController(deliveryNoteService, emailSender, permissions);
         proformas = new ProformaController(proformaService, mock(AuditLogService.class), emailSender, permissions);
         receiptVouchers = new ReceiptVoucherController(receiptVoucherService, new ObjectMapper(),

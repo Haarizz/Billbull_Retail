@@ -2,15 +2,18 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Heart, AlertTriangle, AlertCircle, Eye, Gift } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import BusinessDayStatusChip from '../../../components/pos/BusinessDayStatusChip';
+import PriceLevelSelect from '../../../components/pricing/PriceLevelSelect';
 import { CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
-import { toNumber, getCartPriceWarning, getPosVatLabel } from './posUtils';
+import { toNumber, getCartPriceWarning, getPosVatLabel, isCustomerPricedLine, tierMarkerOf } from './posUtils';
 import { buildPosFunctionButtons, groupPosFunctionButtons } from './lib/posFunctionButtons';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../../utils/vatMath';
-import { ScanLine } from 'lucide-react';
+import { ScanLine, Handshake, Layers } from 'lucide-react';
 import QuickCustomerModal from './features/customers/QuickCustomerModal';
 import QuickAddProductModal from '../../../components/inventory/QuickAddProductModal';
 import AlterItemModal from './features/cart/AlterItemModal';
+import { AddonsHeader, CART_ZONE_FOCUS_CLASS, QuickCheckoutRail, usePosCartZone } from './features/cart/QuickCheckoutBar';
+import { checkoutOptions } from './input/posShortcuts';
 import {
   isPosInputHandled, isPosScreenBlocked, markScanHandled, wasScanHandled,
 } from './device/scanner/scanGuard';
@@ -102,6 +105,8 @@ const POSTouchScreen = React.memo((props) => {
     scannerConfig,
     // the cart line the last add landed on — the keyboard line shortcuts' fallback target
     lastEnteredLineId = null,
+    // price level selector for the sale (null when no custom levels exist)
+    priceLevelProps = null,
     // customers
     customerOptions, selectedCustomer, setSelectedCustomer, selectedCustomerData,
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
@@ -121,6 +126,7 @@ const POSTouchScreen = React.memo((props) => {
     handleProductSelection,
     // cart actions
     updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
+    loadSaleUnits, changeLineUnit,
     guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy, deleteHeldBill,
     // layaway
     activeLayawayId, activeLayawayDeposit,
@@ -137,7 +143,7 @@ const POSTouchScreen = React.memo((props) => {
     // right panel
     rightPanelTab, setRightPanelTab, hiddenPanelButtons, hideCategoriesPanel, hideItemsPanel,
     // layout
-    posTemplate,
+    posTemplate, quickCheckoutEnabled = true,
     // cart view
     cartViewDetailed, cartLineDetails,
     // checkout / payment — handleCheckout is the ONLY way into settlement from this template.
@@ -175,11 +181,12 @@ const POSTouchScreen = React.memo((props) => {
    * <p>handleCheckout owns the salesperson-verification gate and opens the payment phase. When the
    * gate refuses it returns false and the scan modal is already up, so we return without doing
    * anything further — no settlement state is primed for a sale that has not been authorised.
-   * `quickCash` comes only from the Enter shortcut (posShortcuts.CHECKOUT_QUICK_CASH); a click
-   * passes its event, which is not one, so the button opens a plain checkout.
+   * The argument is a quick-cash mode from the Enter shortcut (posShortcuts.CHECKOUT_QUICK_CASH)
+   * or `{ tender }` from the cart's quick-pay bar / tender keys; a click passes its event, which
+   * is neither, so the button opens a plain checkout.
    */
-  const startCheckout = useCallback((quickCash) => {
-    if (handleCheckout?.(typeof quickCash === 'string' ? { quickCash } : undefined) === false) return;
+  const startCheckout = useCallback((arg) => {
+    if (handleCheckout?.(checkoutOptions(arg)) === false) return;
     // Nothing else to prime here. The tender pre-fill that used to live in this callback wrote to
     // setTenderedAmount / setCheckoutKeypad* — state that moved into usePaymentManager, which seeds
     // the allocation from the amount due itself. Those four props were never passed again, so every
@@ -319,15 +326,17 @@ const POSTouchScreen = React.memo((props) => {
     if (item.isVoided) return;
     openAlterItem(item.id, classicMode !== 'none' ? classicMode : 'qty');
   };
-  const applyAlterItem = useCallback(({ quantity, price, discount }) => {
-    const id = selectedFocusItemId;
+  const applyAlterItem = useCallback(({ quantity, price, discount, unit }) => {
+    let id = selectedFocusItemId;
     if (!id) return;
-    // Price first, then discount, then quantity: each updater composes on the previous one's line.
+    // Unit first (it re-prices the line and may give it a new id), then price, discount and
+    // quantity: each updater composes on the previous one's line.
+    if (unit && changeLineUnit) id = changeLineUnit(id, unit);
     if (price != null) updateItemPrice(id, price);
     if (discount != null) updateDiscount(id, discount);
     if (quantity != null) updateQuantity(id, quantity);
     closeAlterItem();
-  }, [selectedFocusItemId, updateItemPrice, updateDiscount, updateQuantity, closeAlterItem]);
+  }, [selectedFocusItemId, changeLineUnit, updateItemPrice, updateDiscount, updateQuantity, closeAlterItem]);
   // The line went away (removed, voided, bill cleared) under an open dialog: leave ITEM_ENTRY, or
   // the scope would keep holding the keyboard for a field that is no longer on screen.
   useEffect(() => {
@@ -359,7 +368,53 @@ const POSTouchScreen = React.memo((props) => {
     },
     onCustomer: () => setShowCustomerDropdown(true),
     onSearch: () => setShowCustomerDropdown(false),
+    onSelect: setSelectedFocusItemId,
   });
+
+  // The cart cursor's region (Classic and Cart Focus render one cart at a time) and the Quick
+  // Checkout rail in the right column: tap a tender to check out straight onto it. Add-ons swaps
+  // the rail for the Functions / History panel until ✕.
+  const cartZone = usePosCartZone();
+  const pickQuickTender = useCallback((tender) => startCheckout({ tender }), [startCheckout]);
+  const cartEmpty = currentInvoice.items.length === 0;
+  const [showAddons, setShowAddons] = useState(false);
+  const openAddons = useCallback(() => setShowAddons(true), []);
+  const closeAddons = useCallback(() => setShowAddons(false), []);
+  // Quick Checkout off (pos_settings.layout_quick_checkout): the Functions / History panel with
+  // the Checkout button under it, in both layouts. A plain checkout; the tender is picked there.
+  const checkoutPanelButton = (
+    <div className="mt-auto border-t-2 border-[#F5C742]/30 shrink-0">
+      {activeLayawayId && activeLayawayDeposit > 0 && (
+        <div className="flex justify-between text-[11px] text-green-700 font-bold mb-1.5 px-3 pt-3">
+          <span>Deposit Applied</span><span>−{formatCurrencyStr(activeLayawayDeposit)}</span>
+        </div>
+      )}
+      <button type="button" onClick={startCheckout} disabled={cartEmpty}
+        className="w-full min-h-[72px] bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-40 disabled:cursor-not-allowed text-[#1E293B] font-black flex flex-col items-center justify-center py-3 transition-all">
+        <div className="flex items-center gap-2 text-lg">
+          <CreditCard className="h-6 w-6" />
+          <span className="tracking-wide uppercase">Checkout</span>
+        </div>
+        {!cartEmpty && (
+          <span className="text-sm font-bold opacity-90 mt-1">
+            {activeLayawayId && activeLayawayDeposit > 0
+              ? `Balance ${formatCurrencyStr(Math.max(0, currentInvoice.total + (Number(shippingCharge) || 0) - activeLayawayDeposit))}`
+              : formatCurrencyStr(currentInvoice.total + (Number(shippingCharge) || 0))}
+          </span>
+        )}
+      </button>
+    </div>
+  );
+  // A layaway's deposit is shown above the tenders, as it was above the Checkout button.
+  const depositNote = activeLayawayId && activeLayawayDeposit > 0 ? (
+    <div className="shrink-0 border-b border-green-100 bg-green-50 px-4 py-2 text-[11px] font-bold text-green-700">
+      <div className="flex justify-between"><span>Deposit Applied</span><span>−{formatCurrencyStr(activeLayawayDeposit)}</span></div>
+      <div className="flex justify-between font-semibold text-green-600">
+        <span>Balance</span>
+        <span>{formatCurrencyStr(Math.max(0, currentInvoice.total + (Number(shippingCharge) || 0) - activeLayawayDeposit))}</span>
+      </div>
+    </div>
+  ) : null;
 
   // Legacy keyboard wedge (posInputV2 off, or rendered without the POS input provider).
   useEffect(() => {
@@ -510,6 +565,7 @@ const POSTouchScreen = React.memo((props) => {
     formatCurrency,
     suppressLegacyScan: !posInputV2,
     onScanRefused: () => showFeedback?.('error', 'Scan ignored while altering the item. Key the value, then press Enter.'),
+    loadUnits: loadSaleUnits,
   };
 
   return (
@@ -534,6 +590,8 @@ const POSTouchScreen = React.memo((props) => {
             {/* Business Day status — compact, width-elastic, and the only place the
                 phase is shown in-flow (it replaced a full-width banner). */}
             <BusinessDayStatusChip />
+            {/* Price level the sale is priced at — visible in every template. */}
+            {priceLevelProps ? <PriceLevelSelect compact {...priceLevelProps} /> : null}
           </div>
 
           <div className="flex items-center space-x-2 shrink-0">
@@ -636,8 +694,8 @@ const POSTouchScreen = React.memo((props) => {
                 <span className="col-span-1"></span>
               </div>
 
-              {/* Cart rows */}
-              <div className="flex-1 overflow-y-auto min-w-[360px]">
+              {/* Cart rows — the cart cursor's region (F6 / click) */}
+              <div {...cartZone} className={`flex-1 overflow-y-auto min-w-[360px] ${CART_ZONE_FOCUS_CLASS}`}>
                 {currentInvoice.items.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-gray-300">
                     <ShoppingCart className="h-14 w-14 mb-3" />
@@ -646,13 +704,14 @@ const POSTouchScreen = React.memo((props) => {
                 ) : (
                   currentInvoice.items.map((item, idx) => {
                     return (
-                      <div key={item.id} onClick={() => onCartRowClick(item)}
+                      <div key={item.id} data-cart-line-id={item.id} onClick={() => onCartRowClick(item)}
                         className={`grid grid-cols-12 gap-1 px-3 py-2 border-b border-[#327F74]/20 items-start ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/10' : idx % 2 === 1 ? 'bg-[#F5C742]/10' : 'bg-white'} ${!item.isVoided ? 'cursor-pointer' : ''}`}>
                         <div className="col-span-6 min-w-0">
                           {/* Voided line: muted red + [VOID] tag + negative amounts (no
                               strike-through). Excluded from the total; disclosed below. */}
                           <p className={`text-xs font-semibold leading-tight break-words ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>
                             {item.name}
+                            {Number(item.unitConversion) > 1 && <span className="ml-1 inline-block rounded bg-[#327F74]/10 px-1 text-[9px] font-bold text-[#327F74]">{item.unit}</span>}
                             {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">[VOID]</span>}
                           </p>
                           {!item.isVoided && (item.nameAr ? <p className="text-[10px] text-gray-400 leading-tight break-words" dir="rtl">{item.nameAr}</p> : null)}
@@ -687,6 +746,12 @@ const POSTouchScreen = React.memo((props) => {
                               <AlertTriangle title={priceWarning.message} className={`h-2.5 w-2.5 shrink-0 ${priceWarning.level === 'error' ? 'text-red-500' : 'text-amber-500'}`} />
                             );
                           })()}
+                          {isCustomerPricedLine(item) && (
+                            <Handshake aria-label="Customer price" className="h-2.5 w-2.5 shrink-0 text-emerald-600" data-testid="customer-price-marker" />
+                          )}
+                          {tierMarkerOf(item) && (
+                            <Layers aria-label={tierMarkerOf(item)} title={tierMarkerOf(item)} className="h-2.5 w-2.5 shrink-0 text-amber-600" data-testid="tier-price-marker" />
+                          )}
                           {item.isVoided ? <CurrencyAmount amount={item.price} prefix="- " /> : formatCurrency(item.price)}
                         </span>
                         <span className={`col-span-1 text-xs font-bold text-right pt-1 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-[#F5C742]'}`}>{item.isVoided ? <CurrencyAmount amount={item.total} prefix="- " /> : formatCurrency(item.total)}</span>
@@ -885,6 +950,11 @@ const POSTouchScreen = React.memo((props) => {
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-semibold text-[#1E293B] leading-tight truncate">{product.name}</p>
                             <p className="text-[10px] font-mono text-gray-400 truncate">{product.code}{product.barcode ? ` | ${product.barcode}` : ''}</p>
+                            {(product.zoneName || product.locatorName) && (
+                              <p className="text-[10px] text-gray-500 truncate">
+                                Zone: {product.zoneName || '-'} | Locator: {product.locatorName || '-'}
+                              </p>
+                            )}
                           </div>
                           <p className="text-xs font-bold text-[#327F74] shrink-0">{formatCurrency(product.price)}</p>
                         </button>
@@ -985,6 +1055,11 @@ const POSTouchScreen = React.memo((props) => {
 
           {/* ══ COL 3: Tabbed Panel ════════════════════════════ */}
           <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-white lg:border-l-2 border-[#327F74]/30">
+
+            {quickCheckoutEnabled && !showAddons ? (
+              <QuickCheckoutRail onPick={pickQuickTender} onOpenAddons={openAddons} disabled={cartEmpty} note={depositNote} />
+            ) : (<>
+            {quickCheckoutEnabled && <AddonsHeader onClose={closeAddons} />}
 
             {/* Tab bar */}
             <div className="flex flex-shrink-0 border-b-2 border-[#327F74]/20 bg-white">
@@ -1103,30 +1178,8 @@ const POSTouchScreen = React.memo((props) => {
               </div>
             )}
 
-            {/* Checkout button — always visible */}
-            <div className="mt-auto border-t-2 border-[#F5C742]/30 shrink-0">
-              {activeLayawayId && activeLayawayDeposit > 0 && (
-                <div className="flex justify-between text-[11px] text-green-700 font-bold mb-1.5 px-3 pt-3">
-                  <span>Deposit Applied</span><span>−{formatCurrencyStr(activeLayawayDeposit)}</span>
-                </div>
-              )}
-              <button type="button"
-                onClick={startCheckout}
-                disabled={currentInvoice.items.length === 0}
-                className={`w-full min-h-[72px] bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-40 disabled:cursor-not-allowed text-[#1E293B] font-black flex flex-col items-center justify-center py-3 transition-all ${(!activeLayawayId || activeLayawayDeposit <= 0) ? 'mt-0' : ''}`}>
-                <div className="flex items-center gap-2 text-lg">
-                  <CreditCard className="h-6 w-6" />
-                  <span className="tracking-wide uppercase">Checkout</span>
-                </div>
-                {currentInvoice.total > 0 && (
-                  <span className="text-sm font-bold opacity-90 mt-1">
-                    {activeLayawayId && activeLayawayDeposit > 0
-                      ? `Balance ${formatCurrency(Math.max(0, currentInvoice.total + (Number(shippingCharge) || 0) - activeLayawayDeposit))}`
-                      : formatCurrency(currentInvoice.total + (Number(shippingCharge) || 0))}
-                  </span>
-                )}
-              </button>
-            </div>
+            {!quickCheckoutEnabled && checkoutPanelButton}
+            </>)}
           </div>
 
         </div>
@@ -1235,8 +1288,8 @@ const POSTouchScreen = React.memo((props) => {
                 <span></span>
               </div>
 
-              {/* Cart item rows */}
-              <div className="flex-1 overflow-y-auto overflow-x-hidden">
+              {/* Cart item rows — the cart cursor's region (F6 / click) */}
+              <div {...cartZone} className={`flex-1 overflow-y-auto overflow-x-hidden ${CART_ZONE_FOCUS_CLASS}`}>
                 {currentInvoice.items.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-gray-300 gap-2">
                     <ShoppingCart className="h-10 w-10" />
@@ -1245,7 +1298,7 @@ const POSTouchScreen = React.memo((props) => {
                   </div>
                 ) : (
                   currentInvoice.items.map((item, idx) => (
-                    <div key={item.id}
+                    <div key={item.id} data-cart-line-id={item.id}
                       className={`grid ${CART_GRID_COLS} gap-x-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
                       onClick={() => onCartRowClick(item)}>
                       <div className="min-w-0 pr-1">
@@ -1253,6 +1306,7 @@ const POSTouchScreen = React.memo((props) => {
                             strike-through). Excluded from the total; disclosed below. */}
                         <p className={`text-[11px] font-semibold break-words line-clamp-2 leading-tight ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>
                           {item.name}
+                          {Number(item.unitConversion) > 1 && <span className="ml-1 inline-block rounded bg-[#327F74]/10 px-1 text-[9px] font-bold text-[#327F74]">{item.unit}</span>}
                           {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">[VOID]</span>}
                         </p>
                         {!item.isVoided && (cartViewDetailed ? (
@@ -1288,6 +1342,12 @@ const POSTouchScreen = React.memo((props) => {
                             <AlertTriangle title={priceWarning.message} className={`h-2.5 w-2.5 shrink-0 ${priceWarning.level === 'error' ? 'text-red-500' : 'text-amber-500'}`} />
                           );
                         })()}
+                        {isCustomerPricedLine(item) && (
+                          <Handshake aria-label="Customer price" className="h-2.5 w-2.5 shrink-0 text-emerald-600" data-testid="customer-price-marker" />
+                        )}
+                        {tierMarkerOf(item) && (
+                          <Layers aria-label={tierMarkerOf(item)} title={tierMarkerOf(item)} className="h-2.5 w-2.5 shrink-0 text-amber-600" data-testid="tier-price-marker" />
+                        )}
                         {item.isVoided ? `- ${item.price.toFixed(0)}` : item.price.toFixed(0)}
                       </span>
                       <span className={`text-[11px] font-bold text-right pr-0.5 truncate tabular-nums ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? <CurrencyAmount amount={item.total} prefix="- " /> : formatCurrency(item.total)}</span>
@@ -1619,8 +1679,13 @@ const POSTouchScreen = React.memo((props) => {
             )}
           </div>
 
-          {/* ══ COL 3: FUNCTIONS (Cart Focus style) ════════════════ */}
-          <div className="w-full lg:w-[180px] xl:w-[210px] 2xl:w-[250px] shrink-0 bg-white lg:border-l-2 border-t-2 lg:border-t-0 border-[#F5C742]/30 flex flex-col max-h-[45vh] lg:max-h-none min-h-0 overflow-hidden">
+          {/* ══ COL 3: QUICK CHECKOUT rail — Add-ons opens Functions / History ══ */}
+          <div className="w-full lg:w-[200px] xl:w-[230px] 2xl:w-[260px] shrink-0 bg-white lg:border-l-2 border-t-2 lg:border-t-0 border-[#F5C742]/30 flex flex-col max-h-[45vh] lg:max-h-none min-h-0 overflow-hidden">
+
+            {quickCheckoutEnabled && !showAddons ? (
+              <QuickCheckoutRail onPick={pickQuickTender} onOpenAddons={openAddons} disabled={cartEmpty} note={depositNote} />
+            ) : (<>
+            {quickCheckoutEnabled && <AddonsHeader onClose={closeAddons} />}
 
             {/* Tab bar */}
             <div className="flex border-b border-gray-100 shrink-0">
@@ -1716,29 +1781,8 @@ const POSTouchScreen = React.memo((props) => {
               </div>
             )}
 
-            {/* Checkout button — always visible */}
-            <div className="mt-auto border-t-2 border-[#F5C742]/30 shrink-0">
-              {activeLayawayId && activeLayawayDeposit > 0 && (
-                <div className="flex justify-between text-[11px] text-green-700 font-bold mb-1.5 px-3 pt-3">
-                  <span>Deposit Applied</span><span>−{formatCurrencyStr(activeLayawayDeposit)}</span>
-                </div>
-              )}
-              <button type="button" onClick={startCheckout}
-                disabled={currentInvoice.items.length === 0}
-                className={`w-full min-h-[72px] bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-40 disabled:cursor-not-allowed text-[#1E293B] font-black flex flex-col items-center justify-center py-3 transition-all ${(!activeLayawayId || activeLayawayDeposit <= 0) ? 'mt-0' : ''}`}>
-                <div className="flex items-center gap-2 text-lg">
-                  <CreditCard className="h-6 w-6" />
-                  <span className="tracking-wide uppercase">Checkout</span>
-                </div>
-                {currentInvoice.items.length > 0 && (
-                  <span className="text-sm font-bold opacity-90 mt-1">
-                    {activeLayawayId && activeLayawayDeposit > 0
-                      ? `Balance ${formatCurrencyStr(Math.max(0, currentInvoice.total + (Number(shippingCharge) || 0) - activeLayawayDeposit))}`
-                      : formatCurrencyStr(currentInvoice.total + (Number(shippingCharge) || 0))}
-                  </span>
-                )}
-              </button>
-            </div>
+            {!quickCheckoutEnabled && checkoutPanelButton}
+            </>)}
           </div>
 
         </div>

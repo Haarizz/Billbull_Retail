@@ -97,6 +97,15 @@ public class PosCheckoutController {
      *  time, QR fallback). POS *business dates* do NOT come from here — see
      *  {@link #posBusinessDate(Long)}. */
     private final com.billbull.backend.pos.businessdate.BusinessDayClock businessDayClock;
+
+    /** Setter-injected (Pricing Phase 1) so hand-built test instances keep compiling. */
+    private com.billbull.backend.sales.pricing.PricingResolutionService pricingResolutionService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setPricingResolutionService(
+            com.billbull.backend.sales.pricing.PricingResolutionService pricingResolutionService) {
+        this.pricingResolutionService = pricingResolutionService;
+    }
     /** Owns the entire delivery-settlement critical section as one atomic transaction —
      *  see {@link PosDeliverySettlementService} for why this couldn't stay inline here. */
     private final PosDeliverySettlementService deliverySettlementService;
@@ -285,11 +294,21 @@ public class PosCheckoutController {
         // a stranded DRAFT invoice behind.
         allocationResolver.validateStructure(request);
 
+        // An explicitly chosen price level must exist and be active — refused here, before any
+        // row is written, rather than half-way through the save.
+        if (request.getPriceLevelId() != null && pricingResolutionService != null) {
+            pricingResolutionService.resolveLevel(request.getPriceLevelId(), null);
+        }
+
         // Salesperson + target-readiness gate. Placed HERE, in the same "validate before we touch
         // anything" band as the allocation check and strictly before buildInvoice/save, so a
         // refusal leaves behind no invoice, no payment, no stock movement, no GL posting and no
         // session counter. Anywhere after invoiceService.save() would need a compensating
         // deleteQuietly() to unwind, which is a weaker guarantee than never having written.
+        // A sale taking up a Sales Order is attributed to the order's salesperson unless the till
+        // named someone itself. Filled in before the gate so an order that already carries a
+        // salesperson satisfies "salesperson required" without a second scan.
+        inheritSalesOrderSalesperson(request);
         try {
             assertSalespersonAndTargetReadiness(request);
         } catch (com.billbull.backend.hr.targets.TargetReadinessBlockedException ex) {
@@ -298,6 +317,9 @@ public class PosCheckoutController {
             // surfaces its own typed payload rather than flattening it into text.
             return ResponseEntity.status(HttpStatus.CONFLICT).body(ex.getReadiness());
         }
+
+        // Mandatory customer (Console > Behavior). Same band: refused before anything is written.
+        assertCustomerSelectedIfRequired(request);
 
         // Sales Order take-up (POS → Orders), in the same "validate before we write" band: an order
         // of another branch, one already taken up, or a sale to a different customer is refused
@@ -906,6 +928,8 @@ public class PosCheckoutController {
         inv.setInvoiceDate(posBusinessDate(req.getSessionId()));
         inv.setCustomerCode(req.getCustomerCode() != null ? req.getCustomerCode() : "WALK-IN");
         inv.setCustomerName(req.getCustomerName() != null ? req.getCustomerName() : "Walk-in Customer");
+        // Only the cashier's explicit choice; SalesInvoiceService.save resolves the effective level.
+        inv.setPriceLevelId(req.getPriceLevelId());
         inv.setPaymentMode(resolvePaymentMode(req));
         inv.setBranchId(req.getBranchId());
         inv.setBranchName(req.getBranchName());
@@ -957,24 +981,27 @@ public class PosCheckoutController {
                 ? com.billbull.backend.sales.common.VatMode.INCLUSIVE
                 : com.billbull.backend.sales.common.VatMode.EXCLUSIVE);
 
-        // Batch-loaded product pricings, keyed by item code — used both for the price-override
-        // gate below and to snapshot each line's cost-at-sale (see the items-mapping loop
-        // further down), the same way DeliveryNoteService/SalesOrderService already do for
-        // non-POS sales. Without this snapshot, a Sales Return against a POS sale has no cost
-        // to reverse if the product's cost is ever cleared/changed after the sale — Returns
-        // approval then refuses to post (an unbalanced COGS/Inventory entry is worse than none).
-        Map<String, ProductPricing> pricingByCode = new java.util.HashMap<>();
-        // Batch-loaded product ids by code, used to resolve the Branch Default VAT Rate
-        // fallback (via BranchTaxResolutionService) for any line whose taxRate the client
-        // didn't send.
-        Map<String, Long> productIdByCode = new java.util.HashMap<>();
+        // Products and their pricing for every line, batch-loaded ONCE and independently of any
+        // setting: two queries per checkout whatever the cart size. Invoice construction needs
+        // them (tax fallback, service-line cost) on every branch; the price-override gate below
+        // merely reads the same maps when it is switched on.
+        Map<String, com.billbull.backend.inventory.product.Product> productByCode =
+                loadProductsByCode(req.getItems(), req.getBranchId());
+        Map<Long, ProductPricing> pricingByProductId = productByCode.isEmpty()
+                ? Map.of()
+                : pricingRepository.findByProductIdIn(productByCode.values().stream()
+                        .map(com.billbull.backend.inventory.product.Product::getId).toList())
+                        .stream()
+                        .filter(pr -> pr.getProduct() != null && pr.getProduct().getId() != null)
+                        .collect(Collectors.toMap(pr -> pr.getProduct().getId(), pr -> pr, (a, b) -> a));
 
-        // §2.4 Price override gate: batch-load product pricings and verify that any
-        // below-list-price sale is made by a user with the pos_price_override permission (or a
-        // verified supervisor override). Gated by PosSettings.requirePriceOverrideApproval —
-        // when the branch has this off, below-minimum sales are allowed through untouched, same
-        // as the cart-add-time dialog being off. When the branch/setting can't be resolved,
-        // fail safe (gate stays ON) rather than silently letting every sale bypass it.
+        // §2.4 Price override gate: verify that any below-minimum sale is made by a user with the
+        // pos_price_override permission (or a verified supervisor override). Gated by
+        // PosSettings.requirePriceOverrideApproval — when the branch has this off, below-minimum
+        // sales are allowed through untouched, same as the cart-add-time dialog being off. The
+        // setting decides ONLY whether this validation runs; it has no say in how the invoice is
+        // built. When the branch/setting can't be resolved, fail safe (gate stays ON) rather than
+        // silently letting every sale bypass it.
         Long gateBranchId = req.getBranchId();
         PosSettings priceOverrideSettings = gateBranchId != null
                 ? posSettingsService.getForBranch(gateBranchId)
@@ -982,24 +1009,23 @@ public class PosCheckoutController {
         boolean priceOverrideGateEnabled = priceOverrideSettings == null
                 || !Boolean.FALSE.equals(priceOverrideSettings.getRequirePriceOverrideApproval());
         if (priceOverrideGateEnabled && req.getItems() != null && !req.getItems().isEmpty()) {
-            List<String> codes = req.getItems().stream()
-                    .filter(i -> !Boolean.TRUE.equals(i.getVoided()) && i.getItemCode() != null)
-                    .map(PosCheckoutRequest.PosCheckoutItem::getItemCode)
-                    .distinct().collect(Collectors.toList());
-            if (!codes.isEmpty()) {
-                productRepository.findByCodeIn(codes).forEach(p -> {
-                    productIdByCode.put(p.getCode(), p.getId());
-                    pricingRepository.findByProductId(p.getId()).ifPresent(pr -> pricingByCode.put(p.getCode(), pr));
-                });
+            if (!productByCode.isEmpty()) {
                 // Lazily verified at most once per checkout — a supervisor PIN/password supplied
                 // by the frontend's price-override dialog (see PosSettings.requirePriceOverrideApproval)
                 // grants the same bypass as the pos_price_override permission, for every line in
                 // this request. null = not yet checked, so a checkout with no below-min lines never
                 // pays the verification cost.
                 Boolean supervisorOverrideVerified = null;
+                // The customer's negotiated prices, resolved server-side at most once per checkout
+                // and only when some line is below its floor (null = not yet resolved).
+                Map<Integer, BigDecimal> negotiatedByLine = null;
+                // Each line's share of the bill-level discount, as a fraction of the line (lazy).
+                Map<Integer, BigDecimal> billShareByLine = null;
+                int lineIndex = -1;
                 for (PosCheckoutRequest.PosCheckoutItem item : req.getItems()) {
+                    lineIndex++;
                     if (Boolean.TRUE.equals(item.getVoided()) || item.getPrice() == null) continue;
-                    ProductPricing pr = pricingByCode.get(item.getItemCode());
+                    ProductPricing pr = pricingFor(item.getItemCode(), productByCode, pricingByProductId);
                     if (pr == null) continue;
                     BigDecimal unitPrice = BigDecimal.valueOf(item.getPrice());
                     // Compute effective selling price after line discount so that
@@ -1013,6 +1039,20 @@ public class PosCheckoutController {
                                            : (isPositive(pr.getCost()) ? pr.getCost() : null);
                     if (effectiveMin != null && effectivePrice.compareTo(effectiveMin) < 0
                             && !permissionService.currentUserCanEdit("pos_price_override")) {
+                        // A customer's negotiated price is an authorised selling price: a line
+                        // charged at least that (after its discount) is not a below-minimum
+                        // override. Selling under the negotiated price still needs approval.
+                        // The bill-level discount counts here too (its share of this line, by the
+                        // shared footer allocator): it must not take a line below the negotiated
+                        // price unapproved. The walk-in floor check above is unchanged.
+                        if (negotiatedByLine == null) negotiatedByLine = negotiatedLinePrices(req);
+                        BigDecimal negotiated = negotiatedByLine.get(lineIndex);
+                        if (negotiated != null) {
+                            if (billShareByLine == null) billShareByLine = billDiscountShareRatios(req);
+                            BigDecimal afterBill = effectivePrice.multiply(
+                                    BigDecimal.ONE.subtract(billShareByLine.getOrDefault(lineIndex, BigDecimal.ZERO)));
+                            if (afterBill.setScale(2, java.math.RoundingMode.HALF_UP).compareTo(negotiated) >= 0) continue;
+                        }
                         if (supervisorOverrideVerified == null) {
                             supervisorOverrideVerified = verifySupervisorPriceOverride(req);
                         }
@@ -1026,6 +1066,10 @@ public class PosCheckoutController {
             }
         }
 
+        // Server-side tax fallback, resolved once per distinct product and only for lines that
+        // arrive without a taxRate. Keyed by product id (null = no product found → branch default).
+        Map<Long, Double> fallbackTaxByProductId = new java.util.HashMap<>();
+
         if (req.getItems() != null) {
             inv.setItems(req.getItems().stream().map(item -> {
                 com.billbull.backend.sales.invoice.SalesInvoiceItem si = new com.billbull.backend.sales.invoice.SalesInvoiceItem();
@@ -1035,15 +1079,31 @@ public class PosCheckoutController {
                 si.setUnit(item.getUnit() != null ? item.getUnit() : "Each");
                 si.setPrice(item.getPrice() != null ? java.math.BigDecimal.valueOf(item.getPrice()) : null);
                 si.setDiscount(item.getDiscount() != null ? item.getDiscount() : 0.0);
-                si.setTaxRate(item.getTaxRate() != null
-                        ? item.getTaxRate()
-                        : branchTaxResolutionService.resolveSalesTaxRateForProduct(
-                                item.getItemCode() != null ? productIdByCode.get(item.getItemCode()) : null,
-                                req.getBranchId()).doubleValue());
-                // Cost-at-sale snapshot, so a later Sales Return can reverse COGS/Inventory
-                // even if the product's cost is changed/cleared after this sale.
-                ProductPricing itemPricing = item.getItemCode() != null ? pricingByCode.get(item.getItemCode()) : null;
-                if (itemPricing != null) si.setCost(itemPricing.getCost());
+                com.billbull.backend.inventory.product.Product product =
+                        item.getItemCode() != null ? productByCode.get(item.getItemCode()) : null;
+                // Product Sales Tax (an explicit 0 stays zero-rated) → Branch Default VAT Rate →
+                // 0%, with the branch Tax Enabled switch honoured — BranchTaxResolutionService's
+                // order. A taxRate the client sent is still used as sent; validating it against
+                // the product is a separate change.
+                if (item.getTaxRate() != null) {
+                    si.setTaxRate(item.getTaxRate());
+                } else {
+                    Long productId = product != null ? product.getId() : null;
+                    si.setTaxRate(fallbackTaxByProductId.computeIfAbsent(productId,
+                            id -> branchTaxResolutionService.resolveSalesTaxRateForProduct(id, req.getBranchId())
+                                    .doubleValue()));
+                }
+                // Cost-at-sale. An inventory line is NOT costed here: its cost is the weighted
+                // average the units actually leave the warehouse at, stamped onto this line when
+                // its delivery note is delivered (DeliveryNoteService.recognizeRevenueForDeliveredDn
+                // — at checkout for a counter sale, at Delivery Settlement for a PI Flow order).
+                // Snapshotting the master cost here pre-empted that stamp, so the line disagreed
+                // with the COGS actually posted. A service line never reaches a delivery note, so
+                // the product's configured cost is the only cost it has; it is recorded here.
+                if (product != null && product.isService()) {
+                    ProductPricing servicePricing = pricingByProductId.get(product.getId());
+                    if (servicePricing != null) si.setCost(servicePricing.getCost());
+                }
                 si.setVoided(Boolean.TRUE.equals(item.getVoided()));
                 if (si.isVoided()) {
                     si.setVoidReason(item.getVoidReason());
@@ -1133,6 +1193,23 @@ public class PosCheckoutController {
      * {@link #assertSalespersonAndTargetReadiness}, which knows the tenant's setting; this method
      * only resolves.
      */
+    /**
+     * POS → Orders: when the checkout takes up a Sales Order (pickup, courier, Process Delivery or
+     * PI Flow — all come through here) and names no salesperson, it inherits the order's. An
+     * explicitly named salesperson wins. Only the employee id/code are copied; the identity is
+     * then re-resolved and validated by {@link #resolveSalesperson} like any other.
+     */
+    void inheritSalesOrderSalesperson(PosCheckoutRequest req) {
+        if (req.getLinkedSalesOrder() == null || req.getLinkedSalesOrder().isBlank()) return;
+        boolean named = req.getSalespersonEmployeeId() != null
+                || (req.getSalespersonEmployeeCode() != null && !req.getSalespersonEmployeeCode().isBlank());
+        if (named || posSalesOrderService == null) return;
+        Employee fromOrder = posSalesOrderService.orderSalesperson(req.getLinkedSalesOrder());
+        if (fromOrder == null) return;
+        req.setSalespersonEmployeeId(fromOrder.getId());
+        req.setSalespersonEmployeeCode(fromOrder.getEmployeeCode());
+    }
+
     private Employee resolveSalesperson(PosCheckoutRequest req) {
         return salespersonService.resolveEligible(
                 req.getSalespersonEmployeeId(), req.getSalespersonEmployeeCode());
@@ -1178,6 +1255,32 @@ public class PosCheckoutController {
                 throw new com.billbull.backend.hr.targets.TargetReadinessBlockedException(readiness);
             }
         }
+    }
+
+    /**
+     * When the branch's {@code PosSettings.requireCustomer} is on, a sale must name a real
+     * customer: a blank code, the generic walk-in code, or the branch's configured walk-in code
+     * is refused. Off (the default) leaves walk-in sales exactly as they were.
+     */
+    private void assertCustomerSelectedIfRequired(PosCheckoutRequest req) {
+        PosSettings settings = req.getBranchId() != null
+                ? posSettingsService.getForBranch(req.getBranchId())
+                : posSettingsService.getForCurrentBranch();
+        if (requiredCustomerMissing(settings, req.getCustomerCode())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A customer must be selected for this sale. Walk-in sales are not allowed at this branch.");
+        }
+    }
+
+    /** True when the branch requires a customer and {@code customerCode} is blank or walk-in. */
+    static boolean requiredCustomerMissing(PosSettings settings, String customerCode) {
+        if (settings == null || !Boolean.TRUE.equals(settings.getRequireCustomer())) return false;
+        String code = customerCode != null ? customerCode.trim() : "";
+        String branchWalkIn = settings.getWalkInCustomerCode() != null ? settings.getWalkInCustomerCode().trim() : "";
+        return code.isEmpty()
+                || "WALK-IN".equalsIgnoreCase(code)
+                || "WALKIN".equalsIgnoreCase(code)
+                || (!branchWalkIn.isEmpty() && branchWalkIn.equalsIgnoreCase(code));
     }
 
     private boolean isActiveEmployee(Employee employee) {
@@ -1279,6 +1382,45 @@ public class PosCheckoutController {
         }
     }
 
+    /**
+     * The product behind each line's item code, from ONE query over the distinct codes of the
+     * request's live (non-voided) lines.
+     *
+     * <p>A code is unique among global products and once per branch (Flyway V37), so a code can
+     * resolve to a global row and a branch-owned row. Inactive rows are ignored; of the active
+     * ones, the row owned by the sale's branch wins over the global row; anything still
+     * ambiguous keeps the first row returned. Unknown codes are simply absent.
+     */
+    private Map<String, com.billbull.backend.inventory.product.Product> loadProductsByCode(
+            List<PosCheckoutRequest.PosCheckoutItem> items, Long branchId) {
+        if (items == null || items.isEmpty()) return Map.of();
+        List<String> codes = items.stream()
+                .filter(i -> !Boolean.TRUE.equals(i.getVoided()) && i.getItemCode() != null)
+                .map(PosCheckoutRequest.PosCheckoutItem::getItemCode)
+                .distinct().collect(Collectors.toList());
+        if (codes.isEmpty()) return Map.of();
+        Map<String, com.billbull.backend.inventory.product.Product> byCode = new java.util.HashMap<>();
+        for (com.billbull.backend.inventory.product.Product p : productRepository.findByCodeIn(codes)) {
+            if (p == null || p.getCode() == null || !p.isActive()) continue;
+            com.billbull.backend.inventory.product.Product current = byCode.get(p.getCode());
+            if (current == null || (!ownedBy(current, branchId) && ownedBy(p, branchId))) {
+                byCode.put(p.getCode(), p);
+            }
+        }
+        return byCode;
+    }
+
+    private static boolean ownedBy(com.billbull.backend.inventory.product.Product p, Long branchId) {
+        return branchId != null && p.getBranch() != null && branchId.equals(p.getBranch().getId());
+    }
+
+    private static ProductPricing pricingFor(String itemCode,
+            Map<String, com.billbull.backend.inventory.product.Product> productByCode,
+            Map<Long, ProductPricing> pricingByProductId) {
+        com.billbull.backend.inventory.product.Product p = itemCode != null ? productByCode.get(itemCode) : null;
+        return p != null ? pricingByProductId.get(p.getId()) : null;
+    }
+
     /** Returns true when a BigDecimal value is non-null and strictly positive (> 0). */
     private static boolean isPositive(BigDecimal value) {
         return value != null && value.compareTo(BigDecimal.ZERO) > 0;
@@ -1335,6 +1477,88 @@ public class PosCheckoutController {
                     email, password, terminalId, cashier).isValid();
         }
         return false;
+    }
+
+    /**
+     * The negotiated (customer-specific) price per checkout line index, from the shared resolver
+     * on the session's branch — never the client's branch field or price source. Lines without
+     * one are absent. Empty for walk-in sales, or when the branch can't be established.
+     */
+    Map<Integer, BigDecimal> negotiatedLinePrices(PosCheckoutRequest req) {
+        if (pricingResolutionService == null || req.getItems() == null || req.getCustomerCode() == null
+                || req.getCustomerCode().isBlank()) {
+            return Map.of();
+        }
+        Long branchId = null;
+        if (req.getSessionId() != null) {
+            try {
+                var session = sessionService.getById(req.getSessionId());
+                branchId = session != null ? session.getBranchId() : null;
+            } catch (RuntimeException ex) {
+                branchId = null;
+            }
+        }
+        if (branchId == null) branchId = com.billbull.backend.security.BranchScope.currentBranchId();
+        if (branchId == null) return Map.of();
+
+        List<Integer> indexes = new java.util.ArrayList<>();
+        List<com.billbull.backend.sales.pricing.PricingModels.Line> lines = new java.util.ArrayList<>();
+        for (int i = 0; i < req.getItems().size(); i++) {
+            PosCheckoutRequest.PosCheckoutItem item = req.getItems().get(i);
+            if (item == null || Boolean.TRUE.equals(item.getVoided()) || item.getItemCode() == null
+                    || item.getItemCode().isBlank()) {
+                continue;
+            }
+            indexes.add(i);
+            lines.add(new com.billbull.backend.sales.pricing.PricingModels.Line(null, item.getItemCode(),
+                    item.getUnit(), item.getQuantity() != null ? BigDecimal.valueOf(item.getQuantity()) : null));
+        }
+        if (lines.isEmpty()) return Map.of();
+        var resolution = pricingResolutionService.resolve(new com.billbull.backend.sales.pricing.PricingModels.Context(
+                branchId, null, null, req.getCustomerCode(),
+                com.billbull.backend.sales.settings.SalesItemPricePolicy.RETAIL), lines);
+        Map<Integer, BigDecimal> out = new java.util.HashMap<>();
+        for (int i = 0; i < indexes.size(); i++) {
+            var price = resolution.lines().get(i);
+            if (price.source() != null && price.source().isCustomerPrice() && price.price() != null) {
+                out.put(indexes.get(i), price.price());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Each line's share of the bill-level discount as a fraction of the line's value after its own
+     * discount, apportioned by the same {@link com.billbull.backend.sales.common.FooterDiscountAllocator}
+     * the invoice save uses. Empty when the sale has no bill discount.
+     */
+    Map<Integer, BigDecimal> billDiscountShareRatios(PosCheckoutRequest req) {
+        if (req.getBillDiscountAmount() == null || req.getBillDiscountAmount() <= 0 || req.getItems() == null) {
+            return Map.of();
+        }
+        List<com.billbull.backend.sales.common.FooterDiscountAllocator.LineInput> inputs = new java.util.ArrayList<>();
+        for (PosCheckoutRequest.PosCheckoutItem item : req.getItems()) {
+            boolean eligible = item != null && !Boolean.TRUE.equals(item.getVoided()) && item.getPrice() != null;
+            BigDecimal base = eligible
+                    ? com.billbull.backend.sales.common.FooterDiscountAllocator.lineBase(
+                            BigDecimal.valueOf(item.getQuantity() != null ? item.getQuantity() : 0),
+                            BigDecimal.valueOf(item.getPrice()), BigDecimal.ZERO,
+                            BigDecimal.valueOf(item.getDiscount() != null ? item.getDiscount() : 0d)).base()
+                    : BigDecimal.ZERO;
+            inputs.add(new com.billbull.backend.sales.common.FooterDiscountAllocator.LineInput(base,
+                    BigDecimal.ZERO, eligible));
+        }
+        var result = com.billbull.backend.sales.common.FooterDiscountAllocator.allocate(inputs,
+                com.billbull.backend.sales.common.FooterDiscountAllocator.DiscountType.AMOUNT,
+                BigDecimal.valueOf(req.getBillDiscountAmount()), com.billbull.backend.sales.common.VatMode.EXCLUSIVE);
+        Map<Integer, BigDecimal> out = new java.util.HashMap<>();
+        for (int i = 0; i < result.lines().size(); i++) {
+            var line = result.lines().get(i);
+            if (line.base() != null && line.base().signum() > 0 && line.footerShare() != null) {
+                out.put(i, line.footerShare().divide(line.base(), 6, java.math.RoundingMode.HALF_UP));
+            }
+        }
+        return out;
     }
 
     private boolean verifySupervisorPriceOverride(PosCheckoutRequest req) {

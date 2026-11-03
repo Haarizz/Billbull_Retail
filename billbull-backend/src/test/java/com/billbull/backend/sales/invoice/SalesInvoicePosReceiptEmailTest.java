@@ -70,7 +70,7 @@ class SalesInvoicePosReceiptEmailTest {
     void setUp() {
         DocumentEmailSender sender = new DocumentEmailSender(emailConfigService, branchRepository, pdfService);
         controller = new SalesInvoiceController(service, customerContactService, modulePermissionService,
-                sender, salespersonAttributionService, whatsAppSender, companyProfileService);
+                sender, salespersonAttributionService, whatsAppSender, companyProfileService, null);
     }
 
     @Test

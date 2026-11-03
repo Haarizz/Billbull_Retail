@@ -2,6 +2,7 @@ import React, { useCallback } from 'react';
 import { ShoppingCart, ChevronRight, PauseCircle, Truck, ArrowUpCircle } from 'lucide-react';
 import { TradeCartList } from './TradeCartList';
 import { getPosVatLabel } from '../../../posUtils';
+import QuickCheckoutBar, { CART_ZONE_FOCUS_CLASS, usePosCartZone } from '../../../features/cart/QuickCheckoutBar';
 
 export const TradeCartPanel = React.memo(({
   currentInvoice,
@@ -17,8 +18,10 @@ export const TradeCartPanel = React.memo(({
   onClearInvoice,
   holdInvoice,
   openDeliveryModal,
-  setShowCashDropDialog
+  setShowCashDropDialog,
+  onQuickTender
 }) => {
+  const cartZone = usePosCartZone();
   const handleSelectItem = useCallback((itemId) => {
     if (setSelectedFocusItemId) {
       setSelectedFocusItemId(prev => prev === itemId ? null : itemId);
@@ -95,8 +98,8 @@ export const TradeCartPanel = React.memo(({
         </div>
       </div>
 
-      {/* Main Cart Area */}
-      <div className="flex-1 min-h-0 relative flex flex-col">
+      {/* Main Cart Area — the cart cursor's region (F6 / click) */}
+      <div {...cartZone} className={`flex-1 min-h-0 relative flex flex-col ${CART_ZONE_FOCUS_CLASS}`}>
         <TradeCartList
           items={currentInvoice?.items}
           selectedItemId={selectedFocusItemId}
@@ -107,6 +110,8 @@ export const TradeCartPanel = React.memo(({
           formatCurrency={formatCurrency}
         />
       </div>
+
+      <QuickCheckoutBar onPick={onQuickTender} disabled={!hasItems} />
 
       {/* Footer / Summary Area */}
       <div className="shrink-0 bg-white border-t border-slate-200 shadow-[0_-4px_15px_-3px_rgba(0,0,0,0.05)] z-10 flex flex-col">

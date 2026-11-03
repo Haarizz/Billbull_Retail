@@ -117,6 +117,15 @@ export const fetchProductDetail = async (result, { signal } = {}) => {
     ? optional(() => api.get(`/api/products/${productId}`, { signal }).then((r) => r.data))
     : Promise.resolve(null);
 
+  // Quantity tiers (Pricing Phase 3), read alongside so they are cached with the rest of the
+  // detail. Purely additive: any failure (no permission to read prices, an abort the other reads
+  // report anyway) means none.
+  const tiersPromise = productId
+    ? api.get('/api/price-levels/quantity-tiers', { params: { productIds: String(productId) }, signal })
+        .then((r) => (Array.isArray(r.data) ? r.data : []))
+        .catch(() => [])
+    : Promise.resolve([]);
+
   // Without a code up front the stock read has to wait on the product payload.
   const stockFor = (code) =>
     code
@@ -169,6 +178,7 @@ export const fetchProductDetail = async (result, { signal } = {}) => {
 
   return {
     entityType: "product",
+    quantityTiers: await tiersPromise,
     name: product?.name ?? result?.title ?? "",
     code: itemCode,
     sku: product?.sku ?? null,
@@ -178,6 +188,9 @@ export const fetchProductDetail = async (result, { signal } = {}) => {
     category: product?.department?.name ?? product?.category ?? null,
     unitPrice: toNumber(productSellingPrice(aggregate)),
     reorderLevel: toNumber(policy?.reorderLevel),
+    // Rack zone + locator from Products → Inventory & Tracking; null when unset.
+    zone: policy?.zone?.name ?? null,
+    locator: policy?.locator?.name ?? null,
     // The product's configured maximum stock (ProductInventoryPolicy.maxStock) — the only
     // "capacity" the model has. Null when unset; the panel then makes no capacity claim.
     maxStock: toNumber(policy?.maxStock),

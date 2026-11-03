@@ -29,7 +29,7 @@ import { getTargetReadiness } from '../../../../../api/employeeTargetsApi';
  * <p>The server enforces the same rule independently, so a frontend slip cannot let a sale
  * through; this hook's job is to stop the UI from *pretending* a sale is ready.
  */
-export default function useSalesperson() {
+export default function useSalesperson({ activeSalesOrder = null } = {}) {
   // ── The tenant switches that turn this feature on ─────────────────────────
   const [salespersonRequired, setSalespersonRequired] = useState(false);
   const [targetRequired, setTargetRequired] = useState(false);
@@ -76,6 +76,30 @@ export default function useSalesperson() {
     setVerifyError('');
     setScanModalOpen(false);
   }, [salespersonRequired]);
+
+  // POS → Orders: a Sales Order taken up at the till brings its own salesperson. It is verified
+  // through the SAME server lookup a badge scan uses, so it counts only if that employee is still
+  // active and eligible; otherwise nothing is adopted and the cashier scans as usual. The adopted
+  // attribution is tagged with the order and dropped when the cart lets go of the order, so it
+  // can never leak into the next, unrelated sale. A badge scanned afterwards replaces it.
+  const orderSoNumber = activeSalesOrder?.soNumber || null;
+  const orderSalespersonCode = activeSalesOrder?.salespersonEmployeeCode || null;
+  useEffect(() => {
+    if (!orderSoNumber) {
+      setVerifiedSalesperson(prev => (prev?.fromSalesOrder ? null : prev));
+      return undefined;
+    }
+    if (!salespersonRequired || !orderSalespersonCode) return undefined;
+    let cancelled = false;
+    lookupSalespersonByCode(orderSalespersonCode)
+      .then(employee => {
+        if (cancelled || !employee) return;
+        setVerifiedSalesperson({ ...employee, fromSalesOrder: orderSoNumber });
+        setVerifyError('');
+      })
+      .catch(() => { /* Ineligible now — leave the sale to be scanned. */ });
+    return () => { cancelled = true; };
+  }, [orderSoNumber, orderSalespersonCode, salespersonRequired]);
 
   /** Advisory readiness. Safe to call repeatedly; never throws to the caller. */
   const refreshReadiness = useCallback(async () => {
