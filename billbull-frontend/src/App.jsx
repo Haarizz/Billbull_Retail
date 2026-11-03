@@ -28,6 +28,7 @@ import ResourceGuard from "./components/auth/ResourceGuard";// import CustomerIn
 import AedSymbolRenderer from "@billbull/shared/components/AedSymbolRenderer";
 import GlobalSearchModal from "./components/search/GlobalSearchModal";
 import AppAlertBridge from "@billbull/shared/components/AppAlertBridge";
+import AppConfirmBridge from "@billbull/shared/components/AppConfirmBridge";
 import { logClientError, logClientEvent } from "@billbull/shared/utils/clientLogger";
 import { clientConfig } from "./config/clientConfig";
 // import FollowUpModal from "./pages/Customer/FollowUpModal";
@@ -79,6 +80,8 @@ import FinancialConfig from "./pages/Financials/FinancialConfig";
 import FinancialsPrintEmailTemplates from "./pages/Financials/FinancialsPrintEmailTemplates";
 import PrintEmailTemplates from "./pages/Sales/PrintEmailTemplates";
 import SalesSettings from "./pages/Sales/SalesSettings";
+import PriceLevels from "./pages/Sales/PriceLevels";
+import CustomerPrices from "./pages/Sales/CustomerPrices";
 import POSSales from "@billbull/shared/pages/Sales/POSSales";
 import CashMovements from "./pages/Sales/CashMovements";
 import PurchasePrintEmailTemplates from "./pages/Purchase/PurchasePrintEmailTemplates";
@@ -181,6 +184,7 @@ function App() {
         <BranchProvider>
         <AedSymbolRenderer />
         <AppAlertBridge />
+        <AppConfirmBridge />
         <Toaster position="top-right" reverseOrder={false} containerStyle={{ zIndex: 10000 }} />
         <SonnerToaster position="top-right" richColors />
         <Routes>
@@ -625,6 +629,24 @@ function App() {
                       element={
                         <ResourceGuard module="sales.invoice">
                           <PrintEmailTemplates />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/sales/price-levels"
+                      element={
+                        <ResourceGuard module="sales.settings">
+                          <PriceLevels />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/sales/customer-prices"
+                      element={
+                        <ResourceGuard module="sales.customer">
+                          <CustomerPrices />
                         </ResourceGuard>
                       }
                     />

@@ -62,6 +62,54 @@ public class ProformaService {
         this.packingRepo = packingRepo;
     }
 
+    /** The shared price resolver (Pricing Phase 2.1); null in hand-built tests = don't stamp. */
+    private com.billbull.backend.sales.pricing.PricingResolutionService pricingResolutionService;
+    private com.billbull.backend.sales.pricing.SourceDocumentPrices sourceDocumentPrices;
+    private com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setPricingResolutionService(
+            com.billbull.backend.sales.pricing.PricingResolutionService pricingResolutionService) {
+        this.pricingResolutionService = pricingResolutionService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setSourceDocumentPrices(com.billbull.backend.sales.pricing.SourceDocumentPrices sourceDocumentPrices) {
+        this.sourceDocumentPrices = sourceDocumentPrices;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setSalesSettingsService(com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService) {
+        this.salesSettingsService = salesSettingsService;
+    }
+
+    /**
+     * Re-resolves and stamps every line on the pro-forma's trusted branch, customer and date. Prices
+     * are never filled in here (the client's price is the document's price): one that differs from
+     * the resolved price is kept as a manual price, flagged {@code priceOverridden}. A line unchanged
+     * since the last save keeps its pricing record; one carrying its quotation's or sales order's
+     * price is priced by that document.
+     */
+    void applyPricing(ProformaInvoice pi, Long requestedLevelId, Long previousLevelId,
+                      List<com.billbull.backend.sales.pricing.PricingModels.CarriedPrice> previous) {
+        if (pricingResolutionService == null) return;
+        com.billbull.backend.sales.settings.SalesSettings settings =
+                salesSettingsService != null ? salesSettingsService.getSettings() : null;
+        var level = pricingResolutionService.applyToLines(
+                new com.billbull.backend.sales.pricing.PricingModels.DocumentPricing(
+                        pi.getCustomerId(), pi.getCustomerCode(), requestedLevelId, previousLevelId,
+                        pi.getBranch() != null ? pi.getBranch().getId() : null,
+                        settings != null ? settings.getSalesItemPricePolicy() : null,
+                        pi.getPiDate(), false, previous,
+                        sourceDocumentPrices != null
+                                ? sourceDocumentPrices.forDocuments(pi.getQuotationNo(), pi.getSalesOrderNo(), null)
+                                : List.of()),
+                pi.getItems());
+        pi.setPriceLevelId(level.id());
+        pi.setPriceLevelName(level.name());
+        pi.setPriceLevelSource(level.source() != null ? level.source().name() : null);
+    }
+
     @Transactional
     public String generateProformaNumber() {
         return numberingService.preview(SalesDocumentType.PROFORMA_INVOICE);
@@ -75,6 +123,7 @@ public class ProformaService {
                 req.piNumber);
         ProformaInvoice pi = buildEntity(req, new ProformaInvoice());
         pi.setBranch(branchAccessService.getRequiredCurrentUserBranch());
+        applyPricing(pi, req.priceLevelId, null, List.of());
         return toResponse(repo.save(pi));
     }
 
@@ -95,10 +144,15 @@ public class ProformaService {
         }
 
         String existingPiNumber = pi.getPiNumber();
+        // Snapshot before the lines are rebuilt: an unchanged line keeps its pricing record.
+        List<com.billbull.backend.sales.pricing.PricingModels.CarriedPrice> previousLines =
+                com.billbull.backend.sales.pricing.PricingModels.CarriedPrice.of(pi.getItems());
+        Long previousLevelId = pi.getPriceLevelId();
         pi.getItems().clear(); // orphanRemoval handles delete
 
         buildEntity(req, pi);
         pi.setBranch(lockedBranch);   // branch immutable on update
+        applyPricing(pi, req.priceLevelId, previousLevelId, previousLines);
         pi.setPiNumber(numberingService.resolveNumberForUpdate(
                 SalesDocumentType.PROFORMA_INVOICE,
                 existingPiNumber,
@@ -395,6 +449,9 @@ public class ProformaService {
 
         res.setStatus(pi.getStatus());
         res.setRevisionNo(pi.getRevisionNo());
+        res.setPriceLevelId(pi.getPriceLevelId());
+        res.setPriceLevelName(pi.getPriceLevelName());
+        res.setPriceLevelSource(pi.getPriceLevelSource());
 
         if (!withItems) {
             res.setItems(List.of());
@@ -419,6 +476,15 @@ public class ProformaService {
                     ir.setFooterDiscount(item.getFooterDiscount());
                     ir.setTaxAmount(item.getTaxAmount());
                     ir.setLineTotal(item.getLineTotal());
+                    ir.setPriceLevelId(item.getPriceLevelId());
+                    ir.setPriceLevelName(item.getPriceLevelName());
+                    ir.setPriceSource(item.getPriceSource());
+                    ir.setResolvedUnitPrice(item.getResolvedUnitPrice());
+                    ir.setPriceOverridden(item.getPriceOverridden());
+                    ir.setCustomerPriceId(item.getCustomerPriceId());
+                    ir.setQuantityTierId(item.getQuantityTierId());
+                    ir.setTierMinQuantity(item.getTierMinQuantity());
+                    ir.setTierEligibleQuantity(item.getTierEligibleQuantity());
                     return ir;
                 }).toList();
 

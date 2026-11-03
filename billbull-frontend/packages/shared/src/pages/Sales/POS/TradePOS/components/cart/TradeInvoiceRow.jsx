@@ -1,5 +1,6 @@
 import React from 'react';
-import { Ban, Trash2, Plus, Minus } from 'lucide-react';
+import { Ban, Trash2, Plus, Minus, Handshake, Layers } from 'lucide-react';
+import { isCustomerPricedLine, tierMarkerOf } from '../../../posUtils';
 
 export const TradeInvoiceRow = React.memo(({
   item,
@@ -38,6 +39,7 @@ export const TradeInvoiceRow = React.memo(({
 
   return (
     <div
+      data-cart-line-id={item.id}
       className={`${baseStyles} ${stateStyles}`}
       onClick={() => onClick && onClick(item.id)}
       onDoubleClick={() => onDoubleClick && onDoubleClick(item.id)}
@@ -49,6 +51,19 @@ export const TradeInvoiceRow = React.memo(({
           <span className={`text-sm font-bold truncate ${isVoided ? 'text-gray-400 line-through' : 'text-slate-800'}`}>
             {name}
           </span>
+          {Number(item.unitConversion) > 1 && (
+            <span className="shrink-0 rounded bg-[#327F74]/10 px-1.5 py-px text-[10px] font-bold text-[#327F74]">{item.unit}</span>
+          )}
+          {isCustomerPricedLine(item) && (
+            <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-emerald-50 px-1.5 py-px text-[10px] font-bold text-emerald-700" data-testid="customer-price-marker">
+              <Handshake className="h-3 w-3" /> Customer price
+            </span>
+          )}
+          {tierMarkerOf(item) && (
+            <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-amber-50 px-1.5 py-px text-[10px] font-bold text-amber-700" data-testid="tier-price-marker">
+              <Layers className="h-3 w-3" /> {tierMarkerOf(item)}
+            </span>
+          )}
         </div>
         <span className="text-[11px] font-mono text-slate-400 mt-0.5 uppercase tracking-wide truncate">
           {item.barcode || item.id} &bull; {item.unit || 'UNIT'}

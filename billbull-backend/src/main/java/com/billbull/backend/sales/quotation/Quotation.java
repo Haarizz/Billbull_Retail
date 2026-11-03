@@ -16,6 +16,27 @@ import java.util.List;
 @org.hibernate.annotations.Filter(name = "ownerFilter", condition = "created_by_user_id = :ownerId")
 public class Quotation  implements com.billbull.backend.common.ownership.OwnedEntity {
 
+    /**
+     * The price level the document priced at (V129). Sent by the client only to choose a level
+     * explicitly; on save the server resolves and overwrites all three
+     * (sales.pricing.PricingResolutionService#applyToLines).
+     */
+    @jakarta.persistence.Column(name = "price_level_id")
+    private Long priceLevelId;
+    @jakarta.persistence.Column(name = "price_level_name", length = 100)
+    private String priceLevelName;
+    /** TRANSACTION, CUSTOMER or DEFAULT — see sales.pricing.PriceLevelSource. */
+    @jakarta.persistence.Column(name = "price_level_source", length = 20)
+    private String priceLevelSource;
+
+    public Long getPriceLevelId() { return priceLevelId; }
+    public void setPriceLevelId(Long priceLevelId) { this.priceLevelId = priceLevelId; }
+    public String getPriceLevelName() { return priceLevelName; }
+    public void setPriceLevelName(String priceLevelName) { this.priceLevelName = priceLevelName; }
+    public String getPriceLevelSource() { return priceLevelSource; }
+    public void setPriceLevelSource(String priceLevelSource) { this.priceLevelSource = priceLevelSource; }
+
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

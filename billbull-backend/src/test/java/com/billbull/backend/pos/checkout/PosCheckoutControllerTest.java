@@ -405,9 +405,11 @@ class PosCheckoutControllerTest {
         product.setId(productId);
         product.setCode(code);
         ProductPricing pricing = new ProductPricing();
+        pricing.setProduct(product);
         pricing.setMinPrice(new BigDecimal(minPrice));
         lenient().when(productRepository.findByCodeIn(any())).thenReturn(List.of(product));
-        lenient().when(pricingRepository.findByProductId(productId)).thenReturn(java.util.Optional.of(pricing));
+        // Pricing is batch-loaded for every checkout (one query over the distinct products).
+        lenient().when(pricingRepository.findByProductIdIn(any())).thenReturn(List.of(pricing));
     }
 
     private PosCheckoutRequest belowMinimumCheckoutRequest(String code, double price) {
@@ -1088,6 +1090,46 @@ class PosCheckoutControllerTest {
     }
 
     @Test
+    void aSalesOrderTakeUpWithNoSalespersonNamedInheritsTheOrdersSalesperson() {
+        var soService = mock(com.billbull.backend.pos.salesorder.PosSalesOrderService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "posSalesOrderService", soService);
+        var rep = new com.billbull.backend.hr.employees.Employee();
+        rep.setId(44L);
+        rep.setEmployeeCode("EMP-44");
+        rep.setFirstName("Asha");
+        rep.setLastName("Nair");
+        when(soService.orderSalesperson("SO-0120")).thenReturn(rep);
+        when(salespersonService.resolveEligible(44L, "EMP-44")).thenReturn(rep);
+        SalesInvoice draft = draftInvoice(63L, "500.00");
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(63L)).thenReturn(draft);
+
+        PosCheckoutRequest req = cashRequest(500.0);
+        req.setLinkedSalesOrder("SO-0120");
+        controller.checkout(req);
+
+        ArgumentCaptor<SalesInvoice> saved = ArgumentCaptor.forClass(SalesInvoice.class);
+        verify(invoiceService).save(saved.capture());
+        assertEquals(44L, saved.getValue().getSalespersonEmployeeId());
+        assertEquals("EMP-44", saved.getValue().getSalespersonEmployeeCode());
+        assertEquals("Asha Nair", saved.getValue().getSalespersonName());
+    }
+
+    @Test
+    void aSalespersonNamedAtTheTillWinsOverTheOrders() {
+        var soService = mock(com.billbull.backend.pos.salesorder.PosSalesOrderService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "posSalesOrderService", soService);
+
+        PosCheckoutRequest req = cashRequest(500.0);
+        req.setLinkedSalesOrder("SO-0120");
+        req.setSalespersonEmployeeId(55L);
+        controller.inheritSalesOrderSalesperson(req);
+
+        verify(soService, never()).orderSalesperson(any());
+        assertEquals(55L, req.getSalespersonEmployeeId());
+    }
+
+    @Test
     void aRefusedSalesOrderTakeUpWritesNothing() {
         var soService = mock(com.billbull.backend.pos.salesorder.PosSalesOrderService.class);
         org.springframework.test.util.ReflectionTestUtils.setField(controller, "posSalesOrderService", soService);
@@ -1146,5 +1188,443 @@ class PosCheckoutControllerTest {
         controller.settleDelivery(902L, deliverySettleRequest(null));
 
         verify(proforma, never()).convert(any(), any(), any());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // P0-1: invoice construction is independent of the price-approval setting
+    // ═══════════════════════════════════════════════════════════════════════
+
+    private static final long P0_BRANCH = 1L;
+
+    private Product p0Product(long id, String code, com.billbull.backend.inventory.product.ProductType type) {
+        Product p = new Product();
+        p.setId(id);
+        p.setCode(code);
+        p.setProductType(type);
+        return p;
+    }
+
+    private ProductPricing p0Pricing(Product product, String cost, String minPrice) {
+        ProductPricing pr = new ProductPricing();
+        pr.setProduct(product);
+        if (cost != null) pr.setCost(new BigDecimal(cost));
+        if (minPrice != null) pr.setMinPrice(new BigDecimal(minPrice));
+        return pr;
+    }
+
+    private PosCheckoutRequest.PosCheckoutItem p0Line(String code, double price, Double taxRate) {
+        PosCheckoutRequest.PosCheckoutItem item = new PosCheckoutRequest.PosCheckoutItem();
+        item.setItemCode(code);
+        item.setItemName(code);
+        item.setQuantity(1);
+        item.setPrice(price);
+        item.setTaxRate(taxRate);
+        return item;
+    }
+
+    /** A cash checkout of the given lines on {@link #P0_BRANCH}, with price approval on or off. */
+    private PosCheckoutRequest p0Request(boolean approvalRequired, double total,
+                                         PosCheckoutRequest.PosCheckoutItem... lines) {
+        PosSettings settings = new PosSettings();
+        settings.setRequirePriceOverrideApproval(approvalRequired);
+        when(posSettingsService.getForBranch(P0_BRANCH)).thenReturn(settings);
+        PosCheckoutRequest req = new PosCheckoutRequest();
+        req.setBranchId(P0_BRANCH);
+        req.setPaymentMode("Cash");
+        req.setAmountTendered(total);
+        req.setItems(List.of(lines));
+        return req;
+    }
+
+    /** Runs the checkout and returns the invoice handed to save() — what buildInvoice built. */
+    private SalesInvoice p0Checkout(PosCheckoutRequest req, long invoiceId, String total) {
+        SalesInvoice draft = draftInvoice(invoiceId, "INV-P0-" + invoiceId, total);
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(invoiceId)).thenReturn(draft);
+        controller.checkout(req);
+        ArgumentCaptor<SalesInvoice> built = ArgumentCaptor.forClass(SalesInvoice.class);
+        verify(invoiceService).save(built.capture());
+        return built.getValue();
+    }
+
+    /** Swaps the mocked tax resolver for the REAL one over mocked repositories, so the
+     *  product-tax precedence (and zero-rating) is exercised rather than stubbed. */
+    private com.billbull.backend.inventory.product.ProductTaxRepository realTaxResolver(
+            Double branchDefaultVatRate, Boolean taxEnabled) {
+        var productTaxRepo = mock(com.billbull.backend.inventory.product.ProductTaxRepository.class);
+        var configService = mock(com.billbull.backend.settings.branch.BranchTaxConfigurationService.class);
+        var config = new com.billbull.backend.settings.branch.BranchTaxConfiguration();
+        config.setBranchDefaultVatRate(branchDefaultVatRate);
+        config.setTaxEnabled(taxEnabled);
+        when(configService.getForBranch(P0_BRANCH)).thenReturn(config);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "branchTaxResolutionService",
+                new com.billbull.backend.common.tax.BranchTaxResolutionService(productTaxRepo, configService));
+        return productTaxRepo;
+    }
+
+    private static java.util.Optional<com.billbull.backend.inventory.product.ProductTax> salesTax(
+            Product product, String rate) {
+        var tax = new com.billbull.backend.inventory.product.ProductTax();
+        tax.setProduct(product);
+        tax.setSalesTax(rate != null ? new BigDecimal(rate) : null);
+        return java.util.Optional.of(tax);
+    }
+
+    @Test
+    void approvalOffStillLoadsProductsAndPricingInOneBatchEach() {
+        Product stock = p0Product(1001L, "STK-1", com.billbull.backend.inventory.product.ProductType.STOCK);
+        Product svc = p0Product(1002L, "SVC-1", com.billbull.backend.inventory.product.ProductType.SERVICE);
+        when(productRepository.findByCodeIn(any())).thenReturn(List.of(stock, svc));
+        when(pricingRepository.findByProductIdIn(any()))
+                .thenReturn(List.of(p0Pricing(stock, "40.00", null), p0Pricing(svc, "15.00", null)));
+
+        p0Checkout(p0Request(false, 150.0,
+                p0Line("STK-1", 100.0, 5.0), p0Line("STK-1", 100.0, 5.0), p0Line("SVC-1", 50.0, 5.0)),
+                3001L, "150.00");
+
+        ArgumentCaptor<List<String>> codes = ArgumentCaptor.forClass(List.class);
+        verify(productRepository, times(1)).findByCodeIn(codes.capture());
+        assertEquals(List.of("STK-1", "SVC-1"), codes.getValue()); // distinct codes, one query
+        verify(pricingRepository, times(1)).findByProductIdIn(any());
+        verify(pricingRepository, never()).findByProductId(any()); // no per-product N+1
+    }
+
+    @Test
+    void approvalOffSaleBelowMinimumCompletesWithoutConsultingTheGate() {
+        Product stock = p0Product(1011L, "STK-2", com.billbull.backend.inventory.product.ProductType.STOCK);
+        when(productRepository.findByCodeIn(any())).thenReturn(List.of(stock));
+        when(pricingRepository.findByProductIdIn(any())).thenReturn(List.of(p0Pricing(stock, "40.00", "190.00")));
+
+        SalesInvoice built = p0Checkout(p0Request(false, 180.0, p0Line("STK-2", 180.0, 5.0)), 3002L, "180.00");
+
+        assertEquals(1, built.getItems().size());
+        verify(invoiceService).updateStatus(3002L, SalesInvoiceStatus.PAID);
+        verify(permissionService, never()).currentUserCanEdit(any());
+        verify(posSettingsService, never()).verifyPin(any());
+    }
+
+    @Test
+    void approvalOnStillRefusesBelowMinimumFromTheSameBatchLookup() {
+        Product stock = p0Product(1021L, "STK-3", com.billbull.backend.inventory.product.ProductType.STOCK);
+        when(productRepository.findByCodeIn(any())).thenReturn(List.of(stock));
+        when(pricingRepository.findByProductIdIn(any())).thenReturn(List.of(p0Pricing(stock, "40.00", "190.00")));
+        when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+
+        PosCheckoutRequest req = p0Request(true, 180.0, p0Line("STK-3", 180.0, 5.0));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> controller.checkout(req));
+        assertTrue(ex.getReason().contains("Price below minimum (190.00) for STK-3"));
+        verify(invoiceService, never()).save(any());
+    }
+
+    @Test
+    void approvalOnFallsBackToCostAsTheFloorAndAcceptsAVerifiedPin() {
+        // minPrice unset → cost is the floor (unchanged semantics); a valid PIN releases it.
+        Product stock = p0Product(1031L, "STK-4", com.billbull.backend.inventory.product.ProductType.STOCK);
+        when(productRepository.findByCodeIn(any())).thenReturn(List.of(stock));
+        when(pricingRepository.findByProductIdIn(any())).thenReturn(List.of(p0Pricing(stock, "50.00", null)));
+        when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+        when(posSettingsService.verifyPin("1234")).thenReturn(true);
+        PosCheckoutRequest req = p0Request(true, 45.0, p0Line("STK-4", 45.0, 5.0));
+        req.setSupervisorOverridePin("1234");
+
+        p0Checkout(req, 3003L, "45.00");
+
+        verify(posSettingsService, times(1)).verifyPin("1234");
+        verify(invoiceService).updateStatus(3003L, SalesInvoiceStatus.PAID);
+    }
+
+    @Test
+    void absentTaxRateUsesTheProductRateKeepingZeroRatedItemsAtZeroWithApprovalOff() {
+        var productTaxRepo = realTaxResolver(5.0, true);
+        Product zeroRated = p0Product(1041L, "ZR-1", com.billbull.backend.inventory.product.ProductType.STOCK);
+        Product unset = p0Product(1042L, "STD-1", com.billbull.backend.inventory.product.ProductType.STOCK);
+        Product reduced = p0Product(1043L, "RED-1", com.billbull.backend.inventory.product.ProductType.STOCK);
+        when(productRepository.findByCodeIn(any())).thenReturn(List.of(zeroRated, unset, reduced));
+        when(productTaxRepo.findByProductId(1041L)).thenReturn(salesTax(zeroRated, "0"));
+        when(productTaxRepo.findByProductId(1042L)).thenReturn(salesTax(unset, null));
+        when(productTaxRepo.findByProductId(1043L)).thenReturn(salesTax(reduced, "2.5"));
+
+        SalesInvoice built = p0Checkout(p0Request(false, 400.0,
+                p0Line("ZR-1", 100.0, null),
+                p0Line("ZR-1", 100.0, null),   // same product again: resolved once
+                p0Line("STD-1", 100.0, null),
+                p0Line("RED-1", 50.0, null),
+                p0Line("UNKNOWN", 50.0, null), // no product → branch default
+                p0Line("STD-1", 100.0, 12.0)), // a client-sent rate is used as sent
+                3004L, "400.00");
+
+        List<Double> rates = built.getItems().stream()
+                .map(com.billbull.backend.sales.invoice.SalesInvoiceItem::getTaxRate).toList();
+        assertEquals(List.of(0.0, 0.0, 5.0, 2.5, 5.0, 12.0), rates);
+        verify(productTaxRepo, times(1)).findByProductId(1041L);
+    }
+
+    @Test
+    void absentTaxRateResolvesTheSameWithApprovalOn() {
+        var productTaxRepo = realTaxResolver(5.0, true);
+        Product zeroRated = p0Product(1051L, "ZR-2", com.billbull.backend.inventory.product.ProductType.STOCK);
+        when(productRepository.findByCodeIn(any())).thenReturn(List.of(zeroRated));
+        when(productTaxRepo.findByProductId(1051L)).thenReturn(salesTax(zeroRated, "0"));
+
+        SalesInvoice built = p0Checkout(p0Request(true, 100.0, p0Line("ZR-2", 100.0, null)), 3005L, "100.00");
+
+        assertEquals(0.0, built.getItems().get(0).getTaxRate());
+    }
+
+    @Test
+    void absentTaxRateIsZeroWhenTheBranchHasTaxDisabled() {
+        var productTaxRepo = realTaxResolver(5.0, false);
+        Product unset = p0Product(1061L, "STD-2", com.billbull.backend.inventory.product.ProductType.STOCK);
+        when(productRepository.findByCodeIn(any())).thenReturn(List.of(unset));
+        when(productTaxRepo.findByProductId(1061L)).thenReturn(salesTax(unset, null));
+
+        SalesInvoice built = p0Checkout(p0Request(false, 100.0, p0Line("STD-2", 100.0, null)), 3006L, "100.00");
+
+        assertEquals(0.0, built.getItems().get(0).getTaxRate());
+    }
+
+    @Test
+    void aBranchOwnedProductWinsOverTheGlobalRowWithTheSameCode() {
+        var productTaxRepo = realTaxResolver(5.0, true);
+        Product global = p0Product(1071L, "DUP-CODE", com.billbull.backend.inventory.product.ProductType.STOCK);
+        Product branchOwned = p0Product(1072L, "DUP-CODE", com.billbull.backend.inventory.product.ProductType.STOCK);
+        com.billbull.backend.settings.branch.Branch branch = new com.billbull.backend.settings.branch.Branch();
+        branch.setId(P0_BRANCH);
+        branchOwned.setBranch(branch);
+        Product inactive = p0Product(1073L, "DUP-CODE", com.billbull.backend.inventory.product.ProductType.STOCK);
+        inactive.setBranch(branch);
+        inactive.setActive(false);
+        when(productRepository.findByCodeIn(any())).thenReturn(List.of(global, inactive, branchOwned));
+        when(productTaxRepo.findByProductId(1072L)).thenReturn(salesTax(branchOwned, "0"));
+
+        SalesInvoice built = p0Checkout(p0Request(false, 100.0, p0Line("DUP-CODE", 100.0, null)), 3007L, "100.00");
+
+        assertEquals(0.0, built.getItems().get(0).getTaxRate());
+        verify(productTaxRepo, never()).findByProductId(1071L);
+        verify(productTaxRepo, never()).findByProductId(1073L);
+    }
+
+    @Test
+    void missingPricingIsSafeWithApprovalOn() {
+        Product stock = p0Product(1081L, "NOPRICE", com.billbull.backend.inventory.product.ProductType.STOCK);
+        Product svc = p0Product(1082L, "SVC-NOPRICE", com.billbull.backend.inventory.product.ProductType.SERVICE);
+        when(productRepository.findByCodeIn(any())).thenReturn(List.of(stock, svc));
+        when(pricingRepository.findByProductIdIn(any())).thenReturn(List.of());
+
+        SalesInvoice built = p0Checkout(p0Request(true, 30.0,
+                p0Line("NOPRICE", 10.0, 5.0), p0Line("SVC-NOPRICE", 20.0, 5.0)), 3008L, "30.00");
+
+        // No floor to check against and no cost to record: the sale goes through.
+        built.getItems().forEach(line -> assertEquals(null, line.getCost()));
+        verify(permissionService, never()).currentUserCanEdit(any());
+        verify(invoiceService).updateStatus(3008L, SalesInvoiceStatus.PAID);
+    }
+
+    @Test
+    void inventoryLinesAreLeftForDeliveryCostingAndServiceLinesTakeTheirCostWhateverTheSetting() {
+        for (boolean approval : new boolean[] { false, true }) {
+            org.mockito.Mockito.reset(invoiceService, productRepository, pricingRepository);
+            Product stock = p0Product(1091L, "STK-9", com.billbull.backend.inventory.product.ProductType.STOCK);
+            Product svc = p0Product(1092L, "SVC-9", com.billbull.backend.inventory.product.ProductType.SERVICE);
+            when(productRepository.findByCodeIn(any())).thenReturn(List.of(stock, svc));
+            when(pricingRepository.findByProductIdIn(any()))
+                    .thenReturn(List.of(p0Pricing(stock, "40.00", null), p0Pricing(svc, "15.00", null)));
+
+            SalesInvoice built = p0Checkout(p0Request(approval, 250.0,
+                    p0Line("STK-9", 100.0, 5.0),
+                    p0Line("STK-9", 100.0, 5.0),  // the same product on a second line (one unit per line)
+                    p0Line("SVC-9", 50.0, 5.0)), 3010L, "250.00");
+
+            var lines = built.getItems();
+            // Inventory: costed at delivery with the warehouse WAC, on EVERY line — no master-cost
+            // snapshot here that would pre-empt it (and leave a repeated product half-costed).
+            assertEquals(null, lines.get(0).getCost(), "stock line 1, approval=" + approval);
+            assertEquals(null, lines.get(1).getCost(), "stock line 2, approval=" + approval);
+            // Service: never delivered, so its configured cost is recorded now.
+            assertEquals(new BigDecimal("15.00"), lines.get(2).getCost(), "service line, approval=" + approval);
+        }
+    }
+
+    @Test
+    void voidedLinesDoNotTriggerLookupsForTheirCodes() {
+        Product stock = p0Product(1101L, "LIVE", com.billbull.backend.inventory.product.ProductType.STOCK);
+        when(productRepository.findByCodeIn(any())).thenReturn(List.of(stock));
+        when(pricingRepository.findByProductIdIn(any())).thenReturn(List.of(p0Pricing(stock, "5.00", null)));
+        PosCheckoutRequest.PosCheckoutItem voided = p0Line("VOIDED", 10.0, 5.0);
+        voided.setVoided(true);
+
+        p0Checkout(p0Request(false, 10.0, p0Line("LIVE", 10.0, 5.0), voided), 3011L, "10.00");
+
+        ArgumentCaptor<List<String>> codes = ArgumentCaptor.forClass(List.class);
+        verify(productRepository).findByCodeIn(codes.capture());
+        assertEquals(List.of("LIVE"), codes.getValue());
+    }
+
+    // ── Pricing Phase 2: a customer's negotiated price is an authorised selling price ──────
+
+    private com.billbull.backend.sales.pricing.PricingResolutionService negotiatedPriceResolver(String price) {
+        var resolver = mock(com.billbull.backend.sales.pricing.PricingResolutionService.class);
+        var level = new com.billbull.backend.sales.pricing.PricingModels.ResolvedLevel(1L, "RETAIL", "Retail", true,
+                com.billbull.backend.sales.pricing.PriceLevelSource.DEFAULT, null);
+        var line = new com.billbull.backend.sales.pricing.PricingModels.LinePrice(900L, "10672", null,
+                new BigDecimal(price), new BigDecimal("200.00"),
+                com.billbull.backend.sales.pricing.PriceSource.CUSTOMER_SPECIFIC, 1L, "Retail", false,
+                new BigDecimal("200.00"), com.billbull.backend.sales.pricing.PriceSource.BASE_PRICE,
+                77L, null, LocalDate.now().minusDays(1), null);
+        when(resolver.resolve(any(), any())).thenReturn(
+                new com.billbull.backend.sales.pricing.PricingModels.Resolution(level, 1L, List.of(line)));
+        controller.setPricingResolutionService(resolver);
+        return resolver;
+    }
+
+    @Test
+    void belowMinimumButAtTheCustomersNegotiatedPriceNeedsNoSupervisor() {
+        com.billbull.backend.security.BranchContextHolder.set(
+                new com.billbull.backend.security.BranchContextHolder.BranchContext(1L, java.util.Set.of(1L), false));
+        try {
+            SalesInvoice draft = draftInvoice(70L, "INV-2026-0070", "180.00");
+            when(invoiceService.save(any())).thenReturn(draft);
+            when(invoiceService.getById(70L)).thenReturn(draft);
+            stubBelowMinimumPricedProduct("10672", 900L, "190.00");
+            when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+            var resolver = negotiatedPriceResolver("180.00");
+            PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 180.0);
+            req.setCustomerCode("ABC");
+
+            controller.checkout(req);
+
+            verify(invoiceService).updateStatus(70L, SalesInvoiceStatus.PAID);
+            verify(posSettingsService, never()).verifyPin(any());
+            ArgumentCaptor<com.billbull.backend.sales.pricing.PricingModels.Context> ctx =
+                    ArgumentCaptor.forClass(com.billbull.backend.sales.pricing.PricingModels.Context.class);
+            verify(resolver).resolve(ctx.capture(), any());
+            // Priced on the trusted branch for the sale's customer — never on a client price source.
+            assertEquals(1L, ctx.getValue().branchId());
+            assertEquals("ABC", ctx.getValue().customerCode());
+        } finally {
+            com.billbull.backend.security.BranchContextHolder.clear();
+        }
+    }
+
+    @Test
+    void sellingBelowTheNegotiatedPriceAndTheMinimumStillNeedsASupervisor() {
+        com.billbull.backend.security.BranchContextHolder.set(
+                new com.billbull.backend.security.BranchContextHolder.BranchContext(1L, java.util.Set.of(1L), false));
+        try {
+            stubBelowMinimumPricedProduct("10672", 900L, "190.00");
+            when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+            negotiatedPriceResolver("180.00");
+            PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 170.0);
+            req.setCustomerCode("ABC");
+
+            assertThrows(ResponseStatusException.class, () -> controller.checkout(req));
+            verify(invoiceService, never()).save(any());
+        } finally {
+            com.billbull.backend.security.BranchContextHolder.clear();
+        }
+    }
+
+    @Test
+    void walkInSaleBelowMinimumDoesNotConsultCustomerPrices() {
+        stubBelowMinimumPricedProduct("10672", 900L, "190.00");
+        when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+        var resolver = negotiatedPriceResolver("180.00");
+        PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 180.0);
+
+        assertThrows(ResponseStatusException.class, () -> controller.checkout(req));
+        verify(resolver, never()).resolve(any(), any());
+    }
+
+    // ── Pricing Phase 3: bill discounts and quantity tiers never bypass the approval rule ──
+
+    @Test
+    void billDiscountTakingANegotiatedLineBelowItsAgreedPriceNeedsASupervisor() {
+        com.billbull.backend.security.BranchContextHolder.set(
+                new com.billbull.backend.security.BranchContextHolder.BranchContext(1L, java.util.Set.of(1L), false));
+        try {
+            stubBelowMinimumPricedProduct("10672", 900L, "190.00");
+            when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+            negotiatedPriceResolver("180.00");
+            PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 180.0);
+            req.setCustomerCode("ABC");
+            req.setBillDiscountAmount(10.0);
+
+            assertThrows(ResponseStatusException.class, () -> controller.checkout(req));
+            verify(invoiceService, never()).save(any());
+        } finally {
+            com.billbull.backend.security.BranchContextHolder.clear();
+        }
+    }
+
+    @Test
+    void billDiscountThatKeepsTheLineAtTheNegotiatedPriceNeedsNoSupervisor() {
+        com.billbull.backend.security.BranchContextHolder.set(
+                new com.billbull.backend.security.BranchContextHolder.BranchContext(1L, java.util.Set.of(1L), false));
+        try {
+            SalesInvoice draft = draftInvoice(71L, "INV-2026-0071", "180.00");
+            when(invoiceService.save(any())).thenReturn(draft);
+            when(invoiceService.getById(71L)).thenReturn(draft);
+            stubBelowMinimumPricedProduct("10672", 900L, "190.00");
+            when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+            negotiatedPriceResolver("180.00");
+            PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 185.0);
+            req.setCustomerCode("ABC");
+            req.setBillDiscountAmount(5.0);
+
+            controller.checkout(req);
+
+            verify(posSettingsService, never()).verifyPin(any());
+            verify(invoiceService).updateStatus(71L, SalesInvoiceStatus.PAID);
+        } finally {
+            com.billbull.backend.security.BranchContextHolder.clear();
+        }
+    }
+
+    @Test
+    void quantityTierPriceBelowTheMinimumIsNotExemptFromApproval() {
+        com.billbull.backend.security.BranchContextHolder.set(
+                new com.billbull.backend.security.BranchContextHolder.BranchContext(1L, java.util.Set.of(1L), false));
+        try {
+            stubBelowMinimumPricedProduct("10672", 900L, "190.00");
+            when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+            var resolver = mock(com.billbull.backend.sales.pricing.PricingResolutionService.class);
+            var level = new com.billbull.backend.sales.pricing.PricingModels.ResolvedLevel(2L, "WHOLESALE", "Wholesale",
+                    false, com.billbull.backend.sales.pricing.PriceLevelSource.CUSTOMER, null);
+            var tierLine = new com.billbull.backend.sales.pricing.PricingModels.LinePrice(900L, "10672", null,
+                    new BigDecimal("180.00"), new BigDecimal("200.00"),
+                    com.billbull.backend.sales.pricing.PriceSource.QUANTITY_TIER, 2L, "Wholesale", false);
+            when(resolver.resolve(any(), any())).thenReturn(
+                    new com.billbull.backend.sales.pricing.PricingModels.Resolution(level, 1L, List.of(tierLine)));
+            controller.setPricingResolutionService(resolver);
+            PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 180.0);
+            req.setCustomerCode("TRADER");
+
+            assertThrows(ResponseStatusException.class, () -> controller.checkout(req));
+            verify(invoiceService, never()).save(any());
+        } finally {
+            com.billbull.backend.security.BranchContextHolder.clear();
+        }
+    }
+
+    @Test
+    void billDiscountShareIsApportionedLikeTheInvoiceAllocator() {
+        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest.PosCheckoutItem one = p0Line("A", 100.0, 1.0);
+        one.setQuantity(1);
+        PosCheckoutRequest.PosCheckoutItem two = p0Line("B", 300.0, 1.0);
+        two.setQuantity(1);
+        PosCheckoutRequest.PosCheckoutItem voided = p0Line("C", 500.0, 1.0);
+        voided.setVoided(true);
+        req.setItems(List.of(one, two, voided));
+        req.setBillDiscountAmount(40.0);
+
+        var ratios = controller.billDiscountShareRatios(req);
+
+        assertEquals(0, new BigDecimal("0.1").compareTo(ratios.get(0)));
+        assertEquals(0, new BigDecimal("0.1").compareTo(ratios.get(1)));
+        assertEquals(null, ratios.get(2));
+        req.setBillDiscountAmount(null);
+        assertEquals(java.util.Map.of(), controller.billDiscountShareRatios(req));
     }
 }

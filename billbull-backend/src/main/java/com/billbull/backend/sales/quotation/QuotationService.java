@@ -145,6 +145,39 @@ public class QuotationService {
         quotation.setBranchCode(resolved.getCode());
     }
 
+    /**
+     * The shared price resolver (Pricing Phase 2.1). Setter-injected so hand-built test instances
+     * keep compiling; null there means "don't stamp", the pre-pricing save.
+     */
+    private com.billbull.backend.sales.pricing.PricingResolutionService pricingResolutionService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setPricingResolutionService(
+            com.billbull.backend.sales.pricing.PricingResolutionService pricingResolutionService) {
+        this.pricingResolutionService = pricingResolutionService;
+    }
+
+    /**
+     * Re-resolves and stamps every line on the quotation's trusted branch, customer and date, as the
+     * Sales Invoice save does. A line without a price gets the resolved one (before the product
+     * master fallback below); a different client price is kept as a manual price, flagged
+     * {@code priceOverridden}; a line unchanged since the last save keeps its pricing record.
+     */
+    private void applyPricing(Quotation quotation, Quotation existing,
+                              List<com.billbull.backend.sales.pricing.PricingModels.CarriedPrice> previous) {
+        if (pricingResolutionService == null) return;
+        var level = pricingResolutionService.applyToLines(
+                new com.billbull.backend.sales.pricing.PricingModels.DocumentPricing(
+                        null, quotation.getCustomerCode(), quotation.getPriceLevelId(),
+                        existing != null ? existing.getPriceLevelId() : null,
+                        quotation.getBranchId(), activePricePolicy(), quotation.getDate(), true,
+                        previous, List.of()),
+                quotation.getItems());
+        quotation.setPriceLevelId(level.id());
+        quotation.setPriceLevelName(level.name());
+        quotation.setPriceLevelSource(level.source() != null ? level.source().name() : null);
+    }
+
     private SalesItemPricePolicy activePricePolicy() {
         SalesSettings settings = salesSettingsService.getSettings();
         return settings != null && settings.getSalesItemPricePolicy() != null
@@ -290,6 +323,9 @@ public class QuotationService {
         // Stamp branch (create) or carry forward existing branch (update — immutable).
         applyBranchSnapshot(quotation, existingQuotation);
 
+        applyPricing(quotation, existingQuotation, existingQuotation != null
+                ? com.billbull.backend.sales.pricing.PricingModels.CarriedPrice.of(existingQuotation.getItems())
+                : List.of());
         enrichQuotationItemsFromProducts(quotation);
         validateAndCleanQuotationItems(quotation);
 

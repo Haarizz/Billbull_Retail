@@ -3,6 +3,7 @@ import React from "react";
 import { ScrollArea } from "@billbull/shared/components/ui/scroll-area";
 import { DetailSection, EmptyRow, StatusChip, initialsOf } from "./DetailPanelShell";
 import { locationStockStatus, productStockStatus } from "./productStockStatus";
+import QuantityTierSummary from "./QuantityTierSummary";
 
 /**
  * Read-only stock picture for one product.
@@ -180,6 +181,8 @@ const ProductDetailPanel = ({ detail, currency = "AED" }) => {
     status,
     unitPrice,
     reorderLevel,
+    zone,
+    locator,
     maxStock,
     uom,
     onHand,
@@ -208,6 +211,9 @@ const ProductDetailPanel = ({ detail, currency = "AED" }) => {
     status ? { label: String(status), tone: String(status).toUpperCase() === "ACTIVE" ? "positive" : "neutral" } : null,
     unitPrice != null ? { label: `Unit price: ${money(unitPrice, currency)}`, tone: "neutral" } : null,
     reorderLevel != null ? { label: `Reorder point: ${num(reorderLevel)}`, tone: "neutral" } : null,
+    zone || locator
+      ? { label: `Zone: ${zone || DASH} | Locator: ${locator || DASH}`, tone: "neutral" }
+      : null,
   ].filter(Boolean);
 
   // Locations actually holding stock. Rows the server returned at zero on hand are still
@@ -334,6 +340,8 @@ const ProductDetailPanel = ({ detail, currency = "AED" }) => {
             />
           </DetailSection>
         )}
+
+        <QuantityTierSummary tiers={detail.quantityTiers} currency={currency} />
 
         {incomingLpos.length > 0 && (
           <DetailSection title="Incoming">

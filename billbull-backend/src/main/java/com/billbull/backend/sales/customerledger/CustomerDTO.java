@@ -30,6 +30,7 @@ public class CustomerDTO {
     private Boolean blockCredit;
     
     private String priceList;
+    private Long priceLevelId;
     private String currency;
     private String salesman;
     private String taxGroup;
@@ -96,6 +97,8 @@ public class CustomerDTO {
     public void setBlockCredit(Boolean blockCredit) { this.blockCredit = blockCredit; }
     public String getPriceList() { return priceList; }
     public void setPriceList(String priceList) { this.priceList = priceList; }
+    public Long getPriceLevelId() { return priceLevelId; }
+    public void setPriceLevelId(Long priceLevelId) { this.priceLevelId = priceLevelId; }
     public String getCurrency() { return currency; }
     public void setCurrency(String currency) { this.currency = currency; }
     public String getSalesman() { return salesman; }

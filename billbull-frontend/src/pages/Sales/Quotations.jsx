@@ -100,7 +100,7 @@ import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
 import { generatePrintHtmlAsync, generatePdfHtmlAsync, generateEmailHtml, printHtml, downloadPdf, downloadPdfViaServer } from '@billbull/shared/utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
-import { buildEmailBody } from '../../utils/emailImageInliner';
+import { defaultDocumentEmailMessage, emailMessageToHtml, withEmailMessage } from '@billbull/shared/utils/emailMessage';
 import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, summaryLineLookup, printLineMoney, FOOTER_DISCOUNT_HELP } from '@billbull/shared/utils/documentSummaryUtils';
@@ -119,6 +119,8 @@ import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
 import KpiCards from '../../components/common/KpiCards';
 import QuotationPreviewSplitView from './components/QuotationPreviewSplitView';
+import useDocumentPricing, { manualPricePatch } from '@billbull/shared/hooks/useDocumentPricing';
+import PriceSourceTag from '@billbull/shared/components/pricing/PriceSourceTag';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -452,6 +454,7 @@ const Quotations = () => {
     const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
     const [emailTo, setEmailTo] = useState('');
     const [emailSubject, setEmailSubject] = useState('');
+    const [emailMessage, setEmailMessage] = useState('');
     const [emailSending, setEmailSending] = useState(false);
     // QA-040: pre-rendered email body (same renderer as Print) so the preview
     // iframe shows exactly what the customer will receive.
@@ -1173,6 +1176,14 @@ const Quotations = () => {
         return null;
     }, [customer, inquiryCustomerSnapshot, selectedCustomerData]);
 
+    // Customer-specific prices (Pricing Phase 2): lines added from the product master follow the
+    // customer's negotiated price → their default level → the default price, valid on the
+    // quotation date, through the backend resolver. Loaded / hand-edited prices are kept.
+    const documentPricing = useDocumentPricing({
+        items, setItems, customer: activeCustomerData, documentDate: qtnDate,
+        recalcRow: (it) => calculateRow(it), enabled: !isViewMode,
+    });
+
     // ✅ CALCULATE ROW TOTALS - ERP STANDARD FORMULAS
     const calculateRow = (item) => {
         const qty = parseFloat(item.qty) || 0;
@@ -1250,7 +1261,7 @@ const Quotations = () => {
                     ? value
                     : Number(value);
 
-                let updatedItem = { ...item, [field]: val };
+                let updatedItem = { ...item, [field]: val, ...(manualPricePatch(item, field, val) || {}) };
 
                 // ✅ If unit is being changed, recalculate price based on conversion
                 if (field === 'unit' && item.unitConversions) {
@@ -1319,6 +1330,9 @@ const Quotations = () => {
         const rawItem = {
             id: Date.now() + Math.random(),
             code: product.code,
+            productId: product.id ?? null,
+            // Priced from the product master: follows the customer's pricing.
+            priceLevelAuto: true,
             name: product.name || '',
             sku: product.sku || product.skuCode || product.productSku || '',
             brand: product.brandName || product.brand || '',
@@ -1413,6 +1427,8 @@ const Quotations = () => {
         const rawItem = {
             id: Date.now() + Math.random(),
             code: product.code,
+            productId: product.id ?? null,
+            priceLevelAuto: Number(price) === Number(pickSalesItemPrice(product, salesSettings?.salesItemPricePolicy)),
             name: product.name || '',
             sku: product.sku || product.skuCode || product.productSku || '',
             brand: product.brandName || product.brand || '',
@@ -1630,6 +1646,12 @@ const Quotations = () => {
 
     const handleSaveDraft = async () => {
         if (isViewMode) return;
+        if (documentPricing.pending) {
+            setToastMessage('Prices are being updated for this customer. Please try again in a moment.');
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
         if (!quotationAutoNumbering && !getQuotationNo().trim()) {
             setToastMessage('Please enter a quotation number.');
             setToastType('info');
@@ -1670,6 +1692,12 @@ const Quotations = () => {
 
     const handleConfirm = async () => {
         if (isViewMode) return;
+        if (documentPricing.pending) {
+            setToastMessage('Prices are being updated for this customer. Please try again in a moment.');
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
         if (!quotationAutoNumbering && !getQuotationNo().trim()) {
             setToastMessage('Please enter a quotation number.');
             setToastType('info');
@@ -1867,6 +1895,7 @@ const Quotations = () => {
         const customerEmail = selectedCustomerData?.email || inquiryCustomerSnapshot?.email || '';
         setEmailTo(customerEmail);
         setEmailSubject(`Quotation ${getQuotationNo()} from BillBull ERP`);
+        setEmailMessage(defaultDocumentEmailMessage({ docLabel: 'Quotation', docNumber: getQuotationNo(), companyName: company?.companyName || company?.name }));
         // QA-040: render the preview using the same template + payload that
         // Send Email will use. Iframe runs in the same origin so the live
         // image URLs work here; the version we POST to the backend gets the
@@ -1898,38 +1927,14 @@ const Quotations = () => {
         }
         setEmailSending(true);
         try {
-            // QA-040: render the email body using the same designed template
-            // as Print, then inline every <img> as a data: URI so the
-            // recipient's mail client doesn't try to fetch /uploads/ or
-            // /assets/ paths it can't reach. If anything in the pipeline
-            // fails, we POST an empty htmlBody and the backend falls back
-            // to its legacy hand-built HTML.
-            let htmlBody = '';
-            let inlineAttachments = [];
-            try {
-                let html = emailPreviewHtml;
-                if (!html) {
-                    const templates = await getTemplatesByCategory('Quotation');
-                    const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
-                    if (defaultTemplate) {
-                        html = generateEmailHtml(
-                            defaultTemplate,
-                            buildQuotationDocPayload(),
-                            { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: quotationBranch?.id ?? activeBranch?.id }), billBullLogo }
-                        );
-                    }
-                }
-                if (html) {
-                    const built = await buildEmailBody(html);
-                    htmlBody = built.html;
-                    inlineAttachments = built.inlineAttachments;
-                }
-            } catch (renderErr) {
-                console.warn('Email body render/inline failed; backend will use legacy template.', renderErr);
-            }
+            // The sent email is the message only; the quotation travels as the PDF
+            // attachment (the dialog preview still shows both). A cleared message
+            // falls back to the default so the body is never empty.
+            const htmlBody = emailMessageToHtml(emailMessage)
+                || emailMessageToHtml(defaultDocumentEmailMessage({ docLabel: 'Quotation', docNumber: getQuotationNo(), companyName: company?.companyName || company?.name }));
 
             // PDF attachment: the PRINT HTML of the open quotation (what Print shows),
-            // rendered on the server. Never the cid email body. No PDF, no send.
+            // rendered on the server. No PDF, no send.
             let pdfHtml = '';
             try {
                 const templates = await getTemplatesByCategory('Quotation');
@@ -1944,7 +1949,7 @@ const Quotations = () => {
                 throw new Error('Could not prepare the PDF attachment. Check that a default "Quotation" print template exists in Settings → Print & Email Templates.');
             }
 
-            await sendQuotationEmail(editingId, { toEmail: emailTo, subject: emailSubject, htmlBody, inlineAttachments, pdfHtml });
+            await sendQuotationEmail(editingId, { toEmail: emailTo, subject: emailSubject, htmlBody, inlineAttachments: [], pdfHtml });
             setIsEmailModalOpen(false);
             setToastMessage(`Email sent successfully to ${emailTo}`);
             setToastType('success');
@@ -3834,6 +3839,16 @@ const Quotations = () => {
                                             : null
                                     }
                                 />
+                                {(documentPricing.summary?.message || documentPricing.error) && (
+                                    <div className="border-t border-slate-100 px-4 py-1.5 text-[11px]" data-testid="customer-pricing-summary">
+                                        {documentPricing.summary?.message && (
+                                            <span className={documentPricing.summary.tone === 'info' ? 'font-semibold text-emerald-700' : 'text-slate-500'}>
+                                                {documentPricing.summary.message}{documentPricing.pending ? ' …' : ''}
+                                            </span>
+                                        )}
+                                        {documentPricing.error && <span className="ml-2 text-red-600" role="alert">{documentPricing.error}</span>}
+                                    </div>
+                                )}
                                 </div>
 
                                 {/* CustomerSelector modal (unchanged) */}
@@ -4014,6 +4029,7 @@ const Quotations = () => {
                                                                         disabled={isViewMode}
                                                                     />
                                                                 </div>
+                                                                <PriceSourceTag line={item} />
                                                             </td>
 
                                                             {/* Amount */}
@@ -4573,6 +4589,17 @@ const Quotations = () => {
                                         className="flex-1 px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:border-amber-400 bg-white"
                                     />
                                 </div>
+                                <div className="flex items-start gap-3">
+                                    <label htmlFor="quotation-email-message" className="text-xs font-semibold text-slate-500 w-14 shrink-0 pt-1.5">Message</label>
+                                    <textarea
+                                        id="quotation-email-message"
+                                        value={emailMessage}
+                                        onChange={(e) => setEmailMessage(e.target.value)}
+                                        rows={4}
+                                        placeholder="Message shown above the quotation"
+                                        className="flex-1 px-3 py-1.5 border border-slate-200 rounded text-sm resize-y focus:outline-none focus:border-amber-400 bg-white"
+                                    />
+                                </div>
                                 <div className="flex items-center gap-3">
                                     <span className="text-xs font-semibold text-slate-500 w-14 shrink-0">Attach</span>
                                     <span className="flex items-center gap-1.5 text-xs text-slate-600">
@@ -4587,7 +4614,7 @@ const Quotations = () => {
                             <div className="flex-1 overflow-hidden px-5 py-3">
                                 <p className="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wide">Email Preview</p>
                                 <iframe
-                                    srcDoc={emailPreviewHtml || '<div style="padding:24px;font-family:Arial;color:#888;font-size:13px">Generating preview…</div>'}
+                                    srcDoc={(emailPreviewHtml && withEmailMessage(emailPreviewHtml, emailMessage)) || '<div style="padding:24px;font-family:Arial;color:#888;font-size:13px">Generating preview…</div>'}
                                     title="Email Preview"
                                     className="w-full h-full rounded border border-slate-200"
                                     style={{ minHeight: '380px' }}

@@ -45,6 +45,9 @@ public class CustomerService {
     @Autowired(required = false)
     private SalesDocumentNumberingService numberingService;
 
+    @Autowired(required = false)
+    private com.billbull.backend.sales.pricing.PriceLevelRepository priceLevelRepository;
+
     @Autowired
     private BranchRepository branchRepository;
 
@@ -422,6 +425,35 @@ public class CustomerService {
         return status != null && (status.equalsIgnoreCase("Completed") || status.equalsIgnoreCase("COMPLETED"));
     }
 
+    /**
+     * Default price level assignment. A newly assigned level must exist and be active; the legacy
+     * free-text priceList label is set to the level's name so reports and exports agree. Clearing the
+     * level also clears a label that was just the old level's name — otherwise the resolver's
+     * by-name fallback would quietly re-apply it.
+     */
+    void applyPriceLevel(Customer customer, Long previousPriceLevelId) {
+        if (priceLevelRepository == null) return;
+        Long levelId = customer.getPriceLevelId();
+        if (levelId == null) {
+            if (previousPriceLevelId != null) {
+                priceLevelRepository.findById(previousPriceLevelId)
+                        .filter(prev -> customer.getPriceList() != null
+                                && prev.getName().equalsIgnoreCase(customer.getPriceList().trim()))
+                        .ifPresent(prev -> customer.setPriceList(null));
+            }
+            return;
+        }
+        com.billbull.backend.sales.pricing.PriceLevel level = priceLevelRepository.findById(levelId)
+                .orElseThrow(() -> new IllegalArgumentException("Price level " + levelId + " does not exist."));
+        boolean changed = !levelId.equals(previousPriceLevelId);
+        if (changed && !level.isActive()) {
+            throw new IllegalArgumentException("Price level '" + level.getName() + "' is inactive and cannot be assigned.");
+        }
+        if (changed || customer.getPriceList() == null || customer.getPriceList().isBlank()) {
+            customer.setPriceList(level.getName());
+        }
+    }
+
     // =========================
     // CREATE / UPDATE CUSTOMER
     // =========================
@@ -453,6 +485,8 @@ public class CustomerService {
             }
         }
 
+        final Long previousPriceLevelId = customer.getPriceLevelId();
+
         // -------------------------
         // COPY SIMPLE FIELDS
         // -------------------------
@@ -468,6 +502,8 @@ public class CustomerService {
 
         // group (frontend) → groupType (entity)
         customer.setGroupType(dto.getGroup());
+
+        applyPriceLevel(customer, previousPriceLevelId);
 
         // -------------------------
         // DEFAULT VALUES

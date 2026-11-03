@@ -11,6 +11,13 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
     boolean existsByCode(String code);
     java.util.Optional<Customer> findByCode(String code);
 
+    /** Keeps the legacy price-list label in step when a price level is renamed. */
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query(
+        "UPDATE Customer c SET c.priceList = :name WHERE c.priceLevelId = :levelId")
+    int renamePriceList(@org.springframework.data.repository.query.Param("levelId") Long levelId,
+                        @org.springframework.data.repository.query.Param("name") String name);
+
     /**
      * Exact (case-insensitive) name lookup — used as a last-resort fallback when an
      * invoice's customerCode is blank but its customerName isn't, so the printed

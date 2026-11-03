@@ -120,6 +120,8 @@ import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 import TableSkeleton from '../../components/common/TableSkeleton';
 import ProformaPreviewSplitView from './components/ProformaPreviewSplitView';
+import useDocumentPricing, { manualPricePatch } from '@billbull/shared/hooks/useDocumentPricing';
+import PriceSourceTag from '@billbull/shared/components/pricing/PriceSourceTag';
 
 const ProformaInvoice = () => {
   const { company } = useCompany();
@@ -226,6 +228,14 @@ const ProformaInvoice = () => {
   });
 
   const [items, setItems] = useState([createBlankProformaItem()]);
+
+  // Customer-specific prices (Pricing Phase 2): lines added from the product master follow the
+  // customer's negotiated price → their default level → the default price, valid on the PI date,
+  // through the backend resolver. Lines from a source document or a saved PI keep their price.
+  const documentPricing = useDocumentPricing({
+    items, setItems, customer: selectedCustomer, documentDate: piDate,
+    recalcRow: (it) => calculateRow(it), enabled: !isReadOnly,
+  });
 
   useEffect(() => {
     if (pendingAction && pendingAction.id === piId && items.length > 0) {
@@ -794,6 +804,9 @@ const ProformaInvoice = () => {
       taxAmt: 0,
       total: 0
     });
+    // Priced from the product master: follows the customer's pricing.
+    newItem.productId = product.id ?? null;
+    newItem.priceLevelAuto = true;
 
     // QA-FAST-ENTRY: replace-in-place when triggered by inline search.
     const targetRowId = pendingFastEntryRowId;
@@ -873,7 +886,7 @@ const ProformaInvoice = () => {
       if (item.id === id) {
         const stringFields = new Set(['desc', 'remarks', 'unit', 'code', 'image', 'focUnit', 'barcode']);
         const normalizedValue = stringFields.has(field) ? value : (Number(value) || 0);
-        let newItem = { ...item, [field]: normalizedValue };
+        let newItem = { ...item, [field]: normalizedValue, ...(manualPricePatch(item, field, normalizedValue) || {}) };
 
         // âœ… If unit is being changed, recalculate price based on conversion
         if (field === 'unit' && item.unitConversions) {
@@ -1005,6 +1018,10 @@ const ProformaInvoice = () => {
 
   // ✅ STEP 6: SAVE DRAFT -> REAL API
   const handleSaveDraft = async (advanceOverride = null) => {
+    if (documentPricing.pending) {
+      alert('Prices are being updated for this customer. Please try again in a moment.');
+      return;
+    }
     setIsSaving(true);
     try {
       if (!proformaAutoNumbering && !piNumber.trim()) {
@@ -1973,6 +1990,16 @@ const ProformaInvoice = () => {
                     }
                 />
                 </div>
+                {(documentPricing.summary?.message || documentPricing.error) && (
+                  <div className="rounded-md border border-slate-200 bg-white px-4 py-1.5 text-[11px]" data-testid="customer-pricing-summary">
+                    {documentPricing.summary?.message && (
+                      <span className={documentPricing.summary.tone === 'info' ? 'font-semibold text-emerald-700' : 'text-slate-500'}>
+                        {documentPricing.summary.message}{documentPricing.pending ? ' …' : ''}
+                      </span>
+                    )}
+                    {documentPricing.error && <span className="ml-2 text-red-600" role="alert">{documentPricing.error}</span>}
+                  </div>
+                )}
 
                 <CustomerSelector
                     isOpen={isCustomerSearchOpen}
@@ -2160,6 +2187,7 @@ const ProformaInvoice = () => {
                                     placeholder="0.00"
                                   />
                                 </div>
+                                <PriceSourceTag line={item} />
                               </td>
                               <td className="p-2 text-center align-middle w-24">
                                 <div className="font-bold text-slate-800 text-sm">{(showFooterBreakdown && proformaLineFor(item) ? Number(proformaLineFor(item).total) : Number(item.total || 0)).toFixed(2)}</div>

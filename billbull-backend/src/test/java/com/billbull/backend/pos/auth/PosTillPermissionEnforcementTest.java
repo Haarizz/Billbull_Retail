@@ -119,7 +119,7 @@ class PosTillPermissionEnforcementTest {
 
         // Creating a back-office invoice needs sales.invoice CREATE, which the till does not grant.
         SalesInvoiceController invoices = new SalesInvoiceController(
-                invoiceService, invoiceCustomerContactService, permissions, null, null, null, null);
+                invoiceService, invoiceCustomerContactService, permissions, null, null, null, null, null);
         assertThrows(AccessDeniedException.class, () -> invoices.save(new SalesInvoice()));
         assertFalse(permissions.canEdit("sales.invoice"));
         verify(invoiceService, never()).save(any());

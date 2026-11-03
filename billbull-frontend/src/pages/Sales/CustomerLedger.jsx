@@ -55,6 +55,7 @@ import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import { sendReceiptVoucherEmail } from '@billbull/shared/api/receiptVoucherApi';
 import TableSkeleton from '../../components/common/TableSkeleton';
+import usePriceLevels from '@billbull/shared/hooks/usePriceLevels';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -361,6 +362,8 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
     const defaultCurrency = normalizeCurrencyValue(company?.currency || 'AED');
     const [activeTab, setActiveTab] = useState('general');
     const [customerAutoNumbering, setCustomerAutoNumbering] = useState(true);
+    // Default price level choices (inactive ones only listed when already assigned).
+    const { levels: priceLevels } = usePriceLevels({ enabled: isOpen });
 
     // --- Nested Modal States ---
     const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
@@ -414,6 +417,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         creditStatus: 'Good',
         blockCredit: false,
         priceList: 'Default',
+        priceLevelId: null,
         currency: defaultCurrency,
         salesman: '',
         taxGroup: 'Standard VAT 5%',
@@ -863,7 +867,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             <span className="text-xs text-slate-400 ml-auto">Default settings for sales transactions</span>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Price List</label><div className="relative"><select name="priceList" value={formData.priceList} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none"><option>Default</option><option>Standard</option><option>VIP</option><option>Wholesale</option><option>Retail</option></select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
+                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5" htmlFor="customer-price-level">Default Price Level</label><div className="relative"><select id="customer-price-level" name="priceLevelId" value={formData.priceLevelId == null ? '' : String(formData.priceLevelId)} onChange={(e) => { const id = e.target.value === '' ? null : Number(e.target.value); const lvl = priceLevels.find(l => l.id === id); setFormData(prev => ({ ...prev, priceLevelId: id, priceList: lvl ? lvl.name : (prev.priceLevelId != null ? '' : prev.priceList) })); }} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none"><option value="">Default prices</option>{priceLevels.filter(l => !l.systemDefault && (l.active !== false || l.id === formData.priceLevelId)).map(l => (<option key={l.id} value={String(l.id)}>{l.name}{l.active === false ? ' (inactive)' : ''}</option>))}</select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
                             <div>
                                 <label className="block text-xs font-medium text-slate-500 mb-1.5">Default Currency</label>
                                 <SearchableDropdown

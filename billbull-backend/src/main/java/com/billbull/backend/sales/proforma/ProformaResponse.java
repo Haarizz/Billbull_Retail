@@ -268,4 +268,16 @@ public class ProformaResponse {
 	public void setBillDiscountType(String billDiscountType) {
 		this.billDiscountType = billDiscountType;
 	}
+
+    /** The level the document priced at (Pricing Phase 2.1). */
+    private Long priceLevelId;
+    private String priceLevelName;
+    private String priceLevelSource;
+
+    public Long getPriceLevelId() { return priceLevelId; }
+    public void setPriceLevelId(Long v) { this.priceLevelId = v; }
+    public String getPriceLevelName() { return priceLevelName; }
+    public void setPriceLevelName(String v) { this.priceLevelName = v; }
+    public String getPriceLevelSource() { return priceLevelSource; }
+    public void setPriceLevelSource(String v) { this.priceLevelSource = v; }
 }

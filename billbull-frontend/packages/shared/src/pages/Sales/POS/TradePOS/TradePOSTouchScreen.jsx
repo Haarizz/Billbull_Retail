@@ -5,9 +5,11 @@ import { TradeFunctionsPanel } from './components/layout/TradeFunctionsPanel';
 import { TradeCartPanel } from './components/cart/TradeCartPanel';
 import { TradeSearchBar } from './components/catalog/TradeSearchBar';
 import QuickCustomerModal from '../features/customers/QuickCustomerModal';
+import PriceLevelSelect from '../../../../components/pricing/PriceLevelSelect';
 import QuickAddProductModal from '../../../../components/inventory/QuickAddProductModal';
 import { useStickyScanFocus } from './useStickyScanFocus';
 import { usePosSaleShortcuts } from '../input/usePosSaleShortcuts';
+import { checkoutOptions } from '../input/posShortcuts';
 
 /** F4 / F8 / F9 → the Item Entry dialog field each one opens on. */
 const ENTRY_FIELD_FOR_MODE = { qty: 'quantity', discount: 'discount', price: 'price' };
@@ -43,6 +45,8 @@ export const TradePOSTouchScreen = React.memo((props) => {
     handleCheckout,
     // The cart line the last add landed on — the keyboard line shortcuts' fallback target.
     lastEnteredLineId = null,
+    // Price level selector for the sale (null when no custom levels exist).
+    priceLevelProps = null,
 
     // Phase 2 salesperson verification. This template previously had NO salesperson UI at all,
     // so a compact-template branch posted every sale as Unassigned. It is in scope for the
@@ -180,14 +184,18 @@ export const TradePOSTouchScreen = React.memo((props) => {
     items: currentInvoice?.items || [],
     selectedId: selectedFocusItemId,
     lastEnteredId: lastEnteredLineId,
-    onCheckout: (quickCash) => handleCheckout?.(quickCash ? { quickCash } : undefined),
+    onCheckout: (arg) => handleCheckout?.(checkoutOptions(arg)),
     onHold: () => holdInvoice?.(),
     onQuantity: updateQuantity,
     onRemove: guardedRemoveFromInvoice,
     onMode: (mode, line) => {
       if (line) handleEditItem?.(line.id, { focusField: ENTRY_FIELD_FOR_MODE[mode] });
     },
+    onSelect: setSelectedFocusItemId,
   });
+
+  // Cart quick-pay bar: checkout straight onto the tapped tender.
+  const onQuickTender = useCallback((tender) => handleCheckout?.({ tender }), [handleCheckout]);
 
   const moveProductHighlight = useCallback((delta) => {
     const count = filteredProducts?.length || 0;
@@ -269,12 +277,13 @@ export const TradePOSTouchScreen = React.memo((props) => {
     onClearInvoice: guardedClearInvoice,
     holdInvoice,
     openDeliveryModal,
-    setShowCashDropDialog
+    setShowCashDropDialog,
+    onQuickTender
   }), [
     currentInvoice, selectedCustomerData, selectedFocusItemId, setSelectedFocusItemId,
     formatCurrency, posSettings, handleCheckout, handleEditItem,
     updateQuantity, guardedRemoveFromInvoice, guardedClearInvoice,
-    holdInvoice, openDeliveryModal, setShowCashDropDialog
+    holdInvoice, openDeliveryModal, setShowCashDropDialog, onQuickTender
   ]);
 
   return (
@@ -282,6 +291,11 @@ export const TradePOSTouchScreen = React.memo((props) => {
       {/* Global Header */}
       <header className="shrink-0 relative z-20 shadow-sm">
         <TradeHeader {...headerProps} />
+        {priceLevelProps ? (
+          <div className="flex justify-end bg-white border-t border-gray-100 px-4 py-1">
+            <PriceLevelSelect compact {...priceLevelProps} />
+          </div>
+        ) : null}
       </header>
 
       {/* Main Content Area */}
