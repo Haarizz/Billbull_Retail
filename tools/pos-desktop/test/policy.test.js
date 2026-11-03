@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { normalizeServerUrl, isInsecureRemote, posUrl, looksLikePosPage, describeNetError } = require('../src/serverUrl');
-const { classifyNavigation, classifyWindowOpen, isPermissionAllowed } = require('../src/navigationPolicy');
+const { classifyNavigation, classifyWindowOpen, isPermissionAllowed, isSignInRedirect } = require('../src/navigationPolicy');
 const { createSettingsStore, DEFAULTS } = require('../src/settingsStore');
 
 const ORIGIN = 'https://shop.example.com';
@@ -65,6 +65,17 @@ test('navigation stays on the tenant origin; other web links go to the browser',
   assert.equal(classifyNavigation('javascript:alert(1)', ORIGIN), 'deny');
   assert.equal(classifyNavigation('not a url', ORIGIN), 'deny');
   assert.equal(classifyNavigation(`${ORIGIN}/pos/`, null), 'external');
+});
+
+test('a jump to the Retail sign-in is recognised; till and other pages are not', () => {
+  assert.equal(isSignInRedirect(`${ORIGIN}/login`, ORIGIN), true);
+  assert.equal(isSignInRedirect(`${ORIGIN}/login/`, ORIGIN), true);
+  assert.equal(isSignInRedirect(`${ORIGIN}/`, ORIGIN), true);
+  assert.equal(isSignInRedirect(`${ORIGIN}/pos/login`, ORIGIN), false);
+  assert.equal(isSignInRedirect(`${ORIGIN}/pos/`, ORIGIN), false);
+  assert.equal(isSignInRedirect(`${ORIGIN}/uploads/logo.png`, ORIGIN), false);
+  assert.equal(isSignInRedirect('https://other.example.com/login', ORIGIN), false);
+  assert.equal(isSignInRedirect(`${ORIGIN}/login`, null), false);
 });
 
 test('blank print popups open in the app; WhatsApp share opens in the browser', () => {

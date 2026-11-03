@@ -4,7 +4,7 @@ const path = require('node:path');
 const { app, BrowserWindow, Menu, dialog, ipcMain, net, session, shell } = require('electron');
 
 const { normalizeServerUrl, isInsecureRemote, posUrl, looksLikePosPage, describeNetError } = require('./serverUrl');
-const { classifyNavigation, classifyWindowOpen, isPermissionAllowed } = require('./navigationPolicy');
+const { classifyNavigation, classifyWindowOpen, isPermissionAllowed, isSignInRedirect } = require('./navigationPolicy');
 const { createSettingsStore } = require('./settingsStore');
 
 // BillBull POS desktop shell. It loads the tenant's own https://<server>/pos/ page, so the till
@@ -83,6 +83,13 @@ app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (event) => event.preventDefault());
 
   const guard = (event, url) => {
+    // The server ended the login and the till tried to leave /pos/ for the Retail sign-in.
+    // Explain that on the app's own page instead of letting the server show a bare notice.
+    if (contents === mainWindow?.webContents && isSignInRedirect(url, currentOrigin())) {
+      event.preventDefault();
+      showSignedOut();
+      return;
+    }
     const verdict = classifyNavigation(url, currentOrigin());
     if (verdict === 'allow') return;
     event.preventDefault();
@@ -208,6 +215,11 @@ function openTill() {
 function showSetup() {
   if (!mainWindow) return;
   mainWindow.loadFile(path.join(PAGES, 'setup.html'));
+}
+
+function showSignedOut() {
+  if (!mainWindow) return;
+  mainWindow.loadFile(path.join(PAGES, 'signed-out.html'));
 }
 
 function showOffline(reason) {

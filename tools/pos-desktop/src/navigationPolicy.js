@@ -36,6 +36,18 @@ function classifyWindowOpen(url, origin) {
   return classifyNavigation(url, origin);
 }
 
+/**
+ * True when the till page is being sent to the Retail sign-in ("/login" or "/") on its own
+ * origin. Older till builds do this when the server rejects the saved login; that address is
+ * outside /pos/, so the server would show a bare "did you mean /pos/?" notice instead of the till.
+ */
+function isSignInRedirect(url, origin) {
+  const parsed = parse(url);
+  if (!parsed || !origin || parsed.origin !== origin) return false;
+  const pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+  return pathname === '/' || pathname === '/login';
+}
+
 /** Browser permissions the till page may use. Everything else (camera, location, ...) is denied. */
 const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write', 'fullscreen']);
 
@@ -43,4 +55,4 @@ function isPermissionAllowed(permission, requestingUrl, origin) {
   return ALLOWED_PERMISSIONS.has(permission) && isSameOrigin(requestingUrl, origin);
 }
 
-module.exports = { classifyNavigation, classifyWindowOpen, isPermissionAllowed, isSameOrigin };
+module.exports = { classifyNavigation, classifyWindowOpen, isPermissionAllowed, isSameOrigin, isSignInRedirect };
