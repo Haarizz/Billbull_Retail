@@ -110,6 +110,14 @@ public class SalesSettings {
     @Column(nullable = false, columnDefinition = "boolean default false")
     private boolean monthlyTargetRequired = false;
 
+    /**
+     * Back-office Sales Invoices must name a real customer — the walk-in customer is refused.
+     * OFF by default. The POS has its own per-branch switch ({@code PosSettings.requireCustomer},
+     * Console → Behavior); this one covers invoices saved through {@code SalesInvoiceController}.
+     */
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean customerRequiredOnSalesInvoice = false;
+
     @Transient
     private List<SalesDocumentNumberSetting> documentNumbering = new ArrayList<>();
 
@@ -203,6 +211,14 @@ public class SalesSettings {
 
     public void setMonthlyTargetRequired(boolean monthlyTargetRequired) {
         this.monthlyTargetRequired = monthlyTargetRequired;
+    }
+
+    public boolean isCustomerRequiredOnSalesInvoice() {
+        return customerRequiredOnSalesInvoice;
+    }
+
+    public void setCustomerRequiredOnSalesInvoice(boolean customerRequiredOnSalesInvoice) {
+        this.customerRequiredOnSalesInvoice = customerRequiredOnSalesInvoice;
     }
 
     public List<SalesDocumentNumberSetting> getDocumentNumbering() {

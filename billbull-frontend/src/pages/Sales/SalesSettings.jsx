@@ -16,6 +16,7 @@ import {
     Zap,
     DollarSign,
     UserCheck,
+    UserRound,
     Target
 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -229,6 +230,13 @@ const sectionMeta = {
         icon: Settings,
         tint: 'bg-rose-100 text-rose-700'
     },
+    customer: {
+        title: 'Mandatory Customer',
+        subtitle: 'Require a customer on Sales Invoices',
+        description: 'Decide whether every Sales Invoice must name a customer, or whether walk-in invoices are allowed.',
+        icon: UserRound,
+        tint: 'bg-amber-100 text-amber-700'
+    },
     zeroPrice: {
         title: 'Zero-Price Item Policy',
         subtitle: 'Control zero-priced lines on sales documents',
@@ -381,6 +389,9 @@ const SalesSettings = () => {
     const [salespersonRequiredAtPos, setSalespersonRequiredAtPos] = useState(false);
     const [salespersonRequiredAtBackOffice, setSalespersonRequiredAtBackOffice] = useState(false);
     const [monthlyTargetRequired, setMonthlyTargetRequired] = useState(false);
+    // Mandatory Customer on back-office Sales Invoices. The POS has its own per-branch switch
+    // under POS Console → Behavior.
+    const [customerRequiredOnSalesInvoice, setCustomerRequiredOnSalesInvoice] = useState(false);
     const [documentNumbering, setDocumentNumbering] = useState(DEFAULT_DOCUMENT_NUMBERING.map((setting) => ({
         ...setting,
         preview: buildPreview(setting)
@@ -400,6 +411,7 @@ const SalesSettings = () => {
                 setSalespersonRequiredAtPos(data.salespersonRequiredAtPos ?? false);
                 setSalespersonRequiredAtBackOffice(data.salespersonRequiredAtBackOffice ?? false);
                 setMonthlyTargetRequired(data.monthlyTargetRequired ?? false);
+                setCustomerRequiredOnSalesInvoice(data.customerRequiredOnSalesInvoice ?? false);
                 setDocumentNumbering(normalizeDocumentNumbering(data.documentNumbering));
             } catch (err) {
                 console.error('Failed to load sales settings', err);
@@ -425,6 +437,7 @@ const SalesSettings = () => {
                 salespersonRequiredAtPos,
                 salespersonRequiredAtBackOffice,
                 monthlyTargetRequired,
+                customerRequiredOnSalesInvoice,
                 documentNumbering
             });
             toast.success('Configure & customize saved successfully');
@@ -464,6 +477,7 @@ const SalesSettings = () => {
     const roundingSummary = roundingMode === 'NONE'
         ? 'No rounding'
         : `${roundingModes.find((mode) => mode.value === roundingMode)?.label || 'Nearest'} · step ${Number(roundingPrecision).toFixed(2)}`;
+    const customerSummary = customerRequiredOnSalesInvoice ? 'Required · walk-in blocked' : 'Optional · walk-in allowed';
     const zeroPriceSummary = zeroPricePolicies.find((p) => p.value === zeroPricePolicy)?.label || 'Allow';
     const salespersonSummary = (() => {
         const on = [];
@@ -579,6 +593,7 @@ const SalesSettings = () => {
                         <HubCard meta={sectionMeta.executionMode} value={modeSummary} onClick={() => setActiveScreen('executionMode')} />
                         <HubCard meta={sectionMeta.itemPrice} value={priceSummary} onClick={() => setActiveScreen('itemPrice')} />
                         <HubCard meta={sectionMeta.zeroPrice} value={zeroPriceSummary} onClick={() => setActiveScreen('zeroPrice')} />
+                        <HubCard meta={sectionMeta.customer} value={customerSummary} onClick={() => setActiveScreen('customer')} />
                         <HubCard meta={sectionMeta.rounding} value={roundingSummary} onClick={() => setActiveScreen('rounding')} />
                         <HubCard meta={sectionMeta.numbering} value={numberingSummary} onClick={() => setActiveScreen('numbering')} />
                     </section>
@@ -736,6 +751,33 @@ const SalesSettings = () => {
 
                     <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
                         Users can still edit the price on the document line. This screen controls the default price that appears first when the item is selected.
+                    </div>
+                </SectionShell>
+                {stockCheckModal}
+            </>
+        );
+    }
+
+    if (activeScreen === 'customer') {
+        return (
+            <>
+                <SectionShell meta={sectionMeta.customer} onBack={() => setActiveScreen('hub')} onSave={persistSettings} isSaving={isSaving}>
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                            <div className="min-w-0">
+                                <p className="text-sm font-bold text-slate-900">Customer required on Sales Invoices</p>
+                                <p className="mt-1 text-sm text-slate-600">
+                                    A Sales Invoice cannot be saved or posted until a customer is selected. Walk-in
+                                    Customer is not accepted. New invoices start with no customer selected.
+                                </p>
+                            </div>
+                            <Toggle checked={customerRequiredOnSalesInvoice} onChange={setCustomerRequiredOnSalesInvoice} />
+                        </div>
+                    </div>
+
+                    <div className="mt-5 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-4 text-sm leading-6 text-amber-900">
+                        This applies to back-office Sales Invoices. For POS sales, use POS Console → Behavior →
+                        Mandatory Customer, which is set per branch.
                     </div>
                 </SectionShell>
                 {stockCheckModal}
