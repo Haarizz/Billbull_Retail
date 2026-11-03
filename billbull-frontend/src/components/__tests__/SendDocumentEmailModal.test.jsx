@@ -17,14 +17,6 @@ vi.mock("@billbull/shared/utils/printGenerator", () => ({
   generatePrintHtmlAsync: vi.fn(),
 }));
 
-// The real inliner fetches images; here it only rewrites the logo to a cid: part.
-vi.mock("../../utils/emailImageInliner", () => ({
-  buildEmailBody: vi.fn(async (html) => ({
-    html: html.replace("/uploads/logo.png", "cid:inline-img-0"),
-    inlineAttachments: [{ cid: "inline-img-0", contentType: "image/png", base64: "AA==" }],
-  })),
-}));
-
 vi.mock("react-hot-toast", () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }));
@@ -69,7 +61,7 @@ describe("SendDocumentEmailModal PDF attachment", () => {
     generatePrintHtmlAsync.mockResolvedValue(PRINT_HTML);
   });
 
-  it("sends the cid email body and, separately, the print HTML for the PDF", async () => {
+  it("sends the message as the body and the document only as the PDF", async () => {
     const { apiFn } = renderModal();
     await clickSend();
 
@@ -77,11 +69,12 @@ describe("SendDocumentEmailModal PDF attachment", () => {
     const [id, body] = apiFn.mock.calls[0];
     expect(id).toBe(42);
     expect(body.toEmail).toBe("buyer@example.com");
-    expect(body.htmlBody).toContain("cid:inline-img-0");
-    expect(body.inlineAttachments).toHaveLength(1);
+    expect(body.htmlBody).toContain("Please find attached Delivery Note DN-0042.");
+    expect(body.htmlBody).not.toContain("email");
+    expect(body.htmlBody).not.toContain("<img");
+    expect(body.inlineAttachments).toEqual([]);
     expect(body.pdfHtml).toBe(PRINT_HTML);
-    expect(body.pdfHtml).not.toContain("cid:");
-    // Same template, payload and branch profile as the email body.
+    // Same template, payload and branch profile as the preview.
     expect(generatePrintHtmlAsync).toHaveBeenCalledWith(TEMPLATE, PAYLOAD, expect.objectContaining({ companyProfile: PROFILE }));
   });
 
@@ -93,6 +86,8 @@ describe("SendDocumentEmailModal PDF attachment", () => {
     await waitFor(() => expect(apiFn).toHaveBeenCalledTimes(1));
     expect(apiFn.mock.calls[0][1].pdfHtml).toBe("<html>download-pdf</html>");
     expect(generatePrintHtmlAsync).not.toHaveBeenCalled();
+    // Rendered with the template the preview shows, not the page's own last-used choice.
+    expect(buildPdfHtml).toHaveBeenCalledWith(TEMPLATE);
   });
 
   it("does not send when the PDF cannot be prepared", async () => {
@@ -127,5 +122,49 @@ describe("SendDocumentEmailModal PDF attachment", () => {
   it("names the attachment after the document number", () => {
     renderModal({ docNumber: "DN/2026/7" });
     expect(screen.getByText("DN_2026_7.pdf")).toBeInTheDocument();
+  });
+});
+
+describe("SendDocumentEmailModal message", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getTemplatesByCategory.mockResolvedValue([TEMPLATE]);
+    generateEmailHtml.mockReturnValue(EMAIL_HTML);
+    generatePrintHtmlAsync.mockResolvedValue(PRINT_HTML);
+  });
+
+  it("pre-fills a message naming the document and company", () => {
+    renderModal();
+    const box = screen.getByLabelText("Message");
+    expect(box.value).toContain("Please find attached Delivery Note DN-0042.");
+    expect(box.value).toContain("Acme");
+  });
+
+  it("previews the message above the document", async () => {
+    renderModal();
+    const frame = screen.getByTitle("Email Preview");
+    await waitFor(() => expect(frame.getAttribute("srcdoc")).toMatch(/<body><div[^>]*><p[^>]*>Dear Customer,<\/p>.*<img src="\/uploads\/logo.png">email/s));
+  });
+
+  it("sends exactly the edited message as the body", async () => {
+    const { apiFn } = renderModal();
+    const box = screen.getByLabelText("Message");
+    await userEvent.clear(box);
+    await userEvent.type(box, "Hello <team>");
+    await clickSend();
+
+    await waitFor(() => expect(apiFn).toHaveBeenCalledTimes(1));
+    const body = apiFn.mock.calls[0][1];
+    expect(body.htmlBody).toMatch(/^<div[^>]*><p[^>]*>Hello &lt;team&gt;<\/p><\/div>$/);
+    expect(body.pdfHtml).toBe(PRINT_HTML);
+  });
+
+  it("falls back to the default message when the box is cleared", async () => {
+    const { apiFn } = renderModal();
+    await userEvent.clear(screen.getByLabelText("Message"));
+    await clickSend();
+
+    await waitFor(() => expect(apiFn).toHaveBeenCalledTimes(1));
+    expect(apiFn.mock.calls[0][1].htmlBody).toContain("Please find attached Delivery Note DN-0042.");
   });
 });

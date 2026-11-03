@@ -288,7 +288,7 @@ describe('sendSalesInvoiceEmail', () => {
 // ---------------------------------------------------------------------------------------
 // POSSales' handleReceiptShareSend, executed from the real source.
 
-const DECL_START = '  const handleReceiptShareSend = useCallback(async (value) => {';
+const DECL_START = '  const handleReceiptShareSend = useCallback(async (value, options) => {';
 const extractHandler = () => {
   const start = POS_SALES.indexOf(DECL_START);
   const end = POS_SALES.indexOf(']);', start);
@@ -359,6 +359,13 @@ describe('handleReceiptShareSend — email channel (POSSales source, executed)',
     expect(payload.htmlBody).toBe('<p>Invoice: SI-POS-000124, Total: AED 378.00</p>');
     expect(payload).not.toHaveProperty('inlineAttachments');
     expect(Object.keys(payload).sort()).toEqual(['htmlBody', 'pdfHtml', 'pdfKind', 'subject', 'toEmail']);
+  });
+
+  it('puts the cashier\'s message above the receipt summary', async () => {
+    const { handler, deps } = makeHandler();
+    await handler('customer@example.com', { messageHtml: '<div><p>Thanks!</p></div>' });
+    expect(deps.sendSalesInvoiceEmail.mock.calls[0][1].htmlBody)
+      .toBe('<div><p>Thanks!</p></div><p>Invoice: SI-POS-000124, Total: AED 378.00</p>');
   });
 
   it('a sheet-paper till attaches its sheet print HTML', async () => {

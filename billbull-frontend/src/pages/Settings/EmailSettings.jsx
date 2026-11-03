@@ -83,7 +83,11 @@ export default function EmailSettings() {
             await sendTestEmail(testEmail.trim());
             showToast(`Test email sent to ${testEmail}`);
         } catch (err) {
-            const msg = err?.response?.data || 'Failed to send test email.';
+            // The server answers with either a plain string or { message } — the toast needs text.
+            const data = err?.response?.data;
+            const msg = (typeof data === 'string' && data.trim())
+                || (typeof data?.message === 'string' && data.message.trim())
+                || 'Failed to send test email.';
             showToast(msg, 'error');
         } finally {
             setTestSending(false);
