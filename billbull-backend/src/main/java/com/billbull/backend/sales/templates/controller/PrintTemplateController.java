@@ -123,6 +123,28 @@ public class PrintTemplateController {
         }
     }
 
+    /** Body for {@link #updateTerms}. */
+    public static class TermsRequest {
+        private String termsContent;
+
+        public String getTermsContent() { return termsContent; }
+        public void setTermsContent(String termsContent) { this.termsContent = termsContent; }
+    }
+
+    /**
+     * Saves new default Terms & Conditions on a template without touching the rest of it — the
+     * "Save as default" action in Sales Invoice (and the other document editors).
+     */
+    @PutMapping("/{id}/terms")
+    public ResponseEntity<PrintTemplate> updateTerms(@PathVariable Long id, @RequestBody TermsRequest request) {
+        requireEdit();
+        try {
+            return ResponseEntity.ok(printTemplateService.updateTerms(id, request != null ? request.getTermsContent() : null));
+        } catch (RuntimeException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteTemplate(@PathVariable Long id) {
         requireEdit();

@@ -69,6 +69,7 @@ import { computeLineTaxTotals, resolveLineTaxRate } from '@billbull/shared/utils
 import { getBranchTaxSummary } from '../../api/taxApi';
 import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory, getTemplateFamily } from '@billbull/shared/api/printTemplateApi';
+import DocumentTermsCard from '../../components/common/DocumentTermsCard';
 import { generatePrintHtmlAsync, generatePdfHtmlAsync, generateEmailHtml, printHtml, downloadPdf, downloadPdfViaServer } from '@billbull/shared/utils/printGenerator';
 import { generateOverlayInvoiceHtml } from '@billbull/shared/utils/overlayInvoiceRenderer';
 import { applyTaxAwareDisplayOptions } from '@billbull/shared/pages/Sales/POS/posPrintUtils';
@@ -204,6 +205,12 @@ import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 // ✅ SHORTCUTS HOOK
 import useShortcuts from '../../hooks/useShortcuts';
 import { usePermissions } from '@billbull/shared/context/PermissionContext';
+import usePriceLevels from '@billbull/shared/hooks/usePriceLevels';
+import usePriceLevelRepricing from '@billbull/shared/hooks/usePriceLevelRepricing';
+import PriceLevelSelect from '@billbull/shared/components/pricing/PriceLevelSelect';
+import { customerLevelOf, customerPricingSummary, isWalkInCode, levelHasTiers, pricingKeyFor, resolveClientLevel } from '@billbull/shared/utils/priceLevels';
+import useCustomerPricingStatus from '@billbull/shared/hooks/useCustomerPricingStatus';
+import PriceSourceTag from '@billbull/shared/components/pricing/PriceSourceTag';
 import { OwnershipIndicator } from '../../components/common/OwnershipIndicator';
 
 // ==========================================
@@ -518,6 +525,48 @@ const SalesInvoice = () => {
     const [items, setItems] = useState([
         { id: 1, code: '', image: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 0, taxAmt: 0, gross: 0, net: 0, cost: 0, gp: 0 }
     ]);
+
+    // Price level (Pricing Phase 1): explicit choice → customer default → default prices, resolved
+    // by the backend. Only lines added from the product master in this editor (priceLevelAuto) are
+    // re-priced; lines loaded from a saved invoice or carried from a SO/DN/PI keep their prices,
+    // and a hand-edited price (priceOverridden) is never replaced.
+    // Customer-specific prices (Phase 2): the pricing key also names the customer (and the invoice
+    // date their negotiated prices must be valid on), so changing either re-resolves auto lines.
+    const [explicitPriceLevelId, setExplicitPriceLevelId] = useState(null);
+    const { levels: priceLevels, activeLevels: activePriceLevels, hasCustomLevels, loaded: priceLevelsLoaded } = usePriceLevels();
+    const pricingCustomer = selectedCustomer && selectedCustomer.code ? selectedCustomer : null;
+    const priceLevelEffective = useMemo(
+        () => resolveClientLevel({ levels: priceLevels, explicitLevelId: explicitPriceLevelId, customer: pricingCustomer }),
+        [priceLevels, explicitPriceLevelId, pricingCustomer]
+    );
+    const priceLevelKey = pricingCustomer
+        ? `${pricingKeyFor(priceLevelEffective.level, pricingCustomer)}|d:${invoiceDate || ''}`
+        : pricingKeyFor(priceLevelEffective.level, null);
+    const namedPricingCustomer = pricingCustomer && !isWalkInCode(pricingCustomer.code) ? pricingCustomer : null;
+    const customerPricingStatus = useCustomerPricingStatus(namedPricingCustomer?.code || null);
+    const customerPricing = useMemo(
+        () => (namedPricingCustomer ? customerPricingSummary(items.filter(it => it.code), customerPricingStatus) : null),
+        [namedPricingCustomer, items, customerPricingStatus]
+    );
+    const customerPriceLevel = customerLevelOf(priceLevels, pricingCustomer);
+    const autoPricedItems = useMemo(() => items.filter(it => it.priceLevelAuto), [items]);
+    const priceLevelRequest = useMemo(() => ({
+        priceLevelId: explicitPriceLevelId,
+        customerCode: pricingCustomer?.code || null,
+        pricingDate: invoiceDate || null,
+    }), [explicitPriceLevelId, pricingCustomer, invoiceDate]);
+    const { pending: priceLevelPending, error: priceLevelError } = usePriceLevelRepricing({
+        items: autoPricedItems,
+        levelKey: priceLevelKey,
+        request: priceLevelRequest,
+        // calculateRow is declared further down; this updater only runs after render.
+        setItems: (updater) => setItems(prev => updater(prev).map((it, i) => (it === prev[i] ? it : calculateRow(it)))),
+        enabled: priceLevels.length > 0 || (priceLevelsLoaded && Boolean(namedPricingCustomer)),
+        // Quantity tiers: a quantity / unit change re-prices the product's auto lines, counting
+        // every live line of that product (carried ones included), as the save does.
+        tierAware: levelHasTiers(priceLevelEffective.level),
+        contextItems: items,
+    });
     const [billDiscount, setBillDiscount] = useState(0);
     const [billDiscountType, setBillDiscountType] = useState('percent'); // 'percent' | 'amount'
     // Every pre-fill / reload path takes the footer discount through ONE resolver so its type
@@ -577,6 +626,10 @@ const SalesInvoice = () => {
     const [modalNotes, setModalNotes] = useState('');
     const [bankAccountOptions, setBankAccountOptions] = useState([]);
     const [invoiceNotes, setInvoiceNotes] = useState('');
+    // This invoice's own Terms & Conditions. null = not set yet: DocumentTermsCard pre-fills it
+    // from the default Sales Invoice template (and invoices saved before terms existed print the
+    // template's terms). Saved with the invoice and printed instead of the template's text.
+    const [termsConditions, setTermsConditions] = useState(null);
 
     // Stock Check Modal
     const [selectedStockItem, setSelectedStockItem] = useState(null);
@@ -1036,6 +1089,11 @@ const SalesInvoice = () => {
         setLinkedPI(fromSO.linkedProforma || '');
         // The order's delivery charge becomes this invoice's Delivery Charge.
         setDeliveryCharge(Number(fromSO.deliveryCharge) || 0);
+        // The order's salesperson carries over (the server also inherits it if none is sent).
+        if (fromSO.salespersonEmployeeId) {
+            setSalespersonEmployeeId(String(fromSO.salespersonEmployeeId));
+            if (fromSO.salespersonName) setSalesperson(fromSO.salespersonName);
+        }
         applySourceFooterDiscount(fromSO);
         setReference(fromSO.linkedQuotation || fromSO.linkedProforma || fromSO.soNumber || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
@@ -1316,6 +1374,7 @@ const SalesInvoice = () => {
     const isWalkInCustomer = !!(selectedCustomer?.code === 'WALKIN'
         || selectedCustomer?.name?.toLowerCase().includes('walk-in')
         || selectedCustomer?.name?.toLowerCase().includes('walkin'));
+    const MANDATORY_CUSTOMER_MESSAGE = "A customer is required on Sales Invoices. Please select a customer other than Walk-in Customer.";
 
     // ==========================================
     // HANDLERS
@@ -1337,11 +1396,13 @@ const SalesInvoice = () => {
         setSalesType(newTypeUI === 'Direct Sale' ? 'DIRECT_SALE' : 'STANDARD_FLOW');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
         setDeliveryDate('');
-        // BB-027: Default to Walk-In Customer for new invoices
-        const walkIn = customersList.find(c =>
+        // BB-027: Default to Walk-In Customer for new invoices — unless Mandatory Customer is on
+        // (Sales → Configure & customize), where the user must pick a real customer.
+        const walkIn = salesSettings?.customerRequiredOnSalesInvoice ? null : customersList.find(c =>
             c.name?.toLowerCase().includes('walk-in') || c.name?.toLowerCase().includes('walkin')
         );
         setSelectedCustomer(walkIn || null);
+        setExplicitPriceLevelId(null);
         setLinkedSO('');
         setLinkedDN('');
         setLinkedPI('');
@@ -1351,6 +1412,7 @@ const SalesInvoice = () => {
         setPaymentMode('');
         setPaymentTerms('Immediate');
         setSalesperson('');
+        setSalespersonEmployeeId('');
         setBranch(activeBranch?.name || defaultBranch?.name || '');
         setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 0, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setBillDiscount(0);
@@ -1361,6 +1423,7 @@ const SalesInvoice = () => {
         setInvoiceBalance(null);
         setCustomerOutstanding(0);
         setInvoiceNotes('');
+        setTermsConditions(null);
         setBatchGuideStep(null);
         setActiveTab('create');
     };
@@ -1390,6 +1453,8 @@ const SalesInvoice = () => {
         if (isGeneratedFromDN) return; // Prevent changing customer if locked
 
         setSelectedCustomer(cust);
+        // A different customer starts from their own default price level.
+        setExplicitPriceLevelId(null);
         const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
         const _resolvedAddr = _defaultAddr
             ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
@@ -1565,6 +1630,10 @@ const SalesInvoice = () => {
         if (so) {
             applySourceFooterDiscount(so);
             setDeliveryCharge(Number(so.deliveryCharge) || 0);
+            if (so.salespersonEmployeeId) {
+                setSalespersonEmployeeId(String(so.salespersonEmployeeId));
+                if (so.salespersonName) setSalesperson(so.salespersonName);
+            }
             // Resolve full customer master so the panel renders phone/balance/TRN/savedAddresses.
             const matched = resolveCustomer(
                 { customerCode: so.customerCode, customerName: so.customerName },
@@ -1901,6 +1970,16 @@ const SalesInvoice = () => {
                 let updatedItem = { ...item, [field]: value };
                 // BB-025: Do not auto-compute cost from price; keep existing cost value
 
+                // A hand-typed price is kept when the price level changes.
+                if (field === 'price' && Number(value) !== Number(item.price)) {
+                    updatedItem.priceOverridden = true;
+                }
+                // A level-priced line re-resolves in its new unit.
+                if (field === 'unit' && item.priceLevelAuto && !item.priceOverridden
+                    && item.priceLevelKey && item.priceLevelKey !== 'default') {
+                    updatedItem.priceLevelKey = '__unit_changed__';
+                }
+
                 // ✅ If unit is being changed, recalculate price based on conversion
                 if (field === 'unit' && item.unitConversions) {
                     const newUnit = value;
@@ -1957,6 +2036,9 @@ const SalesInvoice = () => {
         const rawItem = {
             id: Date.now() + Math.random(),
             code: product.code || product.itemCode || '',
+            productId: product.id ?? null,
+            // Priced from the product master: follows the invoice's price level.
+            priceLevelAuto: true,
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
             name: product.name || '',
@@ -2030,6 +2112,9 @@ const SalesInvoice = () => {
         const rawItem = {
             id: Date.now() + Math.random(),
             code: product.code || '',
+            productId: product.id ?? null,
+            // Follows the price level only when the user kept the master price the entry offered.
+            priceLevelAuto: Number(price) === Number(pickSalesItemPrice(product, salesSettings?.salesItemPricePolicy)),
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '',
             name: product.name || '',
@@ -2090,6 +2175,11 @@ const SalesInvoice = () => {
             return;
         }
         if (!selectedCustomer) { alert("Please select a customer"); return; }
+        if (priceLevelPending) { toast.error("Prices are being updated for the selected price level. Please try again in a moment."); return; }
+        if (salesSettings?.customerRequiredOnSalesInvoice && isWalkInCustomer) {
+            alert(MANDATORY_CUSTOMER_MESSAGE);
+            return;
+        }
         if (!invoiceAutoNumbering && !invoiceNo.trim()) {
             alert("Please enter an invoice number.");
             return;
@@ -2125,6 +2215,7 @@ const SalesInvoice = () => {
             return;
         }
         if (!selectedCustomer) { alert("Please select a customer"); return; }
+        if (priceLevelPending) { toast.error("Prices are being updated for the selected price level. Please try again in a moment."); return; }
         if (!invoiceAutoNumbering && !invoiceNo.trim()) {
             alert("Please enter an invoice number.");
             return;
@@ -2133,6 +2224,12 @@ const SalesInvoice = () => {
         const freshSettings = await getSalesSettings().catch(() => salesSettings);
         if (freshSettings) setSalesSettings(freshSettings);
         const activeSettings = freshSettings || salesSettings;
+
+        // Mandatory Customer — re-checked against fresh settings; the backend refuses it too.
+        if (activeSettings?.customerRequiredOnSalesInvoice && isWalkInCustomer) {
+            alert(MANDATORY_CUSTOMER_MESSAGE);
+            return;
+        }
 
         // Zero-price policy check
         const zeroPricePolicy = activeSettings?.zeroPricePolicy ?? 'BLOCK';
@@ -2165,6 +2262,8 @@ const SalesInvoice = () => {
 
             customerCode: selectedCustomer?.code || '',
             customerName: selectedCustomer?.name || '',
+            // Explicit price level only (null = customer's default); resolved again on the server.
+            priceLevelId: explicitPriceLevelId,
 
             linkedSalesOrder: linkedSO,
             linkedDeliveryNote: linkedDN,
@@ -2204,6 +2303,7 @@ const SalesInvoice = () => {
             requirePickingNote: true,
             requestedFulfillmentType: 'Picking',
             customerNotes: invoiceNotes || '',
+            termsConditions,
 
             // Preview of the server's allocation — the backend recomputes these and is
             // authoritative (SalesInvoiceService.applyFooterDiscountAllocation).
@@ -2345,6 +2445,8 @@ const SalesInvoice = () => {
             );
             setSelectedCustomer(matched || { code: invoice.customerCode, name: invoice.customerName });
         }
+        // Reopen at the level it was priced at, so nothing is re-priced on load.
+        setExplicitPriceLevelId(invoice.priceLevelId ?? null);
 
         // Fetch outstanding for this customer excluding the current invoice's own balance,
         // so "Previous Outstanding" reflects what was owed before this invoice. (QA-035)
@@ -2368,6 +2470,7 @@ const SalesInvoice = () => {
         setPaymentMode(invoice.paymentMode || '');
         setPaymentTerms(invoice.paymentTerms || 'Immediate');
         setSalesperson(invoice.salesperson || 'John Doe');
+        setSalespersonEmployeeId(invoice.salespersonEmployeeId ? String(invoice.salespersonEmployeeId) : '');
         setBranch(invoice.branch || defaultBranch?.name || '');
 
         setAmountCollected(invoice.amountPaid || 0);
@@ -2414,6 +2517,7 @@ const SalesInvoice = () => {
         }
 
         setInvoiceNotes(invoice.customerNotes || invoice.notes || '');
+        setTermsConditions(typeof invoice.termsConditions === 'string' ? invoice.termsConditions : null);
         setActiveTab('create');
     };
 
@@ -2928,6 +3032,8 @@ const SalesInvoice = () => {
                 deliveryTerms: '',
                 salesPerson: salesperson || '',
                 notes: invoiceNotes || '',
+                // The invoice's own terms replace the template's (undefined → template terms).
+                terms: termsConditions ?? undefined,
                 // Read by the styled invoice layouts only (Pay Mode / Balance Due);
                 // kept out of totals so standard templates print unchanged.
                 paymentMode: paymentMode || '',
@@ -2967,13 +3073,15 @@ const SalesInvoice = () => {
         shippingAddress,
         customerNotes: invoiceNotes || '',
         notes: invoiceNotes || '',
+        termsConditions,
     });
 
     // Build the print HTML for an invoice (saved row or current-form source)
     // using the default Sales Invoice print template. Returns the HTML string,
     // or null if no template could be resolved. `titleOverride` lets callers
     // stamp the document title (e.g. DRAFT INVOICE / TAX INVOICE) for previews.
-    const buildInvoiceHtml = async (dataToPrint, { chosenTemplate = null, titleOverride, forPdf = false, storedValues = false } = {}) => {
+    // `rememberChoice: false` renders without making the template the Print menu's last-used one.
+    const buildInvoiceHtml = async (dataToPrint, { chosenTemplate = null, rememberChoice = true, titleOverride, forPdf = false, storedValues = false } = {}) => {
         // Resolve which template to print with: an explicit choice from the
         // dropdown, else the last-used one, else the category default, else first.
         let selectedTemplate = chosenTemplate;
@@ -2986,7 +3094,7 @@ const SalesInvoice = () => {
                 || list.find(t => t.isDefault)
                 || list[0];
         }
-        if (selectedTemplate?.id != null) {
+        if (rememberChoice && selectedTemplate?.id != null) {
             sessionStorage.setItem('salesInvoiceTemplateId', String(selectedTemplate.id));
         }
         const defaultTemplate = selectedTemplate;
@@ -3119,6 +3227,9 @@ const SalesInvoice = () => {
                         deliveryTerms: dataToPrint.deliveryType || '',
                         salesPerson: dataToPrint.salesperson || '',
                         notes: dataToPrint.customerNotes || dataToPrint.notes || '',
+                        // Saved invoices print the terms they were issued with; null (older
+                        // invoices, POS bills) falls back to the template's terms.
+                        terms: typeof dataToPrint.termsConditions === 'string' ? dataToPrint.termsConditions : undefined,
                         // Read by the styled invoice layouts only (Pay Mode / Balance Due);
                         // kept out of totals so standard templates print unchanged.
                         paymentMode: dataToPrint.paymentMode || '',
@@ -4198,6 +4309,24 @@ const SalesInvoice = () => {
                                         }}
                                     />
 
+                                    {/* PRICE LEVEL */}
+                                    {(hasCustomLevels || (priceLevelEffective.level && !priceLevelEffective.level.systemDefault) || customerPricingStatus?.liveMappings > 0) && (
+                                        <div className="flex items-center justify-between gap-3 bg-white px-5 py-2 rounded-lg border border-slate-200 shadow-sm">
+                                            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Price level</span>
+                                            <PriceLevelSelect
+                                                levels={activePriceLevels}
+                                                value={explicitPriceLevelId}
+                                                onChange={setExplicitPriceLevelId}
+                                                effective={priceLevelEffective}
+                                                customerLevelName={customerPriceLevel && customerPriceLevel.active !== false ? customerPriceLevel.name : null}
+                                                pending={priceLevelPending}
+                                                error={priceLevelError}
+                                                customerPricing={customerPricing}
+                                                disabled={isReadOnlyInvoice}
+                                            />
+                                        </div>
+                                    )}
+
                                     {/* INVOICE ITEMS */}
                                     <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
                                         <div className="flex justify-between items-center mb-2">
@@ -4433,6 +4562,7 @@ const SalesInvoice = () => {
                                                                             }}
                                                                             placeholder="0.00"
                                                                         />
+                                                                        <PriceSourceTag line={item} />
 
                                                                     </td>
 
@@ -4576,6 +4706,17 @@ const SalesInvoice = () => {
                                             </div>
                                         </div>
                                     </div>
+
+                                    {/* TERMS & CONDITIONS — this invoice's own terms, pre-filled from the
+                                        default Sales Invoice print template; printed instead of it. */}
+                                    <DocumentTermsCard
+                                        category="Sales Invoice"
+                                        branchId={activeBranch?.id}
+                                        value={termsConditions}
+                                        onChange={setTermsConditions}
+                                        readOnly={isReadOnlyInvoice}
+                                        documentLabel="invoice"
+                                    />
                                 </div> {/* End Main Column */}
 
                                 {/* ======================= RIGHT COLUMN (SUMMARY & SIDEBAR) =======================
@@ -5145,10 +5286,11 @@ const SalesInvoice = () => {
                 companyProfile={buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: activeBranch?.id })}
                 apiFn={sendSalesInvoiceEmail}
                 buildPayload={buildCurrentInvoicePrintData}
-                // The attachment is the Download PDF document: same template choice and print HTML.
-                buildPdfHtml={() => {
+                // The attachment is the Print document rendered with the template the
+                // email preview shows — not the last template picked in the Print menu.
+                buildPdfHtml={(template) => {
                     const source = buildCurrentFormPrintSource();
-                    return buildInvoiceHtml(source, { titleOverride: getInvoiceDocumentTitle(source), forPdf: false, storedValues: isReadOnlyInvoice });
+                    return buildInvoiceHtml(source, { chosenTemplate: template, rememberChoice: false, titleOverride: getInvoiceDocumentTitle(source), forPdf: false, storedValues: isReadOnlyInvoice });
                 }}
             />
 

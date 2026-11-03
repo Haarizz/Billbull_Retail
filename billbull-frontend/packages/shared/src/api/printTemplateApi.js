@@ -43,6 +43,15 @@ export const setDefaultTemplate = async (id, template) => {
     return res.data;
 };
 
+/**
+ * Saves new default Terms & Conditions on a template and nothing else (the
+ * "Save as default" action in document editors such as Sales Invoice).
+ */
+export const updateTemplateTerms = async (id, termsContent) => {
+    const res = await api.put(`/api/templates/${id}/terms`, { termsContent });
+    return res.data;
+};
+
 export const deletePrintTemplate = async (id) => {
     await api.delete(`/api/templates/${id}`);
 };

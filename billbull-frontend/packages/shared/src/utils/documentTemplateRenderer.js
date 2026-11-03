@@ -90,6 +90,15 @@ const asNumber = (value) => {
 
 const asText = (value) => (value === null || value === undefined ? '' : String(value));
 
+// Terms & Conditions a document carries itself (data.meta.terms, e.g. a Sales Invoice's own
+// terms) replace the template's default. Absent (null/undefined) → the template's terms, as
+// before; an empty string → the document deliberately prints none. Whether the section shows
+// at all is still the template's Show Terms setting.
+export const resolveDocumentTerms = (data, templateTerms) => {
+    const own = data?.meta?.terms;
+    return typeof own === 'string' ? own : asText(templateTerms);
+};
+
 const compactValues = (...values) =>
     values
         .flat(Infinity)
@@ -3881,7 +3890,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         columnModel,
         totals,
         notes: asText(data.notes || data.meta?.notes || ''),
-        terms: asText(template.termsContent || designerSettings.termsText || designerSettings.termsConditions || ''),
+        terms: resolveDocumentTerms(data, template.termsContent || designerSettings.termsText || designerSettings.termsConditions),
         termsBgColor: designerSettings.termsBgColor || '',
         notesBgColor: designerSettings.notesBgColor || '',
         displayOptions,
@@ -4082,7 +4091,7 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         totalVisibility,
         notes: asText(data.meta?.notes || ''),
         notesLabel: asText(designerSettings.notesLabel || 'Notes'),
-        terms: asText(template.termsContent || designerSettings.termsText || designerSettings.termsConditions || ''),
+        terms: resolveDocumentTerms(data, template.termsContent || designerSettings.termsText || designerSettings.termsConditions),
         termsBgColor: designerSettings.termsBgColor || '',
         notesBgColor: designerSettings.notesBgColor || '',
         displayOptions,
@@ -4213,7 +4222,7 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
         columnModel,
         totals,
         notes: asText(data.meta?.notes || ''),
-        terms: asText(template.termsContent || ''),
+        terms: resolveDocumentTerms(data, template.termsContent),
         displayOptions,
         showItemTable: items.length > 0,
         showTotalsSection: totals.grandTotal > 0 || totals.amountPaid > 0,
