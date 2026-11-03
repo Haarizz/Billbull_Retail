@@ -45,3 +45,11 @@ export function resolveTerminalUnavailableConfig(rawMessage) {
   const status = match ? match[1] : null;
   return { status, ...(TERMINAL_UNAVAILABLE_STATUS_CONFIG[status] || TERMINAL_UNAVAILABLE_FALLBACK) };
 }
+
+// Asked before "Register as New Terminal" wipes this device's terminal identity and reloads.
+export const REGISTER_NEW_TERMINAL_CONFIRM = {
+  title: 'Register as a new terminal?',
+  message: 'This will assign a new independent terminal to this device.',
+  confirmLabel: 'Register new terminal',
+  tone: 'warning',
+};

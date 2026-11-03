@@ -448,7 +448,7 @@ describe('cross-feature orchestration handlers', () => {
     ['handleHandoverSubmit', 'const handleHandoverSubmit = async () => {'],
     ['handleCloseDay', 'const handleCloseDay = async (acknowledgeExclusions = false) => {'],
     ['handleReprintConfirm', 'const handleReprintConfirm = async () => {'],
-    ['handleReceiptShareSend', 'const handleReceiptShareSend = useCallback(async (value) => {'],
+    ['handleReceiptShareSend', 'const handleReceiptShareSend = useCallback(async (value, options) => {'],
     ['buildThermalReceiptArtifacts', 'const buildThermalReceiptArtifacts = useCallback('],
     ['applyScannedVoucher', 'const applyScannedVoucher = useCallback((voucher) => {'],
     ['cancelCheckoutTenders', 'const cancelCheckoutTenders = useCallback(() => {'],
@@ -559,8 +559,8 @@ describe('cross-feature orchestration handlers', () => {
  * the commit message.
  */
 describe('shape counters (update deliberately)', () => {
-  it('declares 233 top-level useState pairs (+2: the invoice template family and the reprint sheet format; +1 P3: checkoutQuickCash; +1: showCloseDayConfirm)', () => {
-    expect(topLevel(/^ {2}const \[/)).toHaveLength(233);
+  it('declares 234 top-level useState pairs (+2: the invoice template family and the reprint sheet format; +1 P3: checkoutQuickCash; +1: showCloseDayConfirm; +1: quickCheckoutEnabled)', () => {
+    expect(topLevel(/^ {2}const \[/)).toHaveLength(234);
   });
 
   it('declares 18 top-level refs (+1: productEntryBlockedRef, the overlay gate on product entry; +1 P3: quickCashSeqRef)', () => {

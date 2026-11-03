@@ -20,7 +20,7 @@ import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
 import { getBankAccounts } from '../../api/ledgerApi';
 import {
-  getPosSettings, getPosSettingsForBranch, savePosSettings, verifySupervisorAuth, openPosSession,
+  getPosSettings, getPosSettingsForBranch, savePosSettings, savePosAppearance, verifySupervisorAuth, openPosSession,
   getPosSessionById,
   addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, getPosDayCloseSummary, closePosDay, posCheckout,
   checkPosXReportPrintable, checkPosZReportPrintable,
@@ -148,7 +148,7 @@ import {
 // ─── POS sub-modules ──────────────────────────────────────────────────────────
 import { DirhamSymbol, DenominationLabel, CurrencyAmount, DenominationAmount, renderAED, setActiveCurrency } from './POS/POSCurrency';
 import { WALK_IN_CUSTOMER, STATUS_ENUM_TO_LABEL } from './POS/posConstants';
-import { toNumber, mapPosProductAggregateItem, mapPosCustomer, getPriceFloor, mergeSavedPosSettings, isDeliverySalesOrder } from './POS/posUtils';
+import { toNumber, mapPosProductAggregateItem, mapPosCustomer, getLineFloor, mergeSavedPosSettings, isDeliverySalesOrder } from './POS/posUtils';
 import InvoicePreviewItems from './POS/features/customers/InvoicePreviewItems';
 import {
   buildZatcaTlvBase64, buildThermalReceiptHtml, buildLayawayReceiptHtml, buildLayawayReceiptText,
@@ -216,10 +216,14 @@ import { useDelivery } from './POS/features/delivery/useDelivery';
 import { usePosPrinting } from './POS/device/printing/usePosPrinting';
 import { useTemplateSettings } from './POS/features/templateSettings/useTemplateSettings';
 import { useCheckout } from './POS/features/checkout/useCheckout';
+import { usePosPriceLevel } from './POS/features/pricing/usePosPriceLevel';
+import { useLineUnits } from './POS/features/cart/useLineUnits';
 import { useCart } from './POS/features/cart/useCart';
 import { useProductEntry } from './POS/features/products/useProductEntry';
 import { useProductCatalog } from './POS/features/products/useProductCatalog';
 import { useSupervisorApproval } from './POS/features/approval/useSupervisorApproval';
+import { useAdminCloseApproval } from './POS/features/approval/useAdminCloseApproval';
+import AdminCloseApprovalDialog from './POS/features/approval/AdminCloseApprovalDialog';
 import { usePosSession } from './POS/features/session/usePosSession';
 import { useSessionClosure } from './POS/features/session/useSessionClosure';
 import { isClosureWorkflowError } from './POS/features/session/sessionWorkflowErrors';
@@ -251,6 +255,8 @@ import { buildPosReceiptPdfHtml } from './POS/device/printing/buildReceiptPdfHtm
 import { round2Money, formatMoney2, todayInputDate, parseUTCDate } from './POS/lib/posFormatting';
 import { resolvePosFunctionAccessMode, isPosSupervisorUser as resolveIsPosSupervisorUser } from './POS/lib/posFunctionAccess';
 import { buildZReportExcelSections, buildXReportExcelRows } from './POS/features/reports/reportExcelBuilders';
+import { confirmDialog } from '../../components/AppConfirmBridge';
+import { REGISTER_NEW_TERMINAL_CONFIRM } from './POS/features/terminal/terminalUnavailable';
 
 
 
@@ -403,6 +409,8 @@ export default function POSSales() {
     cancelApproval,
     submitSupervisorApproval,
   } = useSupervisorApproval();
+  // Closing Approval (Console → Behavior): administrator sign-off for session / Business Day close.
+  const adminCloseApproval = useAdminCloseApproval();
   const [handoverBusy, setHandoverBusy] = useState(false);
   const [handoverEmail, setHandoverEmail] = useState('');
   const [handoverPassword, setHandoverPassword] = useState('');
@@ -554,6 +562,7 @@ export default function POSSales() {
     },
     setCurrentView, setSessionNowMs, businessDayRefreshRef,
     loadersRef: sessionClosureLoadersRef,
+    adminCloseApproval,
   });
 
   // Cart Focus Col 3 tab
@@ -637,6 +646,8 @@ export default function POSSales() {
   const [showPOSConfig, setShowPOSConfig] = useState(false);
   const [hideCategoriesPanel, setHideCategoriesPanel] = useState(false);
   const [hideItemsPanel, setHideItemsPanel] = useState(false);
+  // Quick Checkout rail in Classic / Cart Focus (pos_settings.layout_quick_checkout, default on).
+  const [quickCheckoutEnabled, setQuickCheckoutEnabled] = useState(true);
   const [posTemplate, setPosTemplate] = useState('classic');
 
   // Cart Focus mode: barcode scan + keypad panel
@@ -1254,6 +1265,13 @@ export default function POSSales() {
     [customerOptions, effectiveCustomerId]
   );
 
+  // Price level for this sale (explicit choice → customer default → default prices); keeps every
+  // cart line priced at it through the backend resolver. See POS/features/pricing/usePosPriceLevel.
+  const posPriceLevel = usePosPriceLevel({
+    items: currentInvoice.items, customer: selectedCustomerData, sessionId: currentSession?.id,
+    setCurrentInvoice, recalculateInvoice,
+  });
+
   // Owned here (not inside useCheckout) because checkoutThermalHtml below reads them to
   // decide whether to return the frozen preview, and useCheckout takes checkoutThermalHtml
   // as an input — so the hook can't be the one creating this state without a circular
@@ -1278,7 +1296,7 @@ export default function POSSales() {
     showReadinessWarning: showTargetReadinessWarning,
     openReadinessWarning: openTargetReadinessWarning,
     closeReadinessWarning: closeTargetReadinessWarning,
-  } = useSalesperson();
+  } = useSalesperson({ activeSalesOrder });
 
   const checkoutThermalHtml = useMemo(() => {
     if (checkoutSettling) return checkoutPreviewFreezeRef.current;
@@ -1807,6 +1825,7 @@ export default function POSSales() {
       if (settings.defaultLayout) setPosTemplate(settings.defaultLayout);
       if (settings.layoutHideCategoryPanel != null) setHideCategoriesPanel(settings.layoutHideCategoryPanel);
       if (settings.layoutHideItemsPanel != null) setHideItemsPanel(settings.layoutHideItemsPanel);
+      if (settings.layoutQuickCheckout != null) setQuickCheckoutEnabled(settings.layoutQuickCheckout);
       if (settings.layoutHiddenPanelButtons) {
         setHiddenPanelButtons(new Set(settings.layoutHiddenPanelButtons.split(',').filter(Boolean)));
       }
@@ -2303,7 +2322,7 @@ export default function POSSales() {
   const updateDiscount = (itemId, discount, approved = false) => {
     if (!approved && posSettings?.requirePriceOverrideApproval) {
       const target = currentInvoiceRef.current?.items?.find(i => i.id === itemId);
-      const floor = target ? getPriceFloor(target.minPrice, target.cost) : null;
+      const floor = target ? getLineFloor(target) : null;
       const effectivePrice = target ? toNumber(target.price, 0) * (1 - toNumber(discount, 0) / 100) : null;
       if (floor != null && effectivePrice != null && effectivePrice < floor) {
         requestApproval({
@@ -2333,7 +2352,7 @@ export default function POSSales() {
     if (newPrice <= 0) return;
     if (!approved && posSettings?.requirePriceOverrideApproval) {
       const target = currentInvoiceRef.current?.items?.find(i => i.id === itemId);
-      const floor = target ? getPriceFloor(target.minPrice, target.cost) : null;
+      const floor = target ? getLineFloor(target) : null;
       const effectivePrice = target ? newPrice * (1 - toNumber(target.discount, 0) / 100) : newPrice;
       if (floor != null && effectivePrice < floor) {
         requestApproval({
@@ -2348,12 +2367,22 @@ export default function POSSales() {
     setCurrentInvoice(prev => {
       const newItems = prev.items.map(item =>
         item.id === itemId
-          ? { ...item, price: newPrice, total: item.quantity * newPrice * (1 - item.discount / 100) }
+          // A hand-edited price is kept when the price level changes (priceOverridden).
+          ? { ...item, price: newPrice, total: item.quantity * newPrice * (1 - item.discount / 100),
+              priceOverridden: item.priceOverridden || Number(newPrice) !== Number(item.price) }
           : item
       );
       return recalculateInvoice(newItems);
     });
   };
+
+  // Packing units (piece / box / carton): the sale units of a line's product, priced at this
+  // sale's level, and moving a line to one. See POS/features/cart/useLineUnits.
+  const { loadSaleUnits, changeLineUnit } = useLineUnits({
+    sessionId: currentSession?.id, explicitPriceLevelId: posPriceLevel.explicitPriceLevelId,
+    levelKey: posPriceLevel.levelKey, customer: selectedCustomerData,
+    currentInvoiceRef, setCurrentInvoice, recalculateInvoice,
+  });
 
   const voidFromInvoice = (itemId) => {
     // If item is already voided, un-void it (toggle back) without PIN
@@ -2641,8 +2670,10 @@ export default function POSSales() {
       const data = await closePosDay(
         branchId, zReportDate,
         rangeOverride.startSessionId || undefined, rangeOverride.endSessionId || undefined,
-        acknowledgeExclusions || undefined
+        acknowledgeExclusions || undefined,
+        adminCloseApproval.tokenFor('DAY_CLOSE', branchId)
       );
+      adminCloseApproval.clear();
       setZReportData(data);
       setRangeExclusionConfirm(null);
       // Day closed successfully → arm the Z-Report auto-print. The effect watching
@@ -2653,7 +2684,10 @@ export default function POSSales() {
       alert('Business day has been officially closed.');
     } catch (err) {
       const body = err?.response?.data;
-      if (body?.code === 'RECONCILIATION_FAILED' && body?.breakdown) {
+      if (body?.code === 'ADMIN_APPROVAL_REQUIRED') {
+        // Closing Approval (Console → Behavior): an administrator approves, then the same close is retried.
+        adminCloseApproval.request({ action: 'DAY_CLOSE', targetId: branchId, onApproved: () => handleCloseDay(acknowledgeExclusions) });
+      } else if (body?.code === 'RECONCILIATION_FAILED' && body?.breakdown) {
         setCloseDayVariance({ stage: body.stage, message: body.message, breakdown: body.breakdown });
       } else if (body?.code === 'SESSION_RANGE_EXCLUSION_UNCONFIRMED') {
         // Narrowed range leaves otherwise-eligible sessions out of this close —
@@ -2686,6 +2720,7 @@ export default function POSSales() {
     // cleared must not carry over onto the next customer's sale — nothing was spent (the
     // backend only redeems at checkout), so dropping the allocation releases it entirely.
     checkoutPayment.clearLines();
+    posPriceLevel.reset();
   };
 
 
@@ -2781,6 +2816,7 @@ export default function POSSales() {
       const payload = {
         customerCode: customer.id !== 'walk-in' ? (customer.code || customer.id) : 'WALK-IN',
         customerName: customer.name,
+        priceLevelId: posPriceLevel.explicitPriceLevelId ?? null,
         // A delivery order posts unpaid — no allocations, so no payment is recorded. The
         // balance is collected later through the delivery-settle flow.
         paymentMode: 'Delivery',
@@ -3245,6 +3281,7 @@ export default function POSSales() {
       tplInvoiceShowStamp, tplOutletName, tplOutletAddress, tplOutletPhone,
       tplLogoDataUrl, tplStampDataUrl, tplInvoiceShowBankDetails, effectiveOutletTrn, company,
     },
+    pricing: { priceLevelId: posPriceLevel.explicitPriceLevelId, pending: posPriceLevel.pending },
     errorRouting: {
       isClosureWorkflowError, showClosureRequiredBlock, setShowPaymentDialog,
       requestApproval,
@@ -3358,7 +3395,7 @@ export default function POSSales() {
   }, [lastPaidInvoice, receiptShareChannel]);
 
   // Email attaches the receipt as a PDF (buildReceiptPdfHtml) or is not sent. Throwing keeps the dialog open to retry.
-  const handleReceiptShareSend = useCallback(async (value) => {
+  const handleReceiptShareSend = useCallback(async (value, options) => {
     if (!lastPaidInvoice) return;
     const summary = `Receipt ${lastPaidInvoice.id} – ${formatCurrencyStr(lastPaidInvoice.total)}`;
     if (receiptShareChannel === 'whatsapp') {
@@ -3379,7 +3416,7 @@ export default function POSSales() {
       await sendSalesInvoiceEmail(lastPaidInvoice.invoice.id, {
         toEmail: value, pdfHtml, pdfKind: 'POS_RECEIPT',
         subject: `Receipt ${lastPaidInvoice.id}`,
-        htmlBody: `<p>Invoice: ${lastPaidInvoice.id}, Total: ${formatCurrencyStr(lastPaidInvoice.total)}</p>`,
+        htmlBody: `${options?.messageHtml || ''}<p>Invoice: ${lastPaidInvoice.id}, Total: ${formatCurrencyStr(lastPaidInvoice.total)}</p>`,
       });
       setReceiptShareFeedback({ type: 'success', message: `Receipt emailed to ${value}.` });
     }
@@ -4243,252 +4280,154 @@ export default function POSSales() {
     );
   };
 
-  const posDashboardTileClass = "cursor-pointer border border-transparent bg-white shadow-sm transition-all hover:border-[#F5C742] hover:shadow-lg";
+  const posDashboardTileClass = "group relative cursor-pointer gap-0 overflow-hidden rounded-2xl border border-[#ECEAE4] bg-white shadow-sm transition-all hover:-translate-y-0.5 hover:border-[#F5C742] hover:shadow-lg";
+
+  // Body of one home-screen action tile. `enabled` only drives the look (lock icon, muted
+  // chip); each tile's own onClick stays the gate for what actually happens.
+  const renderPosTile = ({ icon: Icon, title, desc, hint, enabled = true }) => (
+    <div className="flex h-full items-start gap-4 p-5">
+      <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl transition-colors ${enabled ? 'bg-[#FFF4D1] text-[#9A7206] group-hover:bg-[#F5C742] group-hover:text-[#1C2838]' : 'bg-gray-100 text-gray-400'}`}>
+        <Icon className="h-6 w-6" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-base font-semibold text-[#1C2838]">{title}</h3>
+          {enabled
+            ? <ChevronRight className="h-5 w-5 shrink-0 text-gray-300 transition group-hover:translate-x-0.5 group-hover:text-[#1C2838]" />
+            : <Lock className="h-4 w-4 shrink-0 text-gray-400" />}
+        </div>
+        <p className="mt-0.5 text-sm text-[#66737F]">{desc}</p>
+        {hint && <p className="mt-2 text-xs text-gray-400">{hint}</p>}
+      </div>
+    </div>
+  );
+
+  // The home screen's main button: start, continue, or finish closing the session.
+  const handlePrimarySessionAction = () => {
+    if (posInitLoading) return;
+    if (sessionBlockedByPreviousDay) {
+      // Stranded on a previous Business Day: re-raise the one existing "Previous Day
+      // Not Closed" flow (whose "Go to Close Session" routes to the closure screen)
+      // rather than opening the selling screen the backend would refuse anyway.
+      if (prevDayBlockedMsg) showPreviousDayBlock(prevDayBlockedMsg, prevDayBlockedSessionId);
+      else setCurrentView('x-report');
+    } else if (sessionAwaitingClosure) {
+      // Mid-closure: the only way out is finishing the closure, so route back to
+      // the X-Report / Close Session screen instead of the selling screen.
+      setCurrentView('x-report');
+    } else if (canContinueSelling) {
+      setCurrentView('touch-screen');
+    } else {
+      setShowStartSessionDialog(true);
+    }
+  };
 
   // Dashboard View
-  const renderDashboard = () => (
-    <div className="p-8">
-      <div className="mb-8">
-        <h1 className="text-3xl text-[#1E293B] mb-2">Point of Sale</h1>
-        <p className="text-gray-600">Retail POS dashboard and session management</p>
-      </div>
+  const renderDashboard = () => {
+    const now = new Date(sessionNowMs);
+    const hour = now.getHours();
+    const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+    const needsClosure = sessionAwaitingClosure || sessionBlockedByPreviousDay;
+    const sessionStartRaw = currentSession?.openedAt || currentSession?.startTime;
+    const sessionStartedAt = sessionStartRaw ? parseUTCDate(sessionStartRaw) : null;
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {/* Start/Continue Session Tile */}
-        <Card
-          className={posDashboardTileClass}
-          onClick={() => {
-            if (posInitLoading) return;
-            if (sessionBlockedByPreviousDay) {
-              // Stranded on a previous Business Day: re-raise the one existing "Previous Day
-              // Not Closed" flow (whose "Go to Close Session" routes to the closure screen)
-              // rather than opening the selling screen the backend would refuse anyway.
-              if (prevDayBlockedMsg) showPreviousDayBlock(prevDayBlockedMsg, prevDayBlockedSessionId);
-              else setCurrentView('x-report');
-            } else if (sessionAwaitingClosure) {
-              // Mid-closure: the only way out is finishing the closure, so route back to
-              // the X-Report / Close Session screen instead of the selling screen.
-              setCurrentView('x-report');
-            } else if (canContinueSelling) {
-              setCurrentView('touch-screen');
-            } else {
-              setShowStartSessionDialog(true);
-            }
-          }}
-        >
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className={`bg-gradient-to-r ${(sessionAwaitingClosure || sessionBlockedByPreviousDay) ? 'from-amber-500 to-amber-400' : 'from-[#F5C742] to-[#f4d673]'} p-4 rounded-lg`}>
-                {posInitLoading ? (
-                  <div className="h-8 w-8 border-4 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (sessionAwaitingClosure || sessionBlockedByPreviousDay) ? (
-                  <Lock className="h-8 w-8 text-white" />
-                ) : isSessionActive ? (
-                  <Play className="h-8 w-8 text-white" />
-                ) : (
-                  <Unlock className="h-8 w-8 text-white" />
-                )}
-              </div>
-              {sessionBlockedByPreviousDay ? (
-                <Badge className="bg-amber-500">Closure Required</Badge>
-              ) : sessionAwaitingClosure ? (
-                <Badge className="bg-amber-500">Closing</Badge>
-              ) : isSessionActive ? (
-                <Badge className="bg-green-500">Active</Badge>
-              ) : null}
+    const status = posInitLoading
+      ? { label: 'Connecting', dot: 'bg-gray-400 animate-pulse', text: 'Checking terminal & session status...' }
+      : sessionBlockedByPreviousDay
+        ? { label: 'Closure required', dot: 'bg-amber-400', text: 'This session belongs to a previous business day. Close it before selling can continue.' }
+        : sessionAwaitingClosure
+          ? { label: 'Closing', dot: 'bg-amber-400', text: 'Closure has been started for this session. Complete the session closure before continuing sales.' }
+          : isSessionActive
+            ? { label: 'Session open', dot: 'bg-emerald-400 shadow-[0_0_8px_#34D399]', text: 'Your till is open and ready to sell.' }
+            : { label: 'No open session', dot: 'bg-gray-400', text: 'Open the cash drawer and start a new session to begin selling.' };
+
+    const PrimaryIcon = needsClosure ? Lock : isSessionActive ? Play : Unlock;
+    const primaryLabel = posInitLoading ? 'Connecting...'
+      : sessionBlockedByPreviousDay ? 'Close Previous Day'
+      : sessionAwaitingClosure ? 'Complete Closure'
+      : isSessionActive ? 'Continue Selling' : 'Start Session';
+
+    return (
+    <div className="flex min-h-full w-full flex-col p-4 sm:p-6 lg:p-8 2xl:px-12">
+      {/* Hero — session status and the one main action */}
+      <section className="relative mb-8 overflow-hidden rounded-3xl border border-[#FDE6A9] bg-gradient-to-br from-[#FFF8E7] via-white to-white p-7 text-[#1E1E1E] shadow-sm lg:p-9">
+        <div aria-hidden className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-[#F5C742] to-[#E5B732]" />
+        <div aria-hidden className="pointer-events-none absolute inset-0 opacity-60"
+          style={{ backgroundImage: 'radial-gradient(#FDE6A9 1px, transparent 1px)', backgroundSize: '18px 18px', maskImage: 'linear-gradient(to left, black, transparent 60%)' }} />
+        <div aria-hidden className="pointer-events-none absolute -right-20 -top-28 h-96 w-96 rounded-full bg-[#F5C742]/20 blur-3xl" />
+
+        <div className="relative flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#B45309]">
+              {now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+            </p>
+            <h1 className="mt-2 text-3xl font-bold tracking-tight lg:text-4xl">
+              {greeting}{cashierDisplayName ? `, ${cashierDisplayName}` : ''}
+            </h1>
+            <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+              <span className="inline-flex items-center gap-2 rounded-full border border-[#E2E8F0] bg-white px-3 py-1 font-medium text-[#334155]">
+                <span className={`h-2 w-2 rounded-full ${status.dot}`} />{status.label}
+              </span>
+              {(currentTerminal?.terminalName || currentTerminal?.terminalId) && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-[#E2E8F0] bg-white px-3 py-1 text-[#64748B]">
+                  <Monitor className="h-3.5 w-3.5" />{currentTerminal.terminalName || currentTerminal.terminalId}
+                </span>
+              )}
+              {(currentTerminal?.branchName || currentSession?.branchName) && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-[#E2E8F0] bg-white px-3 py-1 text-[#64748B]">
+                  <MapPin className="h-3.5 w-3.5" />{currentTerminal?.branchName || currentSession?.branchName}
+                </span>
+              )}
             </div>
-            <CardTitle className="mt-4">
-              {posInitLoading ? 'Connecting...'
-                : sessionBlockedByPreviousDay ? 'Previous Day Session Open'
-                : sessionAwaitingClosure ? 'Session Closure Required'
-                : isSessionActive ? 'Continue Session' : 'Start Session'}
-            </CardTitle>
-            <CardDescription>
-              {posInitLoading ? 'Checking terminal & session status...'
-                : sessionBlockedByPreviousDay
-                  ? 'This session belongs to a previous business day. Close it before selling can continue.'
-                : sessionAwaitingClosure
-                  ? 'Closure has been started for this session. Complete the session closure before continuing sales.'
-                  : isSessionActive
-                    ? 'Resume your active POS session'
-                    : 'Open cash drawer and start new session'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
+            <p className="mt-4 max-w-xl text-[#64748B]">{status.text}</p>
+
             {isSessionActive && (
-              <div className="text-sm space-y-1">
-                <p className="text-gray-600">Opening Cash: {formatCurrency(currentSession.openingCash)}</p>
-                <p className="text-gray-600">Started: {currentSession.openedAt ? parseUTCDate(currentSession.openedAt)?.toLocaleTimeString() : currentSession.startTime ? parseUTCDate(currentSession.startTime)?.toLocaleTimeString() : '—'}</p>
+              <div className="mt-5 flex flex-wrap gap-x-8 gap-y-2 text-sm">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-[#94A3B8]">Opening float</p>
+                  <p className="font-semibold">{formatCurrency(currentSession.openingCash)}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-[#94A3B8]">Started</p>
+                  <p className="font-semibold">{sessionStartedAt ? sessionStartedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</p>
+                </div>
                 {sessionAwaitingClosure && (
-                  <>
-                    <p className="text-amber-700 font-medium">Complete Session Closure</p>
-                    <p className="text-gray-600">
-                      Closure started by {currentSession.closingStartedBy || '—'}. Sales are locked until it is completed.
-                    </p>
-                    {/* Cancelling is a supervisor decision made through the backend, never a
-                        casual button that silently unlocks selling. stopPropagation so it
-                        doesn't also trigger the card's navigate-to-closure handler. */}
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); openCancelClosureDialog(); }}
-                      className="mt-1 text-xs underline text-slate-500 hover:text-slate-700"
-                    >
-                      Cancel Closure (supervisor)
-                    </button>
-                  </>
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-[#94A3B8]">Closure started by</p>
+                    <p className="font-semibold">{currentSession.closingStartedBy || '—'}</p>
+                  </div>
                 )}
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
 
-        {/* X-Report Tile — generate the shift X-Report without closing the session.
-            Running this clears the terminal for the end-of-day Z-Report. */}
-        <Card
-          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
-          onClick={() => { if (isSessionActive) setCurrentView('x-report'); }}
-        >
-          <CardHeader>
-            <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
-              <FileText className="h-8 w-8 text-white" />
-            </div>
-            <CardTitle className="mt-4">X-Report / Close Session</CardTitle>
-            <CardDescription>
-              Generate report and close session
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">
-              {isSessionActive
-                ? 'Generate shift report or close current session'
-                : 'Start a session to generate the X-Report'}
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Z-Report Tile — a cross-session, end-of-day report keyed by branch/date, not
-            by this terminal's own session, so it must stay reachable after this
-            terminal's session is closed (that's normally exactly when a cashier wants
-            to check Z-Report eligibility or pull the day's consolidated report). */}
-        <Card
-          className={`${posDashboardTileClass}${currentTerminal?.branchId ? '' : ' opacity-50 cursor-not-allowed'}`}
-          onClick={() => { if (currentTerminal?.branchId) setCurrentView('z-report'); }}
-        >
-          <CardHeader>
-            <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
-              <FileBarChart className="h-8 w-8 text-white" />
-            </div>
-            <CardTitle className="mt-4">Z-Report</CardTitle>
-            <CardDescription>
-              Generate end-of-day summary report
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">
-              {currentTerminal?.branchId
-                ? 'Consolidated end-of-day report (all terminals must run X-Report first)'
-                : 'Register a terminal to access the Z-Report'}
-            </p>
-          </CardContent>
-        </Card>
-
-
-
-        {/* Customer Tile */}
-        <Card
-          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
-          onClick={() => { if (isSessionActive) setCurrentView('customer'); }}
-        >
-          <CardHeader>
-            <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
-              <Users className="h-8 w-8 text-white" />
-            </div>
-            <CardTitle className="mt-4">Customer</CardTitle>
-            <CardDescription>
-              Manage customer transactions and statements
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">
-              {isSessionActive
-                ? 'View statements, receive payments, manage advances'
-                : 'Start a session to manage customers'}
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Cash Drop / Out Tile */}
-        <Card
-          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
-          onClick={() => { if (isSessionActive) setShowCashDropDialog(true); }}
-        >
-          <CardHeader>
-            <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
-              <Archive className="h-8 w-8 text-white" />
-            </div>
-            <CardTitle className="mt-4">Cash Drop / Out</CardTitle>
-            <CardDescription>
-              Record cash movements and expenses
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">
-              {isSessionActive
-                ? 'Add cash drops or record cash payouts'
-                : 'Start a session to record cash movements'}
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Live Session Tile — quick-view popup of current session sales/cash figures */}
-        <Card
-          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
-          onClick={() => {
-            if (!isSessionActive) return;
-            setShowLiveSessionDialog(true);
-            loadXReport();
-          }}
-        >
-          <CardHeader>
-            <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
-              <Activity className="h-8 w-8 text-white" />
-            </div>
-            <CardTitle className="mt-4">Live Session</CardTitle>
-            <CardDescription>
-              Quick view of current session values
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">
-              {isSessionActive
-                ? 'Sales, cash drop, cash out & drawer total at a glance'
-                : 'Start a session to view live session values'}
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* BillBull Console Tile */}
-        <Card
-          className={posDashboardTileClass}
-          onClick={() => setCurrentView('console')}
-        >
-          <CardHeader>
-            <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
-              <Settings className="h-8 w-8 text-white" />
-            </div>
-            <CardTitle className="mt-4">BillBull Console</CardTitle>
-            <CardDescription>
-              POS settings, devices &amp; outlet configuration
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">
-              Manage layout, printers and print templates
-            </p>
-          </CardContent>
-        </Card>
-
-      </div>
+          <div className="flex shrink-0 flex-col items-stretch gap-2 lg:items-end">
+            <button
+              type="button"
+              onClick={handlePrimarySessionAction}
+              disabled={posInitLoading}
+              className={`flex h-14 items-center justify-center gap-3 rounded-2xl px-8 text-lg font-bold shadow-lg transition disabled:opacity-60 ${needsClosure ? 'bg-amber-400 text-[#1E1E1E] shadow-amber-400/40 hover:bg-amber-300' : 'bg-gradient-to-br from-[#F5C742] to-[#E5B732] text-[#1E1E1E] shadow-[#F5C742]/40 hover:from-[#FFD65C] hover:to-[#F5C742]'}`}
+            >
+              {posInitLoading
+                ? <span className="h-5 w-5 animate-spin rounded-full border-[3px] border-[#1E1E1E] border-t-transparent" />
+                : <PrimaryIcon className="h-5 w-5" />}
+              {primaryLabel}
+              {!posInitLoading && <ArrowRightCircle className="h-5 w-5 opacity-70" />}
+            </button>
+            {sessionAwaitingClosure && (
+              // Cancelling is a supervisor decision made through the backend, never a
+              // casual button that silently unlocks selling.
+              <button
+                type="button"
+                onClick={() => openCancelClosureDialog()}
+                className="text-center text-xs text-[#64748B] underline hover:text-[#1E1E1E] lg:text-right"
+              >
+                Cancel Closure (supervisor)
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* Quick Stats */}
       {(currentSession?.status === 'active' || currentSession?.status === 'OPEN') && (() => {
@@ -4496,9 +4435,6 @@ export default function POSSales() {
         const statTotalSales = xSummary.totalSales ?? 0;
         const statTxCount = xSummary.invoiceCount ?? 0;
         const statOpeningCash = xSummary.openingCash ?? currentSession?.openingCash ?? 0;
-        const statCashSales = xSummary.cashSales ?? 0;
-        const statDropIn = xSummary.cashDropIn ?? 0;
-        const statDropOut = xSummary.cashDropOut ?? 0;
         // Authoritative Expected Cash, read as-is. There is deliberately no client-side
         // fallback formula: a second implementation is how the X and Z reports drifted
         // apart, and a fallback yields a plausible wrong number instead of an obvious gap.
@@ -4520,61 +4456,155 @@ export default function POSSales() {
             sub: loading ? 'Loading...' : `${statTxCount} transaction${statTxCount !== 1 ? 's' : ''}`,
             icon: <TrendingUp className="h-5 w-5" />,
             accent: '#327F74',
-            bg: 'from-[#327F74]/10 to-[#327F74]/5',
           },
           {
             label: 'Transactions',
             value: loading ? null : <span>{statTxCount}</span>,
             sub: loading ? 'Loading...' : statTxCount === 0 ? 'No sales yet' : 'Completed this session',
             icon: <ShoppingCart className="h-5 w-5" />,
-            accent: '#6366F1',
-            bg: 'from-[#6366F1]/10 to-[#6366F1]/5',
+            accent: '#405A8C',
           },
           {
             label: 'Cash in Drawer',
             value: loading ? null : <CurrencyAmount amount={statExpectedCash} />,
             sub: loading ? 'Loading...' : `Float: AED ${Number(statOpeningCash).toFixed(2)}`,
             icon: <Wallet className="h-5 w-5" />,
-            accent: '#F5C742',
-            bg: 'from-[#F5C742]/15 to-[#F5C742]/5',
+            accent: '#C99A12',
           },
           {
             label: 'Session Duration',
             value: <span>{sessionDuration}</span>,
             sub: sessionStart ? `Started ${sessionStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '—',
             icon: <Clock className="h-5 w-5" />,
-            accent: '#F59E0B',
-            bg: 'from-[#F59E0B]/10 to-[#F59E0B]/5',
+            accent: '#B45309',
           },
         ];
 
         return (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-8">
+          <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:gap-6">
             {statCards.map((card, i) => (
-              <div key={i} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className={`bg-gradient-to-br ${card.bg} px-5 pt-5 pb-4`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{card.label}</p>
-                    <div className="p-2 rounded-xl" style={{ background: card.accent + '22', color: card.accent }}>
-                      {card.icon}
-                    </div>
-                  </div>
-                  <div className="text-2xl font-bold text-[#1E293B] min-h-[2rem] flex items-center">
-                    {loading && card.label !== 'Session Duration' ? (
-                      <span className="inline-block h-6 w-24 bg-gray-200 rounded animate-pulse" />
-                    ) : card.value}
+              <div key={i} className="relative overflow-hidden rounded-2xl border border-[#ECEAE4] bg-white p-5 shadow-sm">
+                <div aria-hidden className="absolute inset-y-0 left-0 w-1" style={{ background: card.accent }} />
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{card.label}</p>
+                  <div className="rounded-xl p-2" style={{ background: card.accent + '1A', color: card.accent }}>
+                    {card.icon}
                   </div>
                 </div>
-                <div className="px-5 py-2.5 border-t border-gray-100">
-                  <p className="text-xs text-gray-500">{card.sub}</p>
+                <div className="flex min-h-[2rem] items-center text-2xl font-bold text-[#1C2838]">
+                  {loading && card.label !== 'Session Duration' ? (
+                    <span className="inline-block h-6 w-24 animate-pulse rounded bg-gray-200" />
+                  ) : card.value}
                 </div>
+                <p className="mt-1 text-xs text-gray-500">{card.sub}</p>
               </div>
             ))}
           </div>
         );
       })()}
+
+      <div className="mb-4 flex items-baseline justify-between">
+        <h2 className="text-lg font-semibold text-[#1C2838]">Till actions</h2>
+        {!isSessionActive && !posInitLoading && (
+          <p className="text-xs text-gray-400">Session tools unlock once a session is open</p>
+        )}
+      </div>
+      <div className="grid flex-1 auto-rows-fr grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:gap-6">
+        {/* X-Report Tile — generate the shift X-Report without closing the session.
+            Running this clears the terminal for the end-of-day Z-Report. */}
+        <Card
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (isSessionActive) setCurrentView('x-report'); }}
+        >
+          {renderPosTile({
+            icon: FileText,
+            title: 'X-Report / Close Session',
+            desc: 'Shift report, or close the current session',
+            hint: isSessionActive ? null : 'Start a session to generate the X-Report',
+            enabled: isSessionActive,
+          })}
+        </Card>
+
+        {/* Cash Drop / Out Tile */}
+        <Card
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (isSessionActive) setShowCashDropDialog(true); }}
+        >
+          {renderPosTile({
+            icon: Archive,
+            title: 'Cash Drop / Out',
+            desc: 'Record cash drops and payouts',
+            hint: isSessionActive ? null : 'Start a session to record cash movements',
+            enabled: isSessionActive,
+          })}
+        </Card>
+
+        {/* Live Session Tile — quick-view popup of current session sales/cash figures */}
+        <Card
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => {
+            if (!isSessionActive) return;
+            setShowLiveSessionDialog(true);
+            loadXReport();
+          }}
+        >
+          {renderPosTile({
+            icon: Activity,
+            title: 'Live Session',
+            desc: 'Sales, cash drop, cash out & drawer total at a glance',
+            hint: isSessionActive ? null : 'Start a session to view live session values',
+            enabled: isSessionActive,
+          })}
+        </Card>
+
+        {/* Customer Tile */}
+        <Card
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (isSessionActive) setCurrentView('customer'); }}
+        >
+          {renderPosTile({
+            icon: Users,
+            title: 'Customer',
+            desc: 'Statements, payments and advances',
+            hint: isSessionActive ? null : 'Start a session to manage customers',
+            enabled: isSessionActive,
+          })}
+        </Card>
+
+        {/* Z-Report Tile — a cross-session, end-of-day report keyed by branch/date, not
+            by this terminal's own session, so it must stay reachable after this
+            terminal's session is closed (that's normally exactly when a cashier wants
+            to check Z-Report eligibility or pull the day's consolidated report). */}
+        <Card
+          className={`${posDashboardTileClass}${currentTerminal?.branchId ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (currentTerminal?.branchId) setCurrentView('z-report'); }}
+        >
+          {renderPosTile({
+            icon: FileBarChart,
+            title: 'Z-Report',
+            desc: 'End-of-day summary for all terminals',
+            hint: currentTerminal?.branchId
+              ? 'Every terminal must run its X-Report first'
+              : 'Register a terminal to access the Z-Report',
+            enabled: !!currentTerminal?.branchId,
+          })}
+        </Card>
+
+        {/* BillBull Console Tile */}
+        <Card
+          className={posDashboardTileClass}
+          onClick={() => setCurrentView('console')}
+        >
+          {renderPosTile({
+            icon: Settings,
+            title: 'BillBull Console',
+            desc: 'Layout, devices, printers & print templates',
+          })}
+        </Card>
+      </div>
     </div>
-  );
+    );
+  };
 
 
   // BillBull Console
@@ -5818,7 +5848,9 @@ export default function POSSales() {
             cols={['Description', 'Amount']}
             rows={[
               ['Total Card Sales', <CurrencyAmount key="z5c" amount={zCardSales} />],
-              ['Net Card Settlement Expected', <CurrencyAmount key="z5n" amount={zCardSales} />],
+              // Card refunds include Sales Returns settled to card (backend cardRefundSales).
+              ['Card Refunds', Number(zSummary?.cardRefundSales ?? 0) > 0 ? <span key="z5r" className="text-red-600">({formatCurrencyStr(zSummary.cardRefundSales)})</span> : <CurrencyAmount key="z5r0" amount={0} />],
+              ['Net Card Settlement Expected', <CurrencyAmount key="z5n" amount={(Number(zCardSales) || 0) - Number(zSummary?.cardRefundSales ?? 0)} />],
             ]}
           />
 
@@ -6676,7 +6708,9 @@ export default function POSSales() {
                   ['Total Sales Amount', <CurrencyAmount key="s6ts" amount={xSummary.salesAmountExTax ?? totalSales} />],
                   ['Total Discount', xSummary.totalDiscount > 0 ? `(${formatCurrencyStr(xSummary.totalDiscount ?? 0)})` : <CurrencyAmount key="s6td" amount={0} />],
                   ['VAT Amount', <CurrencyAmount key="s6vat" amount={xSummary.totalTax ?? 0} />],
-                  ['Net Sales Including VAT', <span key="s6ns" className="font-bold text-[#327F74]"><CurrencyAmount amount={totalSales} /></span>],
+                  ['Sales Returns', xSummary.salesReturnTotal > 0 ? `(${formatCurrencyStr(xSummary.salesReturnTotal)})` : <CurrencyAmount key="s6sr" amount={0} />],
+                  // Backend's returns-aware figure (gross inc. VAT minus returns), not recomputed here.
+                  ['Net Sales Including VAT', <span key="s6ns" className="font-bold text-[#327F74]"><CurrencyAmount amount={xSummary.reportingNetSales ?? totalSales} /></span>],
                 ]}
                 highlightLast
               />
@@ -6984,6 +7018,7 @@ export default function POSSales() {
     tplJobCardShowSerialNumber, tplJobCardShowWarranty, tplJobCardShowTechnician, tplJobCardShowExpectedDate, tplJobCardShowCustomerSignature, tplJobCardShowTerms,
     receiptTemplateId, setReceiptTemplateId,
     posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton,
+    quickCheckoutEnabled, setQuickCheckoutEnabled,
     settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings,
     consoleDevices, setConsoleDevices, showAddDevice, setShowAddDevice, newDevType, setNewDevType, newDevName, setNewDevName, newDevPort, setNewDevPort, newDevIp, setNewDevIp,
     printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
@@ -7143,6 +7178,11 @@ export default function POSSales() {
     // their own per-layout follow-up (POSTouchScreen pre-fills the tender and resets the keypad)
     // must branch on this so a refused checkout leaves no half-primed payment state behind. This
     // is the ONE shared guard: no template re-implements the condition.
+    // Mandatory Customer (Console -> Behavior): no walk-in checkout. The server refuses it too.
+    if (posSettings?.requireCustomer && (!selectedCustomerData || selectedCustomerData.id === WALK_IN_CUSTOMER.id)) {
+      alert({ tone: 'warning', title: 'Customer required', message: 'Select a customer before checkout. Walk-in sales are not allowed at this branch.' });
+      return false;
+    }
     if (salespersonRequired && !salespersonVerified) {
       openSalespersonScanModal();
       return false;
@@ -7166,10 +7206,20 @@ export default function POSSales() {
     quickCashSeqRef.current += 1;
     setCheckoutQuickCash(checkoutQuickCashRequest(opts, quickCashSeqRef.current));
     return true;
-  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal, activeSalesOrder]);
+  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal, activeSalesOrder, posSettings?.requireCustomer, selectedCustomerData]);
 
   const touchScreenProps = {
     handleCheckout,
+    // Price level selector + badge, rendered in the till's top bar (null hides it).
+    priceLevelProps: posPriceLevel.showPricing ? {
+      levels: posPriceLevel.activeLevels,
+      value: posPriceLevel.explicitPriceLevelId,
+      onChange: posPriceLevel.setExplicitPriceLevelId,
+      effective: posPriceLevel.effective,
+      customerLevelName: posPriceLevel.customerLevelName,
+      pending: posPriceLevel.pending,
+      error: posPriceLevel.error, customerPricing: posPriceLevel.customerPricing,
+    } : null,
     showQuickCustomerModal, setShowQuickCustomerModal, quickCustomerForm, setQuickCustomerForm, quickCustomerDuplicateWarning, setQuickCustomerDuplicateWarning, quickCustomerLoading, quickCustomerError, openQuickCustomerModal, handleSaveQuickCustomer,
     showQuickProductModal, setShowQuickProductModal, handleQuickProductCreated,
     setCurrentView, currentSession, sessionId, posSettings,
@@ -7200,6 +7250,8 @@ export default function POSSales() {
     // handed to templates — a template that could call them directly could
     // bypass the Product Entry Mode decision, which is the bug this fixes.
     updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
+    // Packing units: the sale units of a line's product (priced), and moving a line to one.
+    loadSaleUnits, changeLineUnit,
     guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy, deleteHeldBill,
     activeLayawayId, activeLayawayDeposit, shippingCharge,
     // Credit Vouchers applied to the open sale. Payment instruments, not cart lines: the
@@ -7210,7 +7262,7 @@ export default function POSSales() {
     classicDiscountType, setClassicDiscountType, discountInputType, setDiscountInputType,
     resetFocusMode,
     rightPanelTab, setRightPanelTab, hiddenPanelButtons, hideCategoriesPanel, hideItemsPanel,
-    posTemplate,
+    posTemplate, quickCheckoutEnabled,
     cartViewDetailed, cartLineDetails,
     setShowPaymentDialog, setCheckoutPhase,
     setShowPOSConfig, setShowCashDropDialog, setShowLastReceiptDialog,
@@ -7252,8 +7304,8 @@ export default function POSSales() {
       {terminalRegistrationError && (
         <TerminalUnavailableOverlay
           reason={terminalRegistrationError}
-          onRegisterNew={() => {
-            if (window.confirm('This will assign a new independent terminal to this device.\n\nContinue?')) {
+          onRegisterNew={async () => {
+            if (await confirmDialog(REGISTER_NEW_TERMINAL_CONFIRM)) {
               localStorage.removeItem('billbull:pos:device_fingerprint');
               Object.keys(localStorage)
                 .filter(k => k.startsWith('billbull:pos:terminal_id'))
@@ -7374,8 +7426,8 @@ export default function POSSales() {
                 <p className="text-[10px] text-slate-400 text-center mb-2">On a different physical device? Your device may have inherited a stale terminal assignment.</p>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (window.confirm('This will assign a new independent terminal to this device.\n\nContinue?')) {
+                  onClick={async () => {
+                    if (await confirmDialog(REGISTER_NEW_TERMINAL_CONFIRM)) {
                       localStorage.removeItem('billbull:pos:device_fingerprint');
                       // Clear every branch-scoped terminal_id cached on this device, not just the
                       // active branch's, so no stale pointer survives the fingerprint reset.
@@ -7669,6 +7721,7 @@ export default function POSSales() {
           customerCode={selectedCustomerData?.code}
           customerName={selectedCustomerData?.name}
           warehouseId={currentSession?.warehouseId || posSettings?.defaultWarehouseId}
+          loadUnits={loadSaleUnits}
         />
       )}
       {currentView === 'z-report' && renderZReport()}
@@ -9373,7 +9426,7 @@ export default function POSSales() {
                   orderDate: new Date().toISOString().slice(0, 10),
                   customerCode: selectedCustomerData?.id !== 'walk-in' ? (selectedCustomerData?.code || selectedCustomerData?.customerCode || null) : null,
                   customerName: selectedCustomerData?.name || 'Walk-in Customer',
-                  status: 'DRAFT',
+                  status: 'DRAFT', ...salespersonPayload,
                   subTotal: currentInvoice.subtotal,
                   taxTotal: currentInvoice.tax,
                   orderTotal: currentInvoice.total,
@@ -9488,7 +9541,13 @@ export default function POSSales() {
         };
         const handleCancelOrder = async () => {
           if (!selOrder) return;
-          if (!window.confirm(`Cancel order ${selOrder.soNumber}?`)) return;
+          if (!(await confirmDialog({
+            title: `Cancel order ${selOrder.soNumber}?`,
+            message: 'The order will be marked as cancelled.',
+            confirmLabel: 'Cancel order',
+            cancelLabel: 'Keep order',
+            tone: 'danger',
+          }))) return;
           try {
             await updateSalesOrderStatus(selOrder.id, 'CANCELLED');
             const result = await getSalesOrdersPage({ page: 0, size: 50 });
@@ -9499,11 +9558,16 @@ export default function POSSales() {
         };
         // Loads the order (customer + lines) into the cart and links the cart to it. Asks first
         // when that would replace a cart the cashier is still working on.
-        const openIntoCart = () => {
+        const openIntoCart = async () => {
           if (!shown || !canTakeUp) return null;
           const liveLines = currentInvoice.items.filter(i => !i.isVoided).length;
           if (liveLines > 0 && activeSalesOrder?.soNumber !== shown.soNumber
-            && !window.confirm(`Replace the current cart (${liveLines} item${liveLines !== 1 ? 's' : ''}) with order ${shown.soNumber}?`)) {
+            && !(await confirmDialog({
+              title: `Replace the current cart with order ${shown.soNumber}?`,
+              message: `The ${liveLines} item${liveLines !== 1 ? 's' : ''} in the cart will be replaced by this order.`,
+              confirmLabel: 'Replace cart',
+              tone: 'warning',
+            }))) {
             return null;
           }
           const customer = takeUpSalesOrder(shown);
@@ -9530,8 +9594,8 @@ export default function POSSales() {
           return customer;
         };
         const handleOpenOrder = () => { openIntoCart(); };
-        const handleOpenOrderAndCheckout = () => {
-          if (!openIntoCart()) return;
+        const handleOpenOrderAndCheckout = async () => {
+          if (!(await openIntoCart())) return;
           // Delegates to the SAME shared entry point as the main Checkout button rather than
           // opening the payment dialog itself: an order picked straight into settlement is still a
           // POS sale and still needs its salesperson scanned. The order is loaded into the cart
@@ -9541,8 +9605,8 @@ export default function POSSales() {
         // Delivery orders: open into the cart, then straight into the delivery form with the
         // order's customer, shipping address, date and instructions — the cashier assigns the
         // driver and slot, and Out for Delivery sends it (as a Pro-forma Invoice under PI Flow).
-        const handleProcessDelivery = () => {
-          if (!openIntoCart()) return;
+        const handleProcessDelivery = async () => {
+          if (!(await openIntoCart())) return;
           setShowDeliveryModal(true);
         };
         const lineAmount = (it) => {
@@ -10313,6 +10377,22 @@ export default function POSSales() {
                       onCheckedChange={(v) => setHideItemsPanel(!v)}
                     />
                   </div>
+                  <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-[#F5C742]/10 flex items-center justify-center">
+                        <CreditCard className="h-4 w-4 text-[#F5C742]" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-[#1E293B]">Quick Checkout</p>
+                        <p className="text-[10px] text-gray-500">Payment tabs instead of the Checkout button (Classic, Cart Focus)</p>
+                      </div>
+                    </div>
+                    <Switch
+                      aria-label="Quick Checkout"
+                      checked={quickCheckoutEnabled}
+                      onCheckedChange={setQuickCheckoutEnabled}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -10419,11 +10499,12 @@ export default function POSSales() {
                 onClick={async () => {
                   setSettingsSaving(true);
                   try {
-                    const saved = await savePosSettings({
-                      ...(posSettings || {}),
+                    const saved = await savePosAppearance({
+                      branchId: posSettings?.branchId,
                       defaultLayout: posTemplate,
                       layoutHideCategoryPanel: hideCategoriesPanel,
                       layoutHideItemsPanel: hideItemsPanel,
+                      layoutQuickCheckout: quickCheckoutEnabled,
                       layoutHiddenPanelButtons: [...hiddenPanelButtons].join(','),
                     });
                     setPosSettings(prev => mergeSavedPosSettings(prev, saved));
@@ -10877,6 +10958,9 @@ export default function POSSales() {
           </div>
         );
       })()}
+
+      {/* Closing Approval — administrator sign-off for a session close or Business Day Close */}
+      <AdminCloseApprovalDialog approval={adminCloseApproval} />
 
       {/* Phase 12 - Session Transferred/Invalidated Overlay */}
       {sessionInvalidated && (

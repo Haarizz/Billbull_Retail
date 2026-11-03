@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, Layers, Gift, Truck } from 'lucide-react';
+import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, Layers, MoreHorizontal } from 'lucide-react';
 import { UAParser } from 'ua-parser-js';
 import { usePermissions } from '../../../context/PermissionContext';
 import { formatDistanceToNow, parseISO } from 'date-fns';
@@ -25,12 +25,14 @@ import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '
 import { createPosPrinter, updatePosPrinter, updatePosPrinterRuntime, decommissionPosPrinter } from '../../../api/posPrinterApi';
 import { getPosScanners, createPosScanner, decommissionPosScanner } from '../../../api/posScannerApi';
 import { getPosCashDrawers, createPosCashDrawer, decommissionPosCashDrawer } from '../../../api/posCashDrawerApi';
-import { assignTerminalCounter, archivePosTerminal, restorePosTerminal, decommissionPosTerminal, keepTerminalActive, archiveTerminalNow, setTerminalAutoArchiveExempt } from '../../../api/posApi';
+import { assignTerminalCounter, archivePosTerminal, restorePosTerminal, decommissionPosTerminal, keepTerminalActive, archiveTerminalNow, setTerminalAutoArchiveExempt, savePosAppearance } from '../../../api/posApi';
 import { getActiveCounters } from '../../../api/counterApi';
 import { listPrintAgentPrinters, runtimeStatusFromPrintError, runtimeStatusFromPrintSuccess, testConfiguredPrinter } from '../../../utils/localPrintAgent';
 import PrintAgentPairing from './device/printing/PrintAgentPairing';
 import { buildEscPosTestReceipt } from '../../../utils/escPosReceipt';
 import { buildZplTestLabel, zplToBase64 } from '../../../utils/zplText';
+import { confirmDialog } from '../../../components/AppConfirmBridge';
+import PosBehaviorSettings from './features/settings/PosBehaviorSettings';
 
 /**
  * Renders the real, resolved Back Office "Sales Invoice"/"Sales Return" PrintTemplate
@@ -71,37 +73,6 @@ const ResolvedTemplateA4Preview = ({ template, isReturn, hasTax = true, outlet, 
   return <A4PreviewFrame html={html} scale={fitScale} pageWidth={width} pageHeight={height} />;
 };
 
-/**
- * Restates the configured Business Day as its three phases, for the settings
- * preview. Presentation only — the backend remains the sole authority on phase and
- * closure; this exists so an admin can see that "21:00" is the scheduled end and
- * "23:00" is the actual closure without having to do the arithmetic themselves.
- *
- * Mirrors PosOperatingHoursCalculator.resolveWindow's wrap-aware duration handling
- * so the preview agrees with enforcement for overnight schedules too.
- */
-function businessDayPhasePreview(draft) {
-  const start = (draft?.operatingStartTime || '').slice(0, 5);
-  const end = (draft?.operatingEndTime || '').slice(0, 5);
-  if (!start || !end || start === end) return null;
-
-  const toMinutes = (hhmm) => {
-    const [h, m] = hhmm.split(':').map(Number);
-    return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
-  };
-  const startMin = toMinutes(start);
-  const endMin = toMinutes(end);
-  if (startMin == null || endMin == null) return null;
-
-  const extensionMinutes = Math.max(0, Number(draft?.businessDayExtensionMinutes) || 0);
-  // Wrap past midnight for an overnight schedule, exactly as the backend does.
-  const lengthMin = endMin > startMin ? endMin - startMin : endMin + 1440 - startMin;
-  const closureMin = (startMin + lengthMin + extensionMinutes) % 1440;
-  const fmt = (mins) => `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
-
-  return { start, end, closure: fmt(closureMin), extensionMinutes };
-}
-
 const POSConsole = React.memo((props) => {
   const { 
     currentTerminal, setCurrentTerminal, setTerminalsLoading, setTerminalList, setEditingTerminalId, setEditTerminalName, setEditCounterName, setTerminalSaving, editTerminalName, editCounterName, terminalList, 
@@ -138,7 +109,8 @@ const POSConsole = React.memo((props) => {
     setT2InvoiceShowLogo, setT2InvoiceShowCompanyDetails, setT2InvoiceShowTrn, setT2InvoiceShowArabic, setT2InvoiceShowCustomerDetails, setT2InvoiceShowAccountBalance, setT2InvoiceShowDelivery,
     setT2InvoiceShowVatSummary, setT2InvoiceShowPaymentDetails, setT2InvoiceShowLoyalty, setT2InvoiceShowQRCode, setT2InvoiceShowFooterText, setT2InvoiceShowBarcode,
     posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton,
-    settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings, 
+    quickCheckoutEnabled = true, setQuickCheckoutEnabled,
+    settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings,
     printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
     scannerConfig, setScannerConfig, saveScannerConfig, scannerConfigSavedFlash,
     getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
@@ -166,8 +138,11 @@ const POSConsole = React.memo((props) => {
     const canTerminalAction = (action) => canAction(`permissions.pos.terminal.${action}`, 'view');
     // The Behavior tab exposes supervisor-approval config (void gate, PIN/password) —
     // restrict it to supervisor-capable roles, mirroring the backend role gate in
-    // PosSettingsService.save() (SUPERVISOR_CONFIG_ROLES).
-    const canManageBehaviorSettings = hasAnyRole('ADMIN', 'BRANCH_ADMIN', 'MANAGER', 'SUPERVISOR');
+    // PosSettingsService.save() (SUPERVISOR_CONFIG_ROLES), and to users who may save it at all
+    // (pos.settings edit, PosSettingsController.save) — otherwise the tab would 403 on Save.
+    // Layouts and Print Templates are open to every till user (savePosAppearance).
+    const canManageBehaviorSettings = hasAnyRole('ADMIN', 'BRANCH_ADMIN', 'MANAGER', 'SUPERVISOR')
+      && (hasAnyRole('ADMIN') || canAction('pos.settings', 'edit'));
 
     // Phase 3 cutover (reworked): POS now resolves the real Back Office "Sales
     const allBtnList = [
@@ -222,6 +197,9 @@ const POSConsole = React.memo((props) => {
 
     const [counterList, setCounterList] = useState([]);
     const [viewHistoryTerminalId, setViewHistoryTerminalId] = useState(null);
+    const [terminalFilter, setTerminalFilter] = useState('ALL');
+    const [terminalSearch, setTerminalSearch] = useState('');
+    const [terminalMenuId, setTerminalMenuId] = useState(null);
     // Archive-terminal confirmation dialog (replaces window.prompt/window.confirm)
     const [archiveModalTerminal, setArchiveModalTerminal] = useState(null);
     const [archiveModalReason, setArchiveModalReason] = useState('');
@@ -350,7 +328,7 @@ const POSConsole = React.memo((props) => {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [consoleTab, currentTerminal?.branchId]);
 
-    const openAddDevice = (deviceType = 'RECEIPT_PRINTER') => {
+    const openAddDevice = (deviceType = 'RECEIPT_PRINTER', prefill = {}) => {
       const kind = addDeviceTypeOptions.find((t) => t.value === deviceType)?.kind || 'printer';
       setAddDeviceError('');
       setAddDeviceForm({
@@ -361,6 +339,7 @@ const POSConsole = React.memo((props) => {
         systemPrinterName: '',
         ipAddress: '',
         portNumber: '9100',
+        ...prefill,
       });
       setAddDeviceOpen(true);
     };
@@ -443,7 +422,12 @@ const POSConsole = React.memo((props) => {
     };
 
     const decommissionScanner = async (scanner) => {
-      if (!window.confirm(`Remove scanner "${scanner.deviceName}"?`)) return;
+      if (!(await confirmDialog({
+        title: 'Remove scanner?',
+        message: `Scanner "${scanner.deviceName}" will be removed from this outlet's devices.`,
+        confirmLabel: 'Remove scanner',
+        tone: 'danger',
+      }))) return;
       setDeviceBusyKey(`scanner-${scanner.id}`);
       try {
         await decommissionPosScanner(scanner.id);
@@ -456,7 +440,12 @@ const POSConsole = React.memo((props) => {
     };
 
     const decommissionDrawer = async (drawer) => {
-      if (!window.confirm(`Remove cash drawer "${drawer.deviceName}"?`)) return;
+      if (!(await confirmDialog({
+        title: 'Remove cash drawer?',
+        message: `Cash drawer "${drawer.deviceName}" will be removed from this outlet's devices.`,
+        confirmLabel: 'Remove drawer',
+        tone: 'danger',
+      }))) return;
       setDeviceBusyKey(`drawer-${drawer.id}`);
       try {
         await decommissionPosCashDrawer(drawer.id);
@@ -623,7 +612,12 @@ const POSConsole = React.memo((props) => {
     };
 
     const handlePrinterDecommission = async (printer) => {
-      if (!window.confirm(`Decommission printer "${printer.deviceName}"?`)) return;
+      if (!(await confirmDialog({
+        title: 'Decommission printer?',
+        message: `Printer "${printer.deviceName}" will be decommissioned and removed from the printer list.`,
+        confirmLabel: 'Decommission',
+        tone: 'danger',
+      }))) return;
       setPrinterBusyId(printer.id);
       try {
         await decommissionPosPrinter(printer.id);
@@ -633,6 +627,49 @@ const POSConsole = React.memo((props) => {
       } finally {
         setPrinterBusyId(null);
       }
+    };
+
+    const handleSaveTemplates = async () => {
+      setSettingsSaving(true);
+      try {
+        const tplConfig = JSON.stringify({
+          outletName:tplOutletName,outletTrn:tplOutletTrn,outletAddress:tplOutletAddress,outletPhone:tplOutletPhone,
+          logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
+          receiptHeader:tplReceiptHeader,receiptHeaderAr:tplReceiptHeaderAr,receiptFooter:tplReceiptFooter,receiptPaper:tplReceiptPaper,
+          receiptShowLogo:tplReceiptShowLogo,receiptShowTrn:tplReceiptShowTrn,receiptShowStamp:tplReceiptShowStamp,receiptShowBarcode:tplReceiptShowBarcode,
+          receiptShowCompanyDetails:tplReceiptShowCompanyDetails,receiptShowCustomerDetails:tplReceiptShowCustomerDetails,
+          receiptColItemCode:tplReceiptColItemCode,receiptColItemImage:tplReceiptColItemImage,receiptColBatchNo:tplReceiptColBatchNo,receiptColDiscount:tplReceiptColDiscount,receiptColVatPct:tplReceiptColVatPct,receiptColVatAmt:tplReceiptColVatAmt,
+          receiptShowGrandTotalBanner:tplReceiptShowGrandTotalBanner,receiptShowTerms:tplReceiptShowTerms,receiptShowNotes:tplReceiptShowNotes,receiptShowBankDetails:tplReceiptShowBankDetails,receiptShowQRCode:tplReceiptShowQRCode,receiptShowSignature:tplReceiptShowSignature,
+          invoiceHeader:tplInvoiceHeader,invoiceHeaderAr:tplInvoiceHeaderAr,invoiceFooter:tplInvoiceFooter,invoicePaper:tplInvoicePaper,
+          invoiceShowLogo:tplInvoiceShowLogo,invoiceShowCompanyDetails:tplInvoiceShowCompanyDetails,invoiceShowTrn:tplInvoiceShowTrn,
+          invoiceShowCustomerDetails:tplInvoiceShowCustomerDetails,invoiceShowStamp:tplInvoiceShowStamp,invoiceShowSignature:tplInvoiceShowSignature,
+          invoiceShowGrandTotalBanner:tplInvoiceShowGrandTotalBanner,invoiceShowTerms:tplInvoiceShowTerms,invoiceShowNotes:tplInvoiceShowNotes,
+          invoiceShowBankDetails:tplInvoiceShowBankDetails,invoiceShowQRCode:tplInvoiceShowQRCode,invoiceQrPlacement:tplInvoiceQrPlacement,
+          invoiceColItemCode:tplInvoiceColItemCode,invoiceColItemImage:tplInvoiceColItemImage,invoiceColBarcode:tplInvoiceColBarcode,
+          invoiceColBatchNo:tplInvoiceColBatchNo,invoiceColDiscount:tplInvoiceColDiscount,invoiceColVatPct:tplInvoiceColVatPct,invoiceColVatAmt:tplInvoiceColVatAmt,
+          returnHeader:tplReturnHeader,returnFooter:tplReturnFooter,returnPaper:tplReturnPaper,
+          returnShowLogo:tplReturnShowLogo,returnShowTrn:tplReturnShowTrn,returnShowStamp:tplReturnShowStamp,
+          returnShowCompanyDetails:tplReturnShowCompanyDetails,returnShowCustomerDetails:tplReturnShowCustomerDetails,
+          returnColItemCode:tplReturnColItemCode,returnColBatchNo:tplReturnColBatchNo,returnColDiscount:tplReturnColDiscount,returnColVatPct:tplReturnColVatPct,returnColVatAmt:tplReturnColVatAmt,
+          returnShowGrandTotalBanner:tplReturnShowGrandTotalBanner,returnShowTerms:tplReturnShowTerms,returnShowNotes:tplReturnShowNotes,returnShowQRCode:tplReturnShowQRCode,returnShowSignature:tplReturnShowSignature,returnShowCreditBalance:tplReturnShowCreditBalance,
+          jobCardFooter:tplJobCardFooter,jobCardPaper:tplJobCardPaper,
+          jobCardShowLogo:tplJobCardShowLogo,jobCardShowTrn:tplJobCardShowTrn,jobCardShowStamp:tplJobCardShowStamp,
+          jobCardShowCompanyDetails:tplJobCardShowCompanyDetails,jobCardShowCustomerDetails:tplJobCardShowCustomerDetails,
+          jobCardShowSerialNumber:tplJobCardShowSerialNumber,jobCardShowWarranty:tplJobCardShowWarranty,jobCardShowTechnician:tplJobCardShowTechnician,
+          jobCardShowExpectedDate:tplJobCardShowExpectedDate,jobCardShowCustomerSignature:tplJobCardShowCustomerSignature,jobCardShowTerms:tplJobCardShowTerms,
+          receiptTemplateId,
+          t2ShowLogo,t2ShowCompanyDetails,t2ShowTrn,t2ShowArabic,t2ShowCustomerDetails,t2ShowAccountBalance,t2ShowDelivery,
+          t2ShowVatSummary,t2ShowPaymentDetails,t2ShowLoyalty,t2ShowQRCode,t2ShowFooterText,t2ShowBarcode,
+          t2ReceiptShowLogo,t2ReceiptShowCompanyDetails,t2ReceiptShowTrn,t2ReceiptShowArabic,t2ReceiptShowCustomerDetails,t2ReceiptShowAccountBalance,t2ReceiptShowDelivery,
+          t2ReceiptShowVatSummary,t2ReceiptShowPaymentDetails,t2ReceiptShowLoyalty,t2ReceiptShowQRCode,t2ReceiptShowFooterText,t2ReceiptShowBarcode,
+          t2InvoiceShowLogo,t2InvoiceShowCompanyDetails,t2InvoiceShowTrn,t2InvoiceShowArabic,t2InvoiceShowCustomerDetails,t2InvoiceShowAccountBalance,t2InvoiceShowDelivery,
+          t2InvoiceShowVatSummary,t2InvoiceShowPaymentDetails,t2InvoiceShowLoyalty,t2InvoiceShowQRCode,t2InvoiceShowFooterText,t2InvoiceShowBarcode,
+        });
+        const saved = await savePosAppearance({ branchId: posSettings?.branchId, printTemplateConfig: tplConfig });
+        setPosSettings(prev => mergeSavedPosSettings(prev, saved));
+        setSettingsSavedFlash(true);
+        setTimeout(()=>setSettingsSavedFlash(false), 2000);
+      } catch(e){ console.warn('Template save failed',e); } finally { setSettingsSaving(false); }
     };
 
     const tabs = [
@@ -734,48 +771,7 @@ const POSConsole = React.memo((props) => {
               )}
               {/* Contextual save button — only when on a tab that has saves */}
               {consoleTab === 'templates' && (
-                <button disabled={settingsSaving} onClick={async()=>{
-                  setSettingsSaving(true);
-                  try {
-                    const tplConfig = JSON.stringify({
-                      outletName:tplOutletName,outletTrn:tplOutletTrn,outletAddress:tplOutletAddress,outletPhone:tplOutletPhone,
-                      logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
-                      receiptHeader:tplReceiptHeader,receiptHeaderAr:tplReceiptHeaderAr,receiptFooter:tplReceiptFooter,receiptPaper:tplReceiptPaper,
-                      receiptShowLogo:tplReceiptShowLogo,receiptShowTrn:tplReceiptShowTrn,receiptShowStamp:tplReceiptShowStamp,receiptShowBarcode:tplReceiptShowBarcode,
-                      receiptShowCompanyDetails:tplReceiptShowCompanyDetails,receiptShowCustomerDetails:tplReceiptShowCustomerDetails,
-                      receiptColItemCode:tplReceiptColItemCode,receiptColItemImage:tplReceiptColItemImage,receiptColBatchNo:tplReceiptColBatchNo,receiptColDiscount:tplReceiptColDiscount,receiptColVatPct:tplReceiptColVatPct,receiptColVatAmt:tplReceiptColVatAmt,
-                      receiptShowGrandTotalBanner:tplReceiptShowGrandTotalBanner,receiptShowTerms:tplReceiptShowTerms,receiptShowNotes:tplReceiptShowNotes,receiptShowBankDetails:tplReceiptShowBankDetails,receiptShowQRCode:tplReceiptShowQRCode,receiptShowSignature:tplReceiptShowSignature,
-                      invoiceHeader:tplInvoiceHeader,invoiceHeaderAr:tplInvoiceHeaderAr,invoiceFooter:tplInvoiceFooter,invoicePaper:tplInvoicePaper,
-                      invoiceShowLogo:tplInvoiceShowLogo,invoiceShowCompanyDetails:tplInvoiceShowCompanyDetails,invoiceShowTrn:tplInvoiceShowTrn,
-                      invoiceShowCustomerDetails:tplInvoiceShowCustomerDetails,invoiceShowStamp:tplInvoiceShowStamp,invoiceShowSignature:tplInvoiceShowSignature,
-                      invoiceShowGrandTotalBanner:tplInvoiceShowGrandTotalBanner,invoiceShowTerms:tplInvoiceShowTerms,invoiceShowNotes:tplInvoiceShowNotes,
-                      invoiceShowBankDetails:tplInvoiceShowBankDetails,invoiceShowQRCode:tplInvoiceShowQRCode,invoiceQrPlacement:tplInvoiceQrPlacement,
-                      invoiceColItemCode:tplInvoiceColItemCode,invoiceColItemImage:tplInvoiceColItemImage,invoiceColBarcode:tplInvoiceColBarcode,
-                      invoiceColBatchNo:tplInvoiceColBatchNo,invoiceColDiscount:tplInvoiceColDiscount,invoiceColVatPct:tplInvoiceColVatPct,invoiceColVatAmt:tplInvoiceColVatAmt,
-                      returnHeader:tplReturnHeader,returnFooter:tplReturnFooter,returnPaper:tplReturnPaper,
-                      returnShowLogo:tplReturnShowLogo,returnShowTrn:tplReturnShowTrn,returnShowStamp:tplReturnShowStamp,
-                      returnShowCompanyDetails:tplReturnShowCompanyDetails,returnShowCustomerDetails:tplReturnShowCustomerDetails,
-                      returnColItemCode:tplReturnColItemCode,returnColBatchNo:tplReturnColBatchNo,returnColDiscount:tplReturnColDiscount,returnColVatPct:tplReturnColVatPct,returnColVatAmt:tplReturnColVatAmt,
-                      returnShowGrandTotalBanner:tplReturnShowGrandTotalBanner,returnShowTerms:tplReturnShowTerms,returnShowNotes:tplReturnShowNotes,returnShowQRCode:tplReturnShowQRCode,returnShowSignature:tplReturnShowSignature,returnShowCreditBalance:tplReturnShowCreditBalance,
-                      jobCardFooter:tplJobCardFooter,jobCardPaper:tplJobCardPaper,
-                      jobCardShowLogo:tplJobCardShowLogo,jobCardShowTrn:tplJobCardShowTrn,jobCardShowStamp:tplJobCardShowStamp,
-                      jobCardShowCompanyDetails:tplJobCardShowCompanyDetails,jobCardShowCustomerDetails:tplJobCardShowCustomerDetails,
-                      jobCardShowSerialNumber:tplJobCardShowSerialNumber,jobCardShowWarranty:tplJobCardShowWarranty,jobCardShowTechnician:tplJobCardShowTechnician,
-                      jobCardShowExpectedDate:tplJobCardShowExpectedDate,jobCardShowCustomerSignature:tplJobCardShowCustomerSignature,jobCardShowTerms:tplJobCardShowTerms,
-                      receiptTemplateId,
-                      t2ShowLogo,t2ShowCompanyDetails,t2ShowTrn,t2ShowArabic,t2ShowCustomerDetails,t2ShowAccountBalance,t2ShowDelivery,
-                      t2ShowVatSummary,t2ShowPaymentDetails,t2ShowLoyalty,t2ShowQRCode,t2ShowFooterText,t2ShowBarcode,
-                      t2ReceiptShowLogo,t2ReceiptShowCompanyDetails,t2ReceiptShowTrn,t2ReceiptShowArabic,t2ReceiptShowCustomerDetails,t2ReceiptShowAccountBalance,t2ReceiptShowDelivery,
-                      t2ReceiptShowVatSummary,t2ReceiptShowPaymentDetails,t2ReceiptShowLoyalty,t2ReceiptShowQRCode,t2ReceiptShowFooterText,t2ReceiptShowBarcode,
-                      t2InvoiceShowLogo,t2InvoiceShowCompanyDetails,t2InvoiceShowTrn,t2InvoiceShowArabic,t2InvoiceShowCustomerDetails,t2InvoiceShowAccountBalance,t2InvoiceShowDelivery,
-                      t2InvoiceShowVatSummary,t2InvoiceShowPaymentDetails,t2InvoiceShowLoyalty,t2InvoiceShowQRCode,t2InvoiceShowFooterText,t2InvoiceShowBarcode,
-                    });
-                    const saved = await savePosSettings({ ...(posSettings||{}), printTemplateConfig: tplConfig });
-                    setPosSettings(prev => mergeSavedPosSettings(prev, saved));
-                    setSettingsSavedFlash(true);
-                    setTimeout(()=>setSettingsSavedFlash(false), 2000);
-                  } catch(e){ console.warn('Template save failed',e); } finally { setSettingsSaving(false); }
-                }}
+                <button disabled={settingsSaving} onClick={handleSaveTemplates}
                   className="flex items-center gap-2 bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-60 text-[#1E293B] font-bold text-sm px-5 py-2 rounded-xl transition-colors">
                   <CheckCircle className="h-4 w-4" />{settingsSaving ? 'Saving…' : 'Save Templates'}
                 </button>
@@ -784,11 +780,12 @@ const POSConsole = React.memo((props) => {
                 <button disabled={settingsSaving} onClick={async()=>{
                   setSettingsSaving(true);
                   try {
-                    const saved = await savePosSettings({
-                      ...(posSettings||{}),
+                    const saved = await savePosAppearance({
+                      branchId: posSettings?.branchId,
                       defaultLayout: posTemplate,
                       layoutHideCategoryPanel: hideCategoriesPanel,
                       layoutHideItemsPanel: hideItemsPanel,
+                      layoutQuickCheckout: quickCheckoutEnabled,
                       layoutHiddenPanelButtons: [...hiddenPanelButtons].join(','),
                     });
                     setPosSettings(prev => mergeSavedPosSettings(prev, saved));
@@ -864,6 +861,9 @@ const POSConsole = React.memo((props) => {
                   {[
                     {label:'Categories Bar', desc:'Left category navigation',state:hideCategoriesPanel,set:setHideCategoriesPanel},
                     {label:'Items Panel',    desc:'Product grid with search',state:hideItemsPanel,    set:setHideItemsPanel},
+                    // Stored as "enabled"; the list's switches show !state, so it is passed inverted.
+                    {label:'Quick Checkout', desc:'Payment tabs (Cash, Card, Credit, Online, BNPL) instead of the Checkout button — Classic & Cart Focus',
+                      state:!quickCheckoutEnabled, set:v=>setQuickCheckoutEnabled?.(!v)},
                   ].map(p=>(
                     <div key={p.label} className="flex items-center justify-between py-3 px-4 bg-gray-50 rounded-xl">
                       <div>
@@ -907,873 +907,338 @@ const POSConsole = React.memo((props) => {
               <p className="text-xs text-gray-400 mt-1">You don't have permission to view or change POS behavior settings.</p>
             </div>
           )}
-          {consoleTab==='behavior' && canManageBehaviorSettings && (() => {
-            const d = settingsDraft || {
-              requireSupervisorForVoid: !!posSettings?.requireSupervisorForVoid,
-              requireSupervisorForDayClose: !!posSettings?.requireSupervisorForDayClose,
-              supervisorApprovalMode: posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN',
-              requirePriceOverrideApproval: !!posSettings?.requirePriceOverrideApproval,
-              deliveryReturnChargePolicy: posSettings?.deliveryReturnChargePolicy || 'WAIVE',
-              deliveryWorkflowMode: posSettings?.deliveryWorkflowMode || 'DEFAULT_SETTLEMENT',
-              posFunctionAccessMode: posSettings?.posFunctionAccessMode || 'ALL_USERS',
-              // Write-only field — the backend never returns the raw PIN (see supervisorPinSet below).
-              supervisorPin: '',
-              voidMode: posSettings?.voidMode === 'DELETE' ? 'DELETE' : 'VOID',
-              productEntryMode: posSettings?.productEntryMode || 'DIRECT_ADD',
-              cartViewMode: posSettings?.cartViewMode === 'DETAILED' ? 'DETAILED' : 'MINIMAL',
-              cartShowBarcode: posSettings?.cartShowBarcode !== false,
-              cartShowProductCode: posSettings?.cartShowProductCode !== false,
-              cartShowBatchNumber: posSettings?.cartShowBatchNumber !== false,
-              cartShowSerialNumber: !!posSettings?.cartShowSerialNumber,
-              cartShowExpiryDate: !!posSettings?.cartShowExpiryDate,
-              cashDrawerTriggers: posSettings?.cashDrawerTriggers ?? 'CASH_PAYMENT,CHANGE_RETURN,CASH_DROP,CASH_OUT,MANUAL_OPEN',
-              operatingHoursEnabled: !!posSettings?.operatingHoursEnabled,
-              operatingStartTime: posSettings?.operatingStartTime || '',
-              operatingEndTime: posSettings?.operatingEndTime || '',
-              businessDayExtensionMinutes: posSettings?.businessDayExtensionMinutes ?? 0,
-              // Credit Voucher expiry policy. '' means "no branch policy — use the system
-              // default", which is what an untouched branch has and what preserves the
-              // historical 12-month behaviour.
-              creditVoucherExpiryMode: posSettings?.creditVoucherExpiryMode || '',
-              creditVoucherExpiryMonths: posSettings?.creditVoucherExpiryMonths ?? 12,
-              creditVoucherExpiryDate: posSettings?.creditVoucherExpiryDate || '',
-            };
-            const patch = (changes) => setSettingsDraft({ ...d, ...changes });
-
-            // Business Day schedule lock — server-computed (PosSettingsService), never derived
-            // here. The backend refuses the change regardless; disabling the controls just
-            // stops an admin typing a value that is about to be rejected. Read from the loaded
-            // settings, not the draft, because the draft is a local copy of editable fields.
-            const businessDayScheduleLocked = !!posSettings?.businessDayScheduleLocked;
-            const businessDayScheduleLockCount = posSettings?.businessDayScheduleLockingSessionCount ?? 0;
-            const businessDayScheduleLockReason = posSettings?.businessDayScheduleLockReason
-              || 'Business Day timing cannot be changed while a POS session is open or undergoing closure. Close all active sessions before changing the Business Day schedule.';
-
-            // Cash drawer trigger config — MANUAL_OPEN is always on (explicit action).
-            const drawerTriggerKeys = String(d.cashDrawerTriggers || '').split(',').map(t => t.trim()).filter(Boolean);
-            const hasTrigger = (key) => drawerTriggerKeys.includes(key);
-            const toggleTrigger = (key) => {
-              const next = hasTrigger(key)
-                ? drawerTriggerKeys.filter(t => t !== key)
-                : [...drawerTriggerKeys, key];
-              patch({ cashDrawerTriggers: next.join(',') });
-            };
-            const cartFieldToggles = [
-              ['cartShowBarcode', 'Barcode'],
-              ['cartShowProductCode', 'Product Code'],
-              ['cartShowBatchNumber', 'Batch Number'],
-              ['cartShowSerialNumber', 'Serial Number'],
-              ['cartShowExpiryDate', 'Expiry Date'],
-            ];
-            // Group heading for the Behavior tab — the same h2/caption pair the Devices and
-            // Terminals tabs open with, so the tab gains structure without a new visual style.
-            const behaviorGroupHeading = (title, desc) => (
-              <div className="pt-2">
-                <h2 className="text-base font-bold text-[#1E293B]">{title}</h2>
-                <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
-              </div>
-            );
-            const drawerTriggers = [
-              ['CASH_PAYMENT', 'Successful Cash Payment Completion'],
-              ['RECEIPT_PRINT', 'Receipt Printing'],
-              ['CHANGE_RETURN', 'Change Return Transaction'],
-              ['CASH_SETTLEMENT', 'Cash Settlement Selection'],
-              ['CASH_DROP', 'Cash Drop'],
-              ['CASH_OUT', 'Cash Out'],
-              ['MANUAL_OPEN', 'Manual Supervisor Open'],
-            ];
-            return (
-            <div className="space-y-6">
-
-              {/* The tab is grouped by what a setting decides, not by which screen it touches:
-                  Sale Behavior (what the POS does), Supervisor Credential (how an approval is
-                  authenticated), Approval Policies (which operations need one) and Business Day.
-                  Grouping only — every control below edits the same draft keys it always did. */}
-              {behaviorGroupHeading('Sale Behavior', 'What the POS does while a sale is being rung up.')}
-              {/* Product Entry Mode */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><ShoppingCart className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Product Entry Mode
-                  <span className="px-2 py-0.5 rounded-full bg-[#FFF8E7] border border-[#FDE6A9] text-[10px] font-bold uppercase tracking-wide text-[#b8920e]">
-                    Compact layout only
-                  </span>
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">When a product is selected, either add it directly to the invoice or open the Product Entry dialog before adding.</p>
-                {/* The Item Entry dialog belongs to the Compact (Trade POS) layout; the Classic and
-                    Cart Focus layouts have their own inline qty/price/discount controls and stay on
-                    Direct Add whatever is chosen here. Enforced once, in useProductEntry. */}
-                <p className="text-[11px] text-gray-500 mb-4 -mt-2">
-                  Applies to the <span className="font-bold text-[#1E293B]">Compact</span> screen template only.
-                  Classic and Cart Focus always use Direct Add.
-                </p>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {[
-                    ['DIRECT_ADD', 'Direct Add', 'Instantly adds 1 qty to the cart. Quickest workflow.'],
-                    ['OPEN_ENTRY_DIALOG', 'Open Entry Dialog', 'Opens a dialog to specify qty, price, and discount before adding.'],
-                  ].map(([val, label, desc]) => (
-                    <button key={val} type="button" onClick={() => patch({ productEntryMode: val })}
-                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.productEntryMode === val ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 hover:border-[#F5C742]/40'}`}>
-                      <p className={`text-sm font-bold ${d.productEntryMode === val ? 'text-[#1E293B]' : 'text-gray-700'}`}>{label}</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
-                      {d.productEntryMode === val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Credit Voucher Expiry (§9–§14) — a financial policy, so it lives on the
-                  admin-only Behavior tab rather than being chosen per return at the till.
-                  The backend re-validates and resolves the final expiry date regardless of
-                  what is chosen here (§15); this only records the policy. */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Gift className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Credit Voucher Expiry
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">How long store credit issued by a Sales Return stays valid. Applies to vouchers issued from now on — vouchers already issued keep the expiry date printed on them.</p>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {[
-                    ['', 'System Default', 'Uses the configured default expiry period (currently 12 months).'],
-                    ['AUTO', 'Automatic', 'Expires a fixed number of months after each voucher is issued.'],
-                    ['MANUAL', 'Manual Date', 'Every voucher expires on one fixed calendar date.'],
-                  ].map(([val, label, desc]) => (
-                    <button key={val || 'DEFAULT'} type="button" onClick={() => patch({ creditVoucherExpiryMode: val })}
-                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.creditVoucherExpiryMode === val ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 hover:border-[#F5C742]/40'}`}>
-                      <p className={`text-sm font-bold ${d.creditVoucherExpiryMode === val ? 'text-[#1E293B]' : 'text-gray-700'}`}>{label}</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
-                      {d.creditVoucherExpiryMode === val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
-                    </button>
-                  ))}
-                </div>
-
-                {d.creditVoucherExpiryMode === 'AUTO' && (
-                  <div className="mt-4 flex items-center gap-3 flex-wrap">
-                    <label className="text-xs font-bold text-[#1E293B]">Valid for</label>
-                    <input type="number" min={0} max={600}
-                      value={d.creditVoucherExpiryMonths ?? ''}
-                      onChange={(e) => patch({ creditVoucherExpiryMonths: e.target.value === '' ? '' : Number(e.target.value) })}
-                      className="w-24 px-3 py-2 rounded-lg border-2 border-gray-200 text-sm focus:border-[#F5C742] outline-none" />
-                    <span className="text-xs text-gray-500">months from the issue date</span>
-                    <span className="text-[11px] text-gray-400 w-full">
-                      Enter 0 for vouchers that never expire — some jurisdictions require this.
-                    </span>
-                  </div>
-                )}
-
-                {d.creditVoucherExpiryMode === 'MANUAL' && (
-                  <div className="mt-4 flex items-center gap-3 flex-wrap">
-                    <label className="text-xs font-bold text-[#1E293B]">All vouchers expire on</label>
-                    <input type="date"
-                      value={d.creditVoucherExpiryDate || ''}
-                      onChange={(e) => patch({ creditVoucherExpiryDate: e.target.value })}
-                      className="px-3 py-2 rounded-lg border-2 border-gray-200 text-sm focus:border-[#F5C742] outline-none" />
-                    <span className="text-[11px] text-gray-400 w-full flex items-start gap-1.5">
-                      <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0 text-[#b8920e]" />
-                      Must be a future date. Once it passes, new vouchers fall back to the default
-                      period until this date is updated — so review it before it lapses.
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* Void behavior */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><XCircle className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Removal Behavior
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">Decide what happens to a line when the cashier removes it.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {[
-                    ['VOID','Void (recommended)','Mark in red + strike-through, keep on receipt, audit log & reports.'],
-                    ['DELETE','Delete','Remove the line entirely. Not recorded.'],
-                  ].map(([val,label,desc])=>(
-                    <button key={val} type="button" onClick={()=>patch({ voidMode: val })}
-                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.voidMode===val?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 hover:border-[#F5C742]/40'}`}>
-                      <p className={`text-sm font-bold ${d.voidMode===val?'text-[#1E293B]':'text-gray-700'}`}>{label}</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
-                      {d.voidMode===val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Delivery Workflow — when a delivery order becomes a sale. Both options send the
-                  goods out and end at Delivery Settlement (settle by pay mode, or return); they
-                  differ only in whether the order is a sale from dispatch or a Pro-forma Invoice
-                  until it is settled. The backend reads it per branch at dispatch time. */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Truck className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Delivery Workflow
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">Configure how delivery orders are processed and settled in POS Sales.</p>
-                <div className="grid grid-cols-1 gap-3">
-                  {[
-                    {
-                      val: 'DEFAULT_SETTLEMENT',
-                      label: 'Default Settlement',
-                      Icon: CheckCircle,
-                      desc: <>Delivery orders are settled <b>directly</b> as delivery sales. When the customer pays the delivery person, the cashier settles it in Delivery Settlement — the sale is recorded in sales reports and the sales list from the moment the order goes out.</>,
-                      steps: ['Process Delivery → Out for Delivery', 'Collect Payment → Settle in Delivery Settlement', 'Posted to Sales Reports at dispatch'],
-                    },
-                    {
-                      val: 'PI_FLOW',
-                      label: 'PI Flow (Pro-forma Invoice)',
-                      Icon: FileText,
-                      desc: <>When an order is processed for out-delivery, a <b>Pro-forma Invoice (PI)</b> is printed and saved as a <b>Draft</b> in the Sales Invoice list. The sale is <i>not yet</i> posted to sales reports. Once the delivery is settled (by pay mode or marked as return), the PI is converted to the final sales invoice and reflected in the sales reports and sales list.</>,
-                      steps: ['Process Delivery → Creates PI Draft', 'PI visible in Sales Invoices (Draft)', 'Settle → Converts PI to Invoice', 'Reflects in Sales Reports on Settlement'],
-                    },
-                  ].map(({ val, label, Icon, desc, steps }) => {
-                    const active = d.deliveryWorkflowMode === val;
-                    return (
-                      <button key={val} type="button" onClick={() => patch({ deliveryWorkflowMode: val })}
-                        className={`p-4 rounded-xl border-2 text-left transition-all flex gap-3 ${active ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 hover:border-[#F5C742]/40'}`}>
-                        <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${active ? 'bg-[#F5C742]/30' : 'bg-gray-100'}`}>
-                          <Icon className={`h-4 w-4 ${active ? 'text-[#b8920e]' : 'text-gray-400'}`} />
-                        </div>
-                        <div className="min-w-0">
-                          <p className={`text-sm font-bold flex items-center gap-2 ${active ? 'text-[#1E293B]' : 'text-gray-700'}`}>
-                            {label}
-                            {active && <span className="px-2 py-0.5 rounded-full bg-[#F5C742] text-[10px] font-bold text-[#1E293B]">Active</span>}
-                          </p>
-                          <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">{desc}</p>
-                          <div className="flex flex-wrap gap-1.5 mt-2">
-                            {steps.map(step => (
-                              <span key={step} className="px-2 py-0.5 rounded-md bg-gray-50 border border-gray-200 text-[10px] text-gray-500">{step}</span>
-                            ))}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="mt-3 p-3 rounded-xl bg-[#FFF8E7] border border-[#FDE6A9]">
-                  {d.deliveryWorkflowMode === 'PI_FLOW' ? (
-                    <>
-                      <p className="text-[11px] font-bold text-[#b8920e]">PI Flow is active</p>
-                      <p className="text-[11px] text-gray-600 mt-0.5">
-                        "Process Delivery" prints a Pro-forma Invoice and saves a Draft in Customers &amp; Sales → Sales Invoices. Its stock is held while the
-                        goods are out. Settling the delivery (by pay mode or return) converts it to the final invoice, dated the day it is settled, and it
-                        then appears in the sales reports and sales list. Orders already out for delivery keep the workflow they left under.
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-[11px] font-bold text-[#b8920e]">Default Settlement is active</p>
-                      <p className="text-[11px] text-gray-600 mt-0.5">
-                        Delivery orders are posted as sales when they go out for delivery. Delivery Settlement collects the payment (or returns the goods);
-                        the sale is already in the sales reports and sales list.
-                      </p>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Delivery return — what happens to the delivery charge when goods come back.
-                  Lives here rather than in the return dialog because it is a commercial
-                  decision the branch makes once, not a choice the cashier re-argues at the
-                  door of every refused delivery. */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Truck className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Delivery Return
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">When a customer refuses a delivery and the goods come back, the items are always credited. Decide what happens to the delivery charge.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {[
-                    ['WAIVE','Waive the charge','Cancel the delivery charge with the goods. The order owes nothing and leaves the delivery list.'],
-                    ['RETAIN','Keep it payable','The trip was made, so the charge stands. The order stays in the list as a small balance to collect.'],
-                    ['ASK','Ask the cashier','Show a waive toggle on the return dialog, defaulting to waived.'],
-                  ].map(([val,label,desc])=>(
-                    <button key={val} type="button" onClick={()=>patch({ deliveryReturnChargePolicy: val })}
-                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.deliveryReturnChargePolicy===val?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 hover:border-[#F5C742]/40'}`}>
-                      <p className={`text-sm font-bold ${d.deliveryReturnChargePolicy===val?'text-[#1E293B]':'text-gray-700'}`}>{label}</p>
-                      <p className="text-[10px] text-gray-400 mt-1">{desc}</p>
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[10px] text-gray-400 mt-3">A partial return never waives the charge: the customer kept something, so the trip was made for goods they still have.</p>
-              </div>
-
-              {/* Cart display */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><ShoppingCart className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Cart Display
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">Choose how much detail each cart line shows the cashier.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                  {[
-                    ['MINIMAL','Minimal','Item name, qty & price only. Fastest, cleanest cart.'],
-                    ['DETAILED','Detailed','Show extra item identifiers per line (configured below).'],
-                  ].map(([val,label,desc])=>(
-                    <button key={val} type="button" onClick={()=>patch({ cartViewMode: val })}
-                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.cartViewMode===val?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 hover:border-[#F5C742]/40'}`}>
-                      <p className={`text-sm font-bold ${d.cartViewMode===val?'text-[#1E293B]':'text-gray-700'}`}>{label}</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
-                      {d.cartViewMode===val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
-                    </button>
-                  ))}
-                </div>
-                <div className={`transition-opacity ${d.cartViewMode==='DETAILED' ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-                  <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Fields to display per line</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {cartFieldToggles.map(([key,label])=>(
-                      <div key={key} className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg">
-                        <span className="text-sm text-[#1E293B]">{label}</span>
-                        <Switch checked={!!d[key]} onCheckedChange={v=>patch({ [key]: v })} />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Cash drawer control */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Wallet className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Cash Drawer Control
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">The drawer opens only for the events you enable here.</p>
-                <div className="grid grid-cols-1 gap-2">
-                  {drawerTriggers.map(([key,label])=>{
-                    const locked = key === 'MANUAL_OPEN'; // always available — explicit action
-                    return (
-                      <div key={key} className="flex items-center justify-between py-2.5 px-3 bg-gray-50 rounded-lg">
-                        <span className="text-sm text-[#1E293B]">{label}{locked && <span className="ml-2 text-[10px] text-gray-400">(always on)</span>}</span>
-                        <Switch checked={locked || hasTrigger(key)} disabled={locked} onCheckedChange={()=>toggleTrigger(key)} />
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {behaviorGroupHeading('Supervisor Credential', 'How a supervisor authenticates when a POS operation asks for approval.')}
-              {/* Supervisor Credential — shared by every approval prompt at the till (the
-                  policies below, Delivery Settlement, Business Day Close), so it is always shown
-                  rather than only while Item Removal approval is on. Same draft keys as before:
-                  supervisorApprovalMode and the write-only supervisorPin. */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Lock className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Approval Method &amp; PIN
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">Used by every policy in Approval Policies below. Set it up before turning any policy on.</p>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-1">
-                  <div>
-                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Approval Method</label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {[['PIN','PIN'],['PASSWORD','Password']].map(([val,lbl])=>(
-                        <button key={val} type="button" onClick={()=>patch({ supervisorApprovalMode: val })}
-                          className={`py-2 rounded-lg text-xs font-bold border-2 transition-all ${d.supervisorApprovalMode===val?'border-[#F5C742] bg-[#F5C742]/10 text-[#1E293B]':'border-gray-200 text-gray-500 hover:border-[#F5C742]/40'}`}>
-                          {lbl}
-                        </button>
-                      ))}
-                    </div>
-                    <p className="text-[10px] text-gray-400 mt-1.5">
-                      {d.supervisorApprovalMode === 'PASSWORD'
-                        ? 'The supervisor signs in with their own email/username and password. The account must hold a supervisor role.'
-                        : 'The supervisor enters the branch supervisor PIN set here.'}
-                    </p>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 flex items-center gap-1.5">
-                      Branch Supervisor PIN
-                      {posSettings?.supervisorPinSet ? (
-                        <span className="normal-case font-semibold text-green-600 flex items-center gap-0.5"><CheckCircle className="h-3 w-3" />Configured</span>
-                      ) : (
-                        <span className="normal-case font-semibold text-gray-400">Not set</span>
-                      )}
-                    </label>
-                    <input
-                      type="password"
-                      value={d.supervisorPin}
-                      onChange={e=>patch({ supervisorPin: e.target.value })}
-                      maxLength={d.supervisorApprovalMode==='PIN' ? 8 : 64}
-                      placeholder={posSettings?.supervisorPinSet ? 'Leave blank to keep current' : 'e.g. 1234'}
-                      className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
-                    />
-                    <p className="text-[10px] text-gray-400 mt-1.5">
-                      {d.supervisorApprovalMode === 'PASSWORD'
-                        ? 'Not asked for by Password approvals. Still used for session takeover and cross-branch session transfer.'
-                        : 'One PIN shared by all supervisors at this branch.'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {behaviorGroupHeading('Approval Policies', 'Controls which POS operations require supervisor approval or supervisor-level access. Each policy is set independently.')}
-              {/* Item Removal approval policy. The credential it asks for lives in Supervisor
-                  Credential above; how the line is removed (Void/Delete) is Removal Behavior. */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Shield className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Item Removal
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">Whether removing a line from the cart needs supervisor approval. Void or Delete is chosen in Removal Behavior.</p>
-
-                <div className="flex items-center justify-between py-3 px-4 bg-gray-50 rounded-xl">
-                  <div>
-                    <p className="text-sm font-medium text-[#1E293B]">Require Supervisor Authorization for Item Removal</p>
-                    <p className="text-[10px] text-gray-400">When on, a line's Void / Remove button asks for supervisor approval first, as does clearing a layaway being converted. Checked at the till; lowering a line's quantity is not gated.</p>
-                  </div>
-                  <Switch checked={d.requireSupervisorForVoid} onCheckedChange={v=>patch({ requireSupervisorForVoid: v })} />
-                </div>
-              </div>
-
-              {/* Price Override */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Wallet className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Price Override
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">Whether selling below an item's minimum price needs supervisor approval.</p>
-
-                <div className="flex items-center justify-between py-3 px-4 bg-gray-50 rounded-xl">
-                  <div>
-                    <p className="text-sm font-medium text-[#1E293B]">Require Supervisor Approval for Price Override</p>
-                    <p className="text-[10px] text-gray-400">When on, adding a line or changing its price or discount to below the minimum price (or cost, when no minimum is set) asks for approval, and checkout re-checks it on the server. When off, below-minimum prices are not checked.</p>
-                  </div>
-                  <Switch checked={d.requirePriceOverrideApproval} onCheckedChange={v=>patch({ requirePriceOverrideApproval: v })} />
-                </div>
-              </div>
-
-              {/* Action Button Access — who may use the right-hand Actions panel (Classic and
-                  Cart Focus) and the Functions slide-over (Compact). One branch-wide rule for all
-                  three screen templates, so it cannot be weakened by switching layouts. The POS
-                  enforces it in POS/lib/posFunctionAccess.js. */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Shield className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Action Button Access
-                  <span className="px-2 py-0.5 rounded-full bg-[#FFF8E7] border border-[#FDE6A9] text-[10px] font-bold uppercase tracking-wide text-[#b8920e]">
-                    All screen templates
-                  </span>
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">
-                  Who may use the buttons in the POS Actions / Functions panel — Returns, Layaways, Coupons,
-                  Cash Drawer, Reprint, Delivery Settlement and the rest. Applied to that panel at the till.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {[
-                    ['ALL_USERS','All Users','Any signed-in user can use every action button.'],
-                    ['SUPERVISOR_PASSWORD','Supervisor Approval','Any signed-in user can use them once a supervisor approves each use with ' + (d.supervisorApprovalMode === 'PASSWORD' ? 'their own login' : 'the branch supervisor PIN') + '. Users with a supervisor role are not asked.'],
-                    ['SUPERVISOR_ONLY','Supervisors Only','The signed-in user must hold a supervisor role. For everyone else the buttons are locked, with no approval prompt.'],
-                  ].map(([val,label,desc])=>(
-                    <button key={val} type="button" onClick={()=>patch({ posFunctionAccessMode: val })}
-                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.posFunctionAccessMode===val?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 hover:border-[#F5C742]/40'}`}>
-                      <p className={`text-sm font-bold ${d.posFunctionAccessMode===val?'text-[#1E293B]':'text-gray-700'}`}>{label}</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
-                      {d.posFunctionAccessMode===val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
-                    </button>
-                  ))}
-                </div>
-                {d.posFunctionAccessMode === 'SUPERVISOR_PASSWORD' && !posSettings?.supervisorPinSet && d.supervisorApprovalMode !== 'PASSWORD' && !d.supervisorPin && (
-                  <p className="text-[11px] text-red-500 mt-3">
-                    No supervisor PIN is set for this branch — set one in Supervisor Credential above, or cashiers will not be able to get these actions approved.
-                  </p>
-                )}
-                <p className="text-[10px] text-gray-400 mt-3">
-                  Salesperson verification and Lock POS are always available to the cashier: gating them
-                  would stop the cashier selling, or stop them securing the till.
-                </p>
-              </div>
-
-              {/* Business Day Closing */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Lock className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Business Day Closing
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">Control who is allowed to perform the Business Day (Z Report) closing.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-1">
-                  {[
-                    [false, 'All Users', 'Any authenticated POS user may perform Business Day Close.'],
-                    [true, 'Supervisor Privilege Required', 'Business Day Close must be performed by a user signed in with a supervisor role.'],
-                  ].map(([val, label, desc]) => (
-                    <button key={String(val)} type="button" onClick={() => patch({ requireSupervisorForDayClose: val })}
-                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.requireSupervisorForDayClose === val ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 hover:border-[#F5C742]/40'}`}>
-                      <p className={`text-sm font-bold ${d.requireSupervisorForDayClose === val ? 'text-[#1E293B]' : 'text-gray-700'}`}>{label}</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
-                      {d.requireSupervisorForDayClose === val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {behaviorGroupHeading('Business Day', 'How POS sessions are grouped into Trading Dates.')}
-              {/* Business Day */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Clock className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Business Day
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">
-                  Business Day controls how POS sessions are grouped for Trading Date, session grouping,
-                  Pending Day Close, Day Close, X Reports and Z Reports.
-                </p>
-
-                {/* The schedule is frozen while sessions are trading against it: an already-open
-                    session's Trading Date is immutable, so re-timing the window underneath it
-                    would retroactively strand it on a previous Business Day. The extension is
-                    deliberately still editable — it cannot move any Trading Date. */}
-                {businessDayScheduleLocked && (
-                  <div className="rounded-xl border border-[#FDE6A9] bg-[#FFF8E7] px-4 py-3 mb-3">
-                    <p className="text-[11px] font-semibold text-[#b8920e] mb-1">
-                      Business Day schedule locked
-                      {businessDayScheduleLockCount > 0 && ` — ${businessDayScheduleLockCount} active session${businessDayScheduleLockCount === 1 ? '' : 's'}`}
-                    </p>
-                    <p className="text-[11px] text-[#1E293B]">{businessDayScheduleLockReason}</p>
-                    <p className="text-[11px] text-gray-500 mt-1">
-                      Extension After End Time can still be changed — it shifts only the closing time, never a session's Trading Date.
-                    </p>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between py-3 px-4 bg-gray-50 rounded-xl mb-3">
-                  <div>
-                    <p className="text-sm font-medium text-[#1E293B]">Enable Business Day Window</p>
-                    <p className="text-[10px] text-gray-400">Define a start/end time window for the Business Day instead of following the calendar day.</p>
-                  </div>
-                  <Switch
-                    checked={d.operatingHoursEnabled}
-                    disabled={businessDayScheduleLocked}
-                    onCheckedChange={v=>patch({ operatingHoursEnabled: v })}
-                  />
-                </div>
-
-                {!d.operatingHoursEnabled && (
-                  <p className="text-xs text-gray-400 italic px-1">Business Day follows the calendar day.</p>
-                )}
-
-                {d.operatingHoursEnabled && (
-                  <>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-                      <div>
-                        <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Business Day Start Time</label>
-                        <input
-                          type="time"
-                          value={(d.operatingStartTime || '').slice(0, 5)}
-                          disabled={businessDayScheduleLocked}
-                          title={businessDayScheduleLocked ? businessDayScheduleLockReason : undefined}
-                          onChange={e=>patch({ operatingStartTime: e.target.value ? `${e.target.value}:00` : '' })}
-                          className={`w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742] ${businessDayScheduleLocked ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : ''}`}
-                        />
-                        <p className="text-[10px] text-gray-400 mt-1">The Business Day begins here.</p>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Scheduled End Time</label>
-                        <input
-                          type="time"
-                          value={(d.operatingEndTime || '').slice(0, 5)}
-                          disabled={businessDayScheduleLocked}
-                          title={businessDayScheduleLocked ? businessDayScheduleLockReason : undefined}
-                          onChange={e=>patch({ operatingEndTime: e.target.value ? `${e.target.value}:00` : '' })}
-                          className={`w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742] ${businessDayScheduleLocked ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : ''}`}
-                        />
-                        {/* Deliberately worded to correct the most common misreading:
-                            this time does NOT close the Business Day. */}
-                        <p className="text-[10px] text-gray-400 mt-1">Normal operating hours end here. This does <span className="font-semibold">not</span> close the Business Day.</p>
-                      </div>
-                    </div>
-
-                    <div className="mb-3">
-                      <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Extension After End Time</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          min="0"
-                          step="15"
-                          value={Number.isFinite(d.businessDayExtensionMinutes) ? d.businessDayExtensionMinutes : 0}
-                          onChange={e=>patch({ businessDayExtensionMinutes: Math.max(0, parseInt(e.target.value || '0', 10)) })}
-                          className="w-28 border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
-                        />
-                        <span className="text-xs text-gray-500">minutes</span>
-                        <div className="flex gap-1 ml-2">
-                          {[0, 30, 60, 120, 180].map(preset => (
-                            <button
-                              key={preset}
-                              type="button"
-                              onClick={()=>patch({ businessDayExtensionMinutes: preset })}
-                              className={`text-[10px] px-2 py-1 rounded border transition-colors ${
-                                (d.businessDayExtensionMinutes || 0) === preset
-                                  ? 'bg-[#FFF8E7] border-[#FDE6A9] text-[#b8920e] font-semibold'
-                                  : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
-                              }`}
-                            >
-                              {preset === 0 ? 'None' : preset < 60 ? `${preset}m` : `${preset / 60}h`}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <p className="text-[11px] text-gray-400 mt-2">
-                        After the scheduled end time, POS remains in an extension period for the configured duration.
-                        After the extension expires, the Business Day is closed and new sessions are blocked until the
-                        next scheduled start time.
-                      </p>
-                    </div>
-
-                    {/* Live restatement of the three phases from the values actually entered —
-                        far more reliable than expecting the operator to derive closure time
-                        from two fields and a duration. */}
-                    {businessDayPhasePreview(d) && (
-                      <div className="rounded-xl border border-[#FDE6A9] bg-[#FFF8E7] px-4 py-3 mb-3">
-                        <p className="text-[10px] font-semibold text-[#b8920e] uppercase tracking-wide mb-1.5">With these settings</p>
-                        <div className="space-y-1 text-[11px] text-[#1E293B]">
-                          <div><span className="font-semibold">{businessDayPhasePreview(d).start} → {businessDayPhasePreview(d).end}</span> — Business Day active</div>
-                          {businessDayPhasePreview(d).extensionMinutes > 0 ? (
-                            <div><span className="font-semibold">{businessDayPhasePreview(d).end} → {businessDayPhasePreview(d).closure}</span> — extension period (trading continues)</div>
-                          ) : (
-                            <div className="text-gray-500 italic">No extension — the Business Day closes at {businessDayPhasePreview(d).end}.</div>
-                          )}
-                          <div><span className="font-semibold">{businessDayPhasePreview(d).closure}</span> — Business Day closes, new sessions blocked</div>
-                          <div><span className="font-semibold">{businessDayPhasePreview(d).start}</span> next day — next Business Day starts</div>
-                        </div>
-                      </div>
-                    )}
-
-                    <p className="text-[11px] text-gray-400 px-1">
-                      If the Scheduled End Time is earlier than the Start Time, the Business Day automatically continues past midnight into the next calendar day.
-                    </p>
-                  </>
-                )}
-              </div>
-
-            </div>
-            );
-          })()}
+          {consoleTab==='behavior' && canManageBehaviorSettings && (
+            <PosBehaviorSettings
+              posSettings={posSettings}
+              settingsDraft={settingsDraft}
+              setSettingsDraft={setSettingsDraft}
+              settingsSaving={settingsSaving}
+              handleSaveSettings={handleSaveSettings}
+              beginEditSettings={beginEditSettings}
+            />
+          )}
 
           {/* ══ DEVICES ══ */}
           {consoleTab==='devices' && (
             <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-base font-bold text-[#1E293B]">Connected Devices</h2>
-                  <p className="text-xs text-gray-400 mt-0.5">Manage printers, scanners and cash drawers for this branch and terminal.</p>
-                </div>
-                <button onClick={()=>openAddDevice('RECEIPT_PRINTER')}
-                  className="flex items-center gap-2 bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold text-sm px-4 py-2.5 rounded-xl transition-colors">
-                  <Plus className="h-4 w-4" />Add Device
-                </button>
-              </div>
+              {(() => {
+                const printerList = Array.isArray(printerConfigs) ? printerConfigs : [];
+                const loading = printersLoading || devicesLoading;
+                const currentBranchName = currentTerminal?.branchName || '';
+                const configuredSystemNames = new Set(printerList.map(p => (p.systemPrinterName || '').toLowerCase()).filter(Boolean));
+                const onlineCount = printerList.filter(p => p.status === 'ACTIVE' && p.runtimeStatus === 'ONLINE').length;
+                const problemCount = printerList.filter(p => p.status === 'ACTIVE' && p.runtimeStatus !== 'ONLINE').length;
 
-              <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-bold text-[#1E293B]">Local Print Agent</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Detects USB / Windows-queue printers installed on this specific PC — it only ever sees printers plugged into this workstation, not other devices. For a printer with a network/LAN port, add it below as "Network / IP" instead — that works from any device (phone, tablet, other PCs) with no agent needed.</p>
-                  {agentError && <p className="text-xs text-red-500 mt-2">{agentError}</p>}
-                  <PrintAgentPairing onPaired={refreshAgentPrinters} label={currentTerminal?.terminalId || null} />
+                const scopeLine = (d) => {
+                  const parts = [];
+                  if (d.branchName && currentBranchName && d.branchName !== currentBranchName) parts.push(d.branchName);
+                  parts.push(d.terminalId ? (d.terminalName || d.terminalId) : 'All terminals (branch default)');
+                  if (d.counterName) parts.push(d.counterName);
+                  return parts.join(' · ');
+                };
+                const isThisTerminal = (d) => !!d.terminalId && d.terminalId === currentTerminal?.terminalId;
 
-                </div>
-                <button
-                  type="button"
-                  onClick={refreshAgentPrinters}
-                  disabled={agentLoading}
-                  className="shrink-0 flex items-center gap-2 border border-gray-200 text-gray-700 text-sm font-semibold px-3 py-2 rounded-xl hover:bg-gray-50 disabled:opacity-60"
-                >
-                  <RefreshCw className={`h-4 w-4 ${agentLoading ? 'animate-spin' : ''}`} />
-                  {agentLoading ? 'Checking…' : 'Load Workstation Printers'}
-                </button>
-              </div>
-
-              {agentPrinters.length > 0 && (
-                <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Detected On This Workstation</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {agentPrinters.map((printer) => (
-                      <div key={`${printer.name}-${printer.portName || ''}`} className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-sm font-semibold text-[#1E293B]">{printer.name || 'Unknown printer'}</p>
-                          <div className="flex items-center gap-1 shrink-0">
-                            {printer.isDefault && <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#F5C742]/20 text-[#b8920e]">Default</span>}
-                            {printer.status && <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{printer.status}</span>}
-                          </div>
-                        </div>
-                        <p className="text-xs text-gray-500">{printer.driverName || 'Driver unknown'}{printer.portName ? ` · ${printer.portName}` : ''}</p>
-                        {printer.agentProtocol !== undefined && (
-                          <p className={`text-[11px] mt-1 ${printer.agentProtocol === 'escpos' || printer.agentProtocol === 'zpl' ? 'text-gray-500' : 'text-amber-700'}`}>
-                            {printer.agentProtocol === 'escpos' && 'Print agent: receipt printer (ESC/POS)'}
-                            {printer.agentProtocol === 'zpl' && 'Print agent: label printer (ZPL)'}
-                            {printer.agentProtocol === 'conflict' && 'Print agent: conflicting setup on this PC — jobs are refused'}
-                            {printer.agentProtocol == null && 'Not set up in the print agent on this PC — choose it in the agent\'s tray menu → Printers'}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-3">
-                {(Array.isArray(printerConfigs) ? printerConfigs : []).map(printer=>{
-                  const printerIcon = {
-                    RECEIPT_PRINTER:<Printer className="h-5 w-5" />,
-                    KITCHEN_PRINTER:<Printer className="h-5 w-5" />,
-                    LABEL_PRINTER:<Package className="h-5 w-5" />,
-                  };
-                  const runtimeOnline = printer.runtimeStatus === 'ONLINE';
+                const healthPill = (status, runtimeStatus, hasRuntime) => {
+                  let tone = 'bg-gray-100 text-gray-600', dot = 'bg-gray-400', label = status || 'Unknown';
+                  if (status === 'ACTIVE' && hasRuntime) {
+                    if (runtimeStatus === 'ONLINE') { tone = 'bg-green-50 text-green-700'; dot = 'bg-green-500'; label = 'Online'; }
+                    else { tone = 'bg-red-50 text-red-600'; dot = 'bg-red-500'; label = runtimeStatus ? runtimeStatus.charAt(0) + runtimeStatus.slice(1).toLowerCase() : 'Not tested'; }
+                  } else if (status === 'ACTIVE') {
+                    tone = 'bg-green-50 text-green-700'; dot = 'bg-green-500'; label = 'Active';
+                  } else if (status) {
+                    label = status.charAt(0) + status.slice(1).toLowerCase();
+                  }
                   return (
-                    <div key={`cfg-${printer.id}`} className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm flex items-center gap-4">
-                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${runtimeOnline ? 'bg-[#F5C742]/15 text-[#b8920e]' : 'bg-gray-100 text-gray-400'}`}>
-                        {printerIcon[printer.deviceType]||<Printer className="h-5 w-5" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-bold text-[#1E293B]">{printer.deviceName}</p>
-                          {printer.defaultPrinter && <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Default</span>}
-                        </div>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                          {printerTypeLabel(printer.deviceType)} · {connectionLabel(printer.connectionType)}
-                          {printer.systemPrinterName ? ` · ${printer.systemPrinterName}` : ''}
-                        </p>
-                        <p className="text-xs text-gray-400 mt-1">
-                          Branch: {printer.branchName || currentTerminal?.branchName || 'Current branch'}
-                          {printer.terminalId ? ` · Terminal: ${printer.terminalName || printer.terminalId}` : ' · Branch default'}
-                          {printer.counterName ? ` · Counter: ${printer.counterName}` : ''}
-                        </p>
-                        {printer.lastTestResult && <p className="text-xs text-gray-500 mt-1 truncate">{printer.lastTestResult}</p>}
-                        {formatPrinterTimestamp(printer.lastTestedAt) && (
-                          <p className="text-xs text-gray-400 mt-1">Last tested: {formatPrinterTimestamp(printer.lastTestedAt)}</p>
-                        )}
-                        {printerTestDebug[printer.id] && (
-                          <details className="mt-2">
-                            <summary className="text-[11px] font-semibold text-gray-500 cursor-pointer select-none hover:text-gray-700">
-                              {printerTestDebug[printer.id].ok ? '✓' : '✗'} Test send details
-                            </summary>
-                            <div className="mt-1.5 rounded-lg bg-gray-50 border border-gray-200 p-2.5 space-y-1 font-mono text-[11px] text-gray-600 break-all">
-                              <div><span className="text-gray-400">endpoint:</span> {printerTestDebug[printer.id].endpoint}</div>
-                              <div><span className="text-gray-400">payload:</span> {printerTestDebug[printer.id].payloadKind} · {printerTestDebug[printer.id].payloadBytes} bytes</div>
-                              <div>
-                                <span className="text-gray-400">result:</span>{' '}
-                                <span className={printerTestDebug[printer.id].ok ? 'text-green-600' : 'text-red-600'}>
-                                  {printerTestDebug[printer.id].ok ? 'SUCCESS' : 'FAILED'}
-                                </span>
-                                {' '}({printerTestDebug[printer.id].durationMs} ms)
-                              </div>
-                              <div>
-                                <span className="text-gray-400">{printerTestDebug[printer.id].ok ? 'response:' : 'error:'}</span>{' '}
-                                {printerTestDebug[printer.id].ok
-                                  ? (printerTestDebug[printer.id].response?.message || JSON.stringify(printerTestDebug[printer.id].response) || 'ok')
-                                  : printerTestDebug[printer.id].error}
-                              </div>
-                              {printerTestDebug[printer.id].escPosError && (
-                                <div className="text-amber-600">
-                                  <span className="text-gray-400">escpos rejected:</span> {printerTestDebug[printer.id].escPosError} — printed via text/GDI fallback instead. Install the vendor or Generic/Text-Only driver for full quality.
-                                </div>
-                              )}
-                              <div className="text-gray-400">sent at {printerTestDebug[printer.id].at}</div>
-                            </div>
-                          </details>
-                        )}
-                      </div>
-                      <span className={`text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${printer.status==='ACTIVE' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${printer.status==='ACTIVE' ? 'bg-blue-500' : 'bg-gray-400'}`}/>{printer.status}
-                      </span>
-                      <span className={`text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${runtimeOnline ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${runtimeOnline ? 'bg-green-500' : 'bg-red-500'}`}/>{printer.runtimeStatus || 'UNKNOWN'}
-                      </span>
-                      <button type="button" onClick={()=>editPrinter(printer)} className="text-xs border border-gray-200 text-gray-600 px-3 py-1.5 rounded-lg hover:bg-gray-50 font-semibold transition-colors">Edit</button>
-                      <button type="button" onClick={()=>handlePrinterTest(printer)} disabled={printerBusyId === printer.id || printer.status !== 'ACTIVE'} className="text-xs border border-[#F5C742]/50 text-[#b8920e] px-3 py-1.5 rounded-lg hover:bg-[#F5C742]/10 font-semibold transition-colors disabled:opacity-60">
-                        {printerBusyId === printer.id ? 'Testing…' : 'Test'}
-                      </button>
-                      <button type="button" onClick={()=>handlePrinterDecommission(printer)} className="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-lg hover:bg-red-50 font-semibold transition-colors">
-                        Decommission
-                      </button>
-                    </div>
-                  );
-                })}
-
-                {/* Barcode scanners — registration-only (a HID keyboard-wedge scanner
-                    needs no runtime config; the row exists for Device Manager visibility). */}
-                {scanners.map((scanner) => (
-                  <div key={`scan-${scanner.id}`} className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0 bg-[#F5C742]/15 text-[#b8920e]">
-                      <Search className="h-5 w-5" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-[#1E293B]">{scanner.deviceName}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">Barcode Scanner · {scanner.connectionType === 'BLUETOOTH' ? 'Bluetooth' : 'USB'}</p>
-                      <p className="text-xs text-gray-400 mt-1">
-                        Branch: {scanner.branchName || currentTerminal?.branchName || 'Current branch'}
-                        {scanner.terminalId ? ` · Terminal: ${scanner.terminalId}` : ' · Branch default'}
-                      </p>
-                    </div>
-                    <span className={`text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${scanner.status==='ACTIVE' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${scanner.status==='ACTIVE' ? 'bg-blue-500' : 'bg-gray-400'}`}/>{scanner.status}
+                    <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full inline-flex items-center gap-1.5 whitespace-nowrap ${tone}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />{label}
                     </span>
-                    <button type="button" onClick={()=>decommissionScanner(scanner)} disabled={deviceBusyKey===`scanner-${scanner.id}`} className="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-lg hover:bg-red-50 font-semibold transition-colors disabled:opacity-60">
-                      {deviceBusyKey===`scanner-${scanner.id}` ? 'Removing…' : 'Remove'}
+                  );
+                };
+
+                const btn = 'inline-flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-lg border transition-colors disabled:opacity-50';
+                const trashBtn = 'inline-flex items-center justify-center w-8 h-8 rounded-lg border border-transparent text-gray-400 hover:text-red-600 hover:bg-red-50 hover:border-red-100 transition-colors disabled:opacity-50';
+
+                const sectionHeader = ({ icon, title, count, hint, addType, addLabel }) => (
+                  <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="text-gray-400">{icon}</span>
+                      <p className="text-sm font-bold text-[#1E293B]">{title}</p>
+                      <span className="text-[11px] font-bold text-gray-400 bg-gray-100 rounded-full px-2 py-0.5 tabular-nums">{count}</span>
+                      {hint && <span className="hidden sm:inline text-[11px] text-gray-400 truncate">{hint}</span>}
+                    </div>
+                    <button type="button" onClick={() => openAddDevice(addType)}
+                      className="shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-[#b8920e] hover:text-[#8a6d0a] px-2 py-1 rounded-lg hover:bg-[#F5C742]/10">
+                      <Plus className="h-3.5 w-3.5" />{addLabel}
                     </button>
                   </div>
-                ))}
+                );
 
-                {/* Cash drawers — the kick rides the attached printer's cable. */}
-                {cashDrawers.map((drawer) => {
-                  const attached = (Array.isArray(printerConfigs) ? printerConfigs : []).find((p) => p.id === drawer.attachedPrinterId);
-                  return (
-                    <div key={`drawer-${drawer.id}`} className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0 bg-[#F5C742]/15 text-[#b8920e]">
-                        <Wallet className="h-5 w-5" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-[#1E293B]">{drawer.deviceName}</p>
-                        <p className="text-xs text-gray-500 mt-0.5">Cash Drawer · Kick via {attached?.deviceName || `printer #${drawer.attachedPrinterId}`}</p>
-                        <p className="text-xs text-gray-400 mt-1">
-                          Branch: {drawer.branchName || currentTerminal?.branchName || 'Current branch'}
-                          {drawer.terminalId ? ` · Terminal: ${drawer.terminalId}` : ' · Branch default'}
-                          {drawer.lastKickResult ? ` · Last kick: ${drawer.lastKickResult}` : ''}
+                const emptyRow = ({ text }) => (
+                  <p className="px-5 py-4 text-xs text-gray-400">{text}</p>
+                );
+
+                return (
+                  <>
+                    {/* ── Header ── */}
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h2 className="text-lg font-bold text-[#1E293B] leading-tight">Devices</h2>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Printers, scanners and cash drawers for this branch.
+                          {printerList.length > 0 && (
+                            <> <span className="text-green-600 font-semibold">{onlineCount} printer{onlineCount === 1 ? '' : 's'} online</span>
+                            {problemCount > 0 && <>, <span className="text-red-600 font-semibold">{problemCount} need{problemCount === 1 ? 's' : ''} attention</span></>}.</>
+                          )}
                         </p>
                       </div>
-                      <span className={`text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${drawer.status==='ACTIVE' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${drawer.status==='ACTIVE' ? 'bg-blue-500' : 'bg-gray-400'}`}/>{drawer.status}
-                      </span>
-                      <button type="button" onClick={()=>decommissionDrawer(drawer)} disabled={deviceBusyKey===`drawer-${drawer.id}`} className="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-lg hover:bg-red-50 font-semibold transition-colors disabled:opacity-60">
-                        {deviceBusyKey===`drawer-${drawer.id}` ? 'Removing…' : 'Remove'}
+                      <button onClick={()=>openAddDevice('RECEIPT_PRINTER')}
+                        className="flex items-center gap-2 bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold text-sm px-4 h-10 rounded-xl transition-colors">
+                        <Plus className="h-4 w-4" />Add Device
                       </button>
                     </div>
-                  );
-                })}
 
-                {!printersLoading && !devicesLoading
-                  && (!printerConfigs || printerConfigs.length===0)
-                  && scanners.length===0 && cashDrawers.length===0 && (
-                  <div className="bg-white rounded-2xl border-2 border-dashed border-gray-200 p-12 text-center">
-                    <Printer className="h-10 w-10 text-gray-200 mx-auto mb-3" />
-                    <p className="text-gray-400 font-medium">No devices configured</p>
-                    <p className="text-xs text-gray-300 mt-1">Add a printer, scanner, or cash drawer to get started.</p>
-                  </div>
-                )}
-                {(printersLoading || devicesLoading) && (
-                  <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center text-sm text-gray-500">
-                    Loading devices…
-                  </div>
-                )}
-              </div>
+                    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-5 items-start">
 
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Quick Add</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {[
-                    { value: 'RECEIPT_PRINTER', label: 'Receipt Printer', icon: <Printer className="h-5 w-5" /> },
-                    { value: 'LABEL_PRINTER',   label: 'Label Printer',   icon: <Package className="h-5 w-5" /> },
-                    { value: 'SCANNER',         label: 'Barcode Scanner', icon: <Search className="h-5 w-5" /> },
-                    { value: 'CASH_DRAWER',     label: 'Cash Drawer',     icon: <Wallet className="h-5 w-5" /> },
-                  ].map(({ value, label, icon })=>(
-                    <button key={value} type="button" onClick={()=>openAddDevice(value)}
-                      className="bg-white rounded-2xl border-2 border-dashed border-gray-200 hover:border-[#F5C742]/60 p-4 text-center flex flex-col items-center gap-2 transition-all hover:bg-[#F5C742]/5">
-                      <div className="w-10 h-10 rounded-xl bg-[#F5C742]/10 flex items-center justify-center text-[#b8920e]">
-                        {icon}
+                      {/* ── Configured devices ── */}
+                      <div className="space-y-4 min-w-0">
+                        {loading && (
+                          <div className="bg-white rounded-2xl border border-gray-200 p-6 flex items-center justify-center gap-2 text-sm text-gray-500">
+                            <RefreshCw className="h-4 w-4 animate-spin" /> Loading devices…
+                          </div>
+                        )}
+
+                        {/* Printers */}
+                        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
+                          {sectionHeader({ icon: <Printer className="h-4 w-4" />, title: 'Printers', count: printerList.length, addType: 'RECEIPT_PRINTER', addLabel: 'Add printer' })}
+                          {printerList.length === 0 && !loading ? (
+                            <div className="px-5 py-8 text-center">
+                              <Printer className="h-8 w-8 text-gray-200 mx-auto mb-2" />
+                              <p className="text-sm font-semibold text-gray-500">No printers yet</p>
+                              <p className="text-xs text-gray-400 mt-1">Add a receipt or label printer, or pick one detected on this PC.</p>
+                            </div>
+                          ) : (
+                            <div className="divide-y divide-gray-100">
+                              {printerList.map(printer => {
+                                const runtimeOnline = printer.runtimeStatus === 'ONLINE';
+                                const debug = printerTestDebug[printer.id];
+                                const testedAt = formatPrinterTimestamp(printer.lastTestedAt);
+                                const busy = printerBusyId === printer.id;
+                                return (
+                                  <div key={`cfg-${printer.id}`} className="px-5 py-4">
+                                    <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4">
+                                      <div className="flex items-start gap-3.5 flex-1 min-w-0">
+                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${printer.status === 'ACTIVE' && runtimeOnline ? 'bg-[#F5C742]/15 text-[#b8920e]' : 'bg-gray-100 text-gray-400'}`}>
+                                          {printer.deviceType === 'LABEL_PRINTER' ? <Package className="h-5 w-5" /> : <Printer className="h-5 w-5" />}
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                          <div className="flex items-center gap-2 flex-wrap">
+                                            <p className="text-sm font-bold text-[#1E293B]">{printer.deviceName}</p>
+                                            {printer.defaultPrinter && <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Default</span>}
+                                            {isThisTerminal(printer) && <span className="text-[10px] font-bold uppercase tracking-wider bg-[#F5C742] text-[#1E293B] px-2 py-0.5 rounded-full">This terminal</span>}
+                                          </div>
+                                          <p className="text-xs text-gray-500 mt-0.5 truncate">
+                                            {printerTypeLabel(printer.deviceType)} · {connectionLabel(printer.connectionType)}
+                                            {printer.systemPrinterName ? <> · <span className="text-gray-600">{printer.systemPrinterName}</span></> : ''}
+                                            {printer.connectionType === 'NETWORK_IP' && printer.ipAddress ? <> · <span className="font-mono">{printer.ipAddress}{printer.portNumber ? `:${printer.portNumber}` : ''}</span></> : ''}
+                                          </p>
+                                          <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1"><Monitor className="h-3 w-3 text-gray-300" />{scopeLine(printer)}</p>
+                                          {(printer.lastTestResult || testedAt) && (
+                                            <p className="text-[11px] text-gray-400 mt-1 truncate" title={printer.lastTestResult || ''}>
+                                              <Clock className="inline h-3 w-3 text-gray-300 -mt-0.5 mr-1" />
+                                              {testedAt ? `Tested ${testedAt}` : 'Last test'}
+                                              {printer.lastTestResult ? <> · <span className="text-gray-500">{printer.lastTestResult}</span></> : ''}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      <div className="flex items-center gap-2 shrink-0 pl-[54px] md:pl-0">
+                                        {healthPill(printer.status, printer.runtimeStatus, true)}
+                                        <button type="button" onClick={()=>handlePrinterTest(printer)} disabled={busy || printer.status !== 'ACTIVE'}
+                                          className={`${btn} border-[#F5C742]/60 text-[#8a6d0a] bg-[#FFF8E7] hover:bg-[#F5C742]/20`}>
+                                          <Zap className="h-3.5 w-3.5" />{busy ? 'Testing…' : 'Test'}
+                                        </button>
+                                        <button type="button" onClick={()=>editPrinter(printer)} className={`${btn} border-gray-200 text-gray-600 hover:bg-gray-50`}>
+                                          <Settings className="h-3.5 w-3.5" />Edit
+                                        </button>
+                                        <button type="button" onClick={()=>handlePrinterDecommission(printer)} disabled={busy} title="Decommission printer" aria-label="Decommission printer" className={trashBtn}>
+                                          <Trash2 className="h-4 w-4" />
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {debug && (
+                                      <details className="mt-2 md:ml-[54px]">
+                                        <summary className={`text-[11px] font-semibold cursor-pointer select-none ${debug.ok ? 'text-green-700' : 'text-red-600'}`}>
+                                          {debug.ok ? '✓ Test sent' : '✗ Test failed'}{debug.escPosError ? ' (compatibility mode)' : ''} · details
+                                        </summary>
+                                        <div className="mt-1.5 rounded-lg bg-gray-50 border border-gray-200 p-2.5 space-y-1 font-mono text-[11px] text-gray-600 break-all">
+                                          <div><span className="text-gray-400">endpoint:</span> {debug.endpoint}</div>
+                                          <div><span className="text-gray-400">payload:</span> {debug.payloadKind} · {debug.payloadBytes} bytes</div>
+                                          <div>
+                                            <span className="text-gray-400">result:</span>{' '}
+                                            <span className={debug.ok ? 'text-green-600' : 'text-red-600'}>{debug.ok ? 'SUCCESS' : 'FAILED'}</span>
+                                            {' '}({debug.durationMs} ms)
+                                          </div>
+                                          <div>
+                                            <span className="text-gray-400">{debug.ok ? 'response:' : 'error:'}</span>{' '}
+                                            {debug.ok ? (debug.response?.message || JSON.stringify(debug.response) || 'ok') : debug.error}
+                                          </div>
+                                          {debug.escPosError && (
+                                            <div className="text-amber-600">
+                                              <span className="text-gray-400">escpos rejected:</span> {debug.escPosError} — printed via text/GDI fallback instead. Install the vendor or Generic/Text-Only driver for full quality.
+                                            </div>
+                                          )}
+                                          <div className="text-gray-400">sent at {debug.at}</div>
+                                        </div>
+                                      </details>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Scanners — registration-only (a HID keyboard-wedge scanner needs no
+                            runtime config; the row exists for Device Manager visibility). */}
+                        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
+                          {sectionHeader({ icon: <Search className="h-4 w-4" />, title: 'Barcode scanners', count: scanners.length, hint: 'Optional · USB scanners work without setup', addType: 'SCANNER', addLabel: 'Add scanner' })}
+                          {scanners.length === 0 && !loading ? emptyRow({ text: "No scanners registered." }) : (
+                            <div className="divide-y divide-gray-100">
+                              {scanners.map((scanner) => {
+                                const key = `scanner-${scanner.id}`;
+                                return (
+                                  <div key={`scan-${scanner.id}`} className="px-5 py-3 flex items-center gap-3.5">
+                                    <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-gray-50 text-gray-500"><Search className="h-4 w-4" /></div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <p className="text-sm font-bold text-[#1E293B]">{scanner.deviceName}</p>
+                                        {isThisTerminal(scanner) && <span className="text-[10px] font-bold uppercase tracking-wider bg-[#F5C742] text-[#1E293B] px-2 py-0.5 rounded-full">This terminal</span>}
+                                      </div>
+                                      <p className="text-xs text-gray-400 mt-0.5 truncate">{scanner.connectionType === 'BLUETOOTH' ? 'Bluetooth' : 'USB'} · {scopeLine(scanner)}</p>
+                                    </div>
+                                    {healthPill(scanner.status, null, false)}
+                                    <button type="button" onClick={()=>decommissionScanner(scanner)} disabled={deviceBusyKey===key} title="Remove scanner" aria-label="Remove scanner" className={trashBtn}>
+                                      {deviceBusyKey===key ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Cash drawers — the kick rides the attached printer's cable. */}
+                        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
+                          {sectionHeader({ icon: <Wallet className="h-4 w-4" />, title: 'Cash drawers', count: cashDrawers.length, hint: 'Opens through a receipt printer', addType: 'CASH_DRAWER', addLabel: 'Add drawer' })}
+                          {cashDrawers.length === 0 && !loading ? emptyRow({ text: printerList.length ? 'No cash drawers linked.' : 'Add a receipt printer first — the drawer opens through its cable.' }) : (
+                            <div className="divide-y divide-gray-100">
+                              {cashDrawers.map((drawer) => {
+                                const attached = printerList.find((p) => p.id === drawer.attachedPrinterId);
+                                const key = `drawer-${drawer.id}`;
+                                return (
+                                  <div key={`drawer-${drawer.id}`} className="px-5 py-3 flex items-center gap-3.5">
+                                    <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-gray-50 text-gray-500"><Wallet className="h-4 w-4" /></div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <p className="text-sm font-bold text-[#1E293B]">{drawer.deviceName}</p>
+                                        {isThisTerminal(drawer) && <span className="text-[10px] font-bold uppercase tracking-wider bg-[#F5C742] text-[#1E293B] px-2 py-0.5 rounded-full">This terminal</span>}
+                                      </div>
+                                      <p className="text-xs text-gray-400 mt-0.5 truncate">
+                                        Via <span className="text-gray-600 font-semibold">{attached?.deviceName || `printer #${drawer.attachedPrinterId}`}</span> · {scopeLine(drawer)}
+                                        {drawer.lastKickResult ? ` · Last kick: ${drawer.lastKickResult}` : ''}
+                                      </p>
+                                    </div>
+                                    {healthPill(drawer.status, null, false)}
+                                    <button type="button" onClick={()=>decommissionDrawer(drawer)} disabled={deviceBusyKey===key} title="Remove cash drawer" aria-label="Remove cash drawer" className={trashBtn}>
+                                      {deviceBusyKey===key ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <p className="text-xs font-semibold text-gray-600">{label}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
+
+                      {/* ── This workstation: print agent + detected printers ── */}
+                      <aside className="bg-white rounded-2xl border border-gray-200 shadow-sm xl:sticky xl:top-4">
+                        <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm font-bold text-[#1E293B] flex items-center gap-2"><Monitor className="h-4 w-4 text-gray-400" />This workstation</p>
+                            <button
+                              type="button"
+                              onClick={refreshAgentPrinters}
+                              disabled={agentLoading}
+                              title="Load Workstation Printers"
+                              className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 border border-gray-200 px-2.5 h-8 rounded-lg hover:bg-gray-50 disabled:opacity-60"
+                            >
+                              <RefreshCw className={`h-3.5 w-3.5 ${agentLoading ? 'animate-spin' : ''}`} />
+                              {agentLoading ? 'Checking…' : 'Rescan'}
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-gray-400 mt-1.5 leading-snug">
+                            The print agent sees only USB and Windows printers on this PC. LAN printers don't need it — add them as <span className="font-semibold text-gray-500">Network / IP</span> and they work from any device.
+                          </p>
+                          <PrintAgentPairing onPaired={refreshAgentPrinters} label={currentTerminal?.terminalId || null} />
+                          {agentError && <p className="text-xs text-red-500 mt-2">{agentError}</p>}
+                        </div>
+
+                        <div className="px-5 py-3">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
+                            Detected printers {agentPrinters.length > 0 && <span className="text-gray-300">· {agentPrinters.length}</span>}
+                          </p>
+                          {agentPrinters.length === 0 ? (
+                            <p className="text-xs text-gray-400 py-2">{agentLoading ? 'Looking for printers…' : 'None found. Make sure the print agent is running, then Rescan.'}</p>
+                          ) : (
+                            <ul className="divide-y divide-gray-100 -mx-1">
+                              {agentPrinters.map((p) => {
+                                const added = configuredSystemNames.has((p.name || '').toLowerCase());
+                                const proto = p.agentProtocol;
+                                const protoTag = proto === 'escpos' ? { t: 'Receipt · ESC/POS', c: 'bg-gray-100 text-gray-600' }
+                                  : proto === 'zpl' ? { t: 'Label · ZPL', c: 'bg-gray-100 text-gray-600' }
+                                  : proto === 'conflict' ? { t: 'Conflict', c: 'bg-red-50 text-red-600' }
+                                  : proto === null ? { t: 'Not set up', c: 'bg-amber-50 text-amber-700' }
+                                  : null;
+                                const statusBad = p.status && !/^(normal|ready|idle)$/i.test(p.status);
+                                return (
+                                  <li key={`${p.name}-${p.portName || ''}`} className="px-1 py-2.5">
+                                    <div className="flex items-start gap-2">
+                                      <div className="min-w-0 flex-1">
+                                        <p className="text-xs font-bold text-[#1E293B] truncate" title={p.name}>{p.name || 'Unknown printer'}</p>
+                                        <p className="text-[11px] text-gray-400 truncate" title={`${p.driverName || ''}${p.portName ? ` · ${p.portName}` : ''}`}>
+                                          {p.driverName || 'Driver unknown'}{p.portName ? ` · ${p.portName}` : ''}
+                                        </p>
+                                        <div className="flex items-center gap-1 mt-1 flex-wrap">
+                                          {p.isDefault && <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#F5C742]/20 text-[#8a6d0a]">Windows default</span>}
+                                          {protoTag && <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${protoTag.c}`}>{protoTag.t}</span>}
+                                          {statusBad && <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-50 text-red-600">{p.status}</span>}
+                                        </div>
+                                        {proto === null && <p className="text-[10px] text-amber-700 mt-1 leading-snug">Set it up in the agent's tray menu → Printers before printing.</p>}
+                                        {proto === 'conflict' && <p className="text-[10px] text-red-600 mt-1 leading-snug">Conflicting setup on this PC — jobs are refused.</p>}
+                                      </div>
+                                      {added ? (
+                                        <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold text-green-700 bg-green-50 px-2 py-1 rounded-md"><CheckCircle className="h-3 w-3" />Added</span>
+                                      ) : (
+                                        <button type="button"
+                                          onClick={() => openAddDevice(proto === 'zpl' ? 'LABEL_PRINTER' : 'RECEIPT_PRINTER', { deviceName: p.name || '', systemPrinterName: p.name || '', connectionType: 'USB' })}
+                                          className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-[#8a6d0a] border border-[#F5C742]/60 hover:bg-[#F5C742]/10 px-2 py-1 rounded-md">
+                                          <Plus className="h-3 w-3" />Add
+                                        </button>
+                                      )}
+                                    </div>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          )}
+                        </div>
+                      </aside>
+                    </div>
+                  </>
+                );
+              })()}
 
               {/* ── Add New Device (minimal modal → full edit for printers) ── */}
               {addDeviceOpen && (
@@ -2076,10 +1541,10 @@ const POSConsole = React.memo((props) => {
             };
 
             const templateTabs = [
-              { id:'receipt', label:'POS Receipt',       icon:<Printer className="h-3.5 w-3.5" /> },
-              { id:'invoice', label:'Tax Invoice',       icon:<FileText className="h-3.5 w-3.5" /> },
-              { id:'return',  label:'Return / Credit',   icon:<RotateCcw className="h-3.5 w-3.5" /> },
-              { id:'jobcard', label:'Service Job Card',  icon:<Wrench className="h-3.5 w-3.5" /> },
+              { id:'receipt', label:'POS Receipt',       hint:'Thermal receipt, no tax',  icon:<Printer className="h-4 w-4" /> },
+              { id:'invoice', label:'Tax Invoice',       hint:'VAT invoice with TRN',     icon:<FileText className="h-4 w-4" /> },
+              { id:'return',  label:'Return / Credit',   hint:'Credit note for returns',  icon:<RotateCcw className="h-4 w-4" /> },
+              { id:'jobcard', label:'Service Job Card',  hint:'Repair intake slip',       icon:<Wrench className="h-4 w-4" /> },
             ];
 
             const rawCfg = tplCfg[templateSubTab] || tplCfg.receipt;
@@ -2191,13 +1656,13 @@ const POSConsole = React.memo((props) => {
             const t2cfg = t2State;
 
             const fieldToggleSection = (label, items) => (
-              <div key={label}>
-                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">{label}</p>
-                <div className="space-y-1">
+              <div key={label} className="rounded-xl border border-gray-100 bg-gray-50/60 px-3.5 pt-2.5 pb-1">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">{label}</p>
+                <div className="divide-y divide-gray-100">
                   {items.map(([lbl, val, setter, disabled]) => (
-                    <div key={lbl} className={`flex items-center justify-between py-2.5 px-1${disabled ? ' opacity-50' : ''}`}>
-                      <span className="text-sm text-[#1E293B]">{lbl}</span>
-                      <Switch checked={!!val} onCheckedChange={setter} disabled={disabled} />
+                    <div key={lbl} className={`flex items-center justify-between gap-3 py-2${disabled ? ' opacity-50' : ''}`}>
+                      <span className="text-[13px] text-[#1E293B] leading-snug">{lbl}</span>
+                      <Switch checked={!!val} onCheckedChange={setter} disabled={disabled} aria-label={lbl} />
                     </div>
                   ))}
                 </div>
@@ -2351,6 +1816,22 @@ const POSConsole = React.memo((props) => {
               }
             };
 
+            const fieldLabel = 'block text-[11px] font-semibold text-gray-500 mb-1.5';
+            const inputCls = 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#F5C742] focus:ring-2 focus:ring-[#F5C742]/20 transition-colors';
+            const currentDocLabel = templateTabs.find(t => t.id === templateSubTab)?.label || 'this document';
+            // shared=true: one value used by every document; otherwise it belongs to the selected document only.
+            const sectionHead = (icon, title, shared, note) => (
+              <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-lg bg-[#F5C742]/20 text-[#b8920e] flex items-center justify-center">{icon}</span>
+                  <h3 className="text-sm font-bold text-[#1E293B]">{title}</h3>
+                </div>
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${shared ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-500'}`}>
+                  {note || (shared ? 'Shared by all documents' : `${currentDocLabel} only`)}
+                </span>
+              </div>
+            );
+
             const handleResetDefault = () => {
               setTplReceiptPaper('80mm'); setTplReceiptHeader(''); setTplReceiptFooter('');
               setTplReceiptShowLogo(true); setTplReceiptShowTrn(true); setTplReceiptShowCompanyDetails(true);
@@ -2361,138 +1842,165 @@ const POSConsole = React.memo((props) => {
             };
 
             return (
-              <div>
-                {/* ── Template type tab bar ── */}
-                <div className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-5 p-1.5 flex flex-wrap gap-1">
-                  {templateTabs.map(t => (
-                    <button key={t.id} onClick={() => setTemplateSubTab(t.id)}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${templateSubTab===t.id ? 'bg-[#F5C742]/15 text-[#1E293B] border border-[#F5C742]/40' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
-                      <span className={templateSubTab===t.id?'text-[#b8920e]':'text-gray-400'}>{t.icon}</span>
-                      {t.label}
-                    </button>
-                  ))}
+              <div className="space-y-5">
+                {/* ── Document picker ── */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  {templateTabs.map(t => {
+                    const selected = templateSubTab === t.id;
+                    const paper = tplCfg[t.id]?.paper;
+                    const paperLabel = paper ? (POS_SHEET_FORMATS.includes(paper) ? sheetFormatLabel(paper) : paper) : null;
+                    return (
+                      <button key={t.id} type="button" onClick={() => setTemplateSubTab(t.id)}
+                        className={`text-left rounded-2xl border px-4 py-3 transition-all ${selected ? 'bg-[#FFF8E7] border-[#F5C742] ring-1 ring-[#F5C742]/40 shadow-sm' : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${selected ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-400'}`}>{t.icon}</span>
+                          {paperLabel && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${selected ? 'bg-white text-[#8a6d0a]' : 'bg-gray-50 text-gray-400'}`}>{paperLabel}</span>}
+                        </div>
+                        <p className={`mt-2 text-sm font-bold ${selected ? 'text-[#1E293B]' : 'text-gray-600'}`}>{t.label}</p>
+                        <p className="text-[11px] text-gray-400 leading-snug">{t.hint}</p>
+                      </button>
+                    );
+                  })}
                 </div>
 
                 {/* ── Two-column: Settings (left) + Live Preview (right) ── */}
                 <div className="flex flex-col lg:flex-row gap-5 items-start">
 
                   {/* ── Left: all settings ── */}
-                  <div className="flex-1 min-w-0 space-y-4">
+                  <div className="flex-1 min-w-0 space-y-4 w-full">
 
-                    {/* Branch / Outlet Info */}
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-                      <div className="px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><Users className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                    {/* Paper & design */}
+                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
+                      {sectionHead(<Printer className="h-3.5 w-3.5" />, 'Paper & design', false)}
+                      <div className="p-5 space-y-4">
                         <div>
-                          <h3 className="text-sm font-bold text-[#1E293B] leading-none">Branch / Outlet Info</h3>
-                          <p className="text-[11px] text-gray-400 mt-0.5">printed on all templates</p>
+                          <label className={fieldLabel}>Paper size</label>
+                          <PaperSizePicker value={cfg.paper} onChange={cfg.setPaper} options={saleSheetTab ? ['80mm', '58mm', ...POS_SHEET_FORMATS] : undefined} />
                         </div>
+                        {templateSelectorAvailable && (
+                          <div>
+                            <label className={fieldLabel}>Receipt design</label>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                              {RECEIPT_TEMPLATES.map(t => (
+                                <button key={t.id} type="button" onClick={() => setReceiptTemplateId(t.id)}
+                                  className={`flex flex-col items-start px-3.5 py-2.5 rounded-xl border text-left transition-all ${receiptTemplateId===t.id ? 'bg-[#FFF8E7] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                                  <span className="text-sm font-semibold">{t.label}</span>
+                                  {t.sublabel && <span className={`text-[11px] ${receiptTemplateId===t.id ? 'text-[#8a6d0a]' : 'text-gray-400'}`}>{t.sublabel}</span>}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {/* Which Back Office template an A5 / Pre-printed sheet prints with. */}
+                        {saleSheetTab && isSheet && cfg.paper !== 'A4' && (
+                          sheetTemplate
+                            ? <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">Prints with <span className="font-semibold text-[#1E293B]">{sheetTemplate.name}</span>. Edit it under Sales → Print &amp; Email Templates.</p>
+                            : <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                No {sheetFormatLabel(cfg.paper)} Sales Invoice template exists yet, so the default template prints instead. Create one under Sales → Print &amp; Email Templates.
+                              </p>
+                        )}
                       </div>
-                      <div className="p-5 space-y-3">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Branch Name</label>
-                            <input value={tplOutletName} onChange={e=>setTplOutletName(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
+                    </div>
+
+                    {/* Business details & logo — shared by every document */}
+                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
+                      {sectionHead(<Users className="h-3.5 w-3.5" />, 'Business details & logo', true)}
+                      <div className="p-5 grid grid-cols-1 md:grid-cols-[1fr_180px] gap-5">
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className={fieldLabel}>Business name</label>
+                              <input value={tplOutletName} onChange={e=>setTplOutletName(e.target.value)} className={inputCls} />
+                            </div>
+                            <div>
+                              <label className={fieldLabel}>Phone</label>
+                              <input value={tplOutletPhone} onChange={e=>setTplOutletPhone(e.target.value)} className={inputCls} />
+                            </div>
                           </div>
                           <div>
-                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">TRN</label>
-                            <input value={tplOutletTrn} onChange={e=>setTplOutletTrn(e.target.value)} placeholder={effectiveOutletTrn ? `${effectiveOutletTrn} (from branch / company profile)` : 'Not set in branch or company profile'} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
+                            <label className={fieldLabel}>TRN</label>
+                            <input value={tplOutletTrn} onChange={e=>setTplOutletTrn(e.target.value)} placeholder={effectiveOutletTrn ? `${effectiveOutletTrn} (from branch / company profile)` : 'Not set in branch or company profile'} className={inputCls} />
+                          </div>
+                          <div>
+                            <label className={fieldLabel}>Address</label>
+                            <textarea value={tplOutletAddress} onChange={e=>setTplOutletAddress(e.target.value)} rows={2} className={`${inputCls} resize-none`} />
                           </div>
                         </div>
                         <div>
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Phone</label>
-                          <input value={tplOutletPhone} onChange={e=>setTplOutletPhone(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Address (multi-line)</label>
-                          <textarea value={tplOutletAddress} onChange={e=>setTplOutletAddress(e.target.value)} rows={3} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors resize-none" />
+                          <label className={fieldLabel}>Logo</label>
+                          <input id="tpl-logo-upload" type="file" accept="image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f){const r=new FileReader();r.onload=ev=>setTplLogoDataUrl(ev.target.result);r.readAsDataURL(f);}e.target.value='';}} />
+                          {tplLogoDataUrl ? (
+                            <div className="rounded-xl border border-gray-200 bg-[#F7F7FA] p-3 flex flex-col items-center gap-2">
+                              <img src={tplLogoDataUrl} alt="Logo" className="h-20 w-full object-contain" />
+                              <div className="flex gap-3 text-xs font-semibold">
+                                <button type="button" onClick={()=>document.getElementById('tpl-logo-upload')?.click()} className="text-gray-600 hover:text-[#1E293B]">Replace</button>
+                                <button type="button" onClick={()=>setTplLogoDataUrl(null)} className="text-red-500 hover:text-red-600">Remove</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button type="button" onClick={()=>document.getElementById('tpl-logo-upload')?.click()}
+                              className="w-full h-[132px] rounded-xl border-2 border-dashed border-gray-200 hover:border-[#F5C742]/60 hover:bg-[#FFF8E7]/50 flex flex-col items-center justify-center gap-1.5 text-gray-400 transition-colors">
+                              <Plus className="h-5 w-5" />
+                              <span className="text-xs font-semibold">Upload logo</span>
+                              <span className="text-[10px]">PNG or JPG, square works best</span>
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
 
-                    {/* Header Customization */}
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-                      <div className="px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><Settings className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                        <h3 className="text-sm font-bold text-[#1E293B]">Header Customization</h3>
-                      </div>
-                      <div className="p-5 space-y-4">
+                    {/* Header & footer text — per document */}
+                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
+                      {sectionHead(<FileText className="h-3.5 w-3.5" />, 'Header & footer text', false)}
+                      <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">Company / Branch Logo</label>
-                          <div className="border-2 border-dashed border-gray-200 rounded-xl p-4 flex items-center gap-3 hover:border-[#F5C742]/50 transition-colors cursor-pointer group" onClick={()=>document.getElementById('tpl-logo-upload')?.click()}>
-                            <input id="tpl-logo-upload" type="file" accept="image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f){const r=new FileReader();r.onload=ev=>setTplLogoDataUrl(ev.target.result);r.readAsDataURL(f);}e.target.value='';}} />
-                            {tplLogoDataUrl
-                              ? <><img src={tplLogoDataUrl} alt="Logo" className="h-10 w-10 object-contain rounded-lg" /><span className="text-sm text-[#1E293B] font-medium">Logo uploaded</span><button type="button" onClick={e=>{e.stopPropagation();setTplLogoDataUrl(null);}} className="ml-auto text-xs text-red-400 hover:text-red-600 font-semibold">Remove</button></>
-                              : <><div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-gray-300"><Users className="h-5 w-5" /></div><span className="text-sm text-gray-400">Upload Logo (PNG, JPG — recommended square)</span></>
-                            }
-                          </div>
+                          <label className={fieldLabel}>Header text</label>
+                          <textarea value={cfg.header} onChange={e=>cfg.setHeader(e.target.value)} rows={3} placeholder={templateSubTab==='jobcard' ? 'Not used on the job card' : 'e.g. Thank you for shopping with us!'} className={`${inputCls} resize-none read-only:bg-gray-50 read-only:text-gray-400`} readOnly={templateSubTab==='jobcard'} />
+                          <p className="text-[11px] text-gray-400 mt-1">Printed under the business details at the top.</p>
                         </div>
                         <div>
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">Paper Size</label>
-                          <PaperSizePicker value={cfg.paper} onChange={cfg.setPaper} options={saleSheetTab ? ['80mm', '58mm', ...POS_SHEET_FORMATS] : undefined} />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Header Custom Text (multi-line)</label>
-                          <textarea value={cfg.header} onChange={e=>cfg.setHeader(e.target.value)} rows={2} placeholder="e.g. Thank you for dining with us!" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors resize-none" readOnly={templateSubTab==='jobcard'} />
-                          <p className="text-[10px] text-gray-400 mt-1">Supports: branch name, address, phone, TRN, cashier, table/order ref — use branch info section above for those.</p>
+                          <label className={fieldLabel}>Footer text</label>
+                          <textarea value={cfg.footer} onChange={e=>cfg.setFooter(e.target.value)} rows={3} placeholder="e.g. Visit us again soon&#10;www.billbull.ae | @billbull" className={`${inputCls} resize-none`} />
+                          <p className="text-[11px] text-gray-400 mt-1">Thank-you note, return policy, website or support number.</p>
                         </div>
                         {useComponentTemplate && cfg.setHeaderAr && (
-                          <div>
-                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Header Text (Arabic) — Template 2 only</label>
-                            <input dir="rtl" value={cfg.headerAr} onChange={e=>cfg.setHeaderAr(e.target.value)} placeholder="فاتورة ضريبية" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
-                            <p className="text-[10px] text-gray-400 mt-1">Arabic title shown alongside the English header above on the bilingual (Template 2) receipt.</p>
+                          <div className="md:col-span-2">
+                            <label className={fieldLabel}>Arabic header <span className="normal-case font-medium text-gray-400">· {activeTemplate?.label || 'bilingual design'} only</span></label>
+                            <input dir="rtl" value={cfg.headerAr} onChange={e=>cfg.setHeaderAr(e.target.value)} placeholder="فاتورة ضريبية" className={inputCls} />
                           </div>
                         )}
                       </div>
                     </div>
 
-                    {/* Footer Customization */}
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-                      <div className="px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><FileText className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                        <h3 className="text-sm font-bold text-[#1E293B]">Footer Customization</h3>
-                      </div>
-                      <div className="p-5 space-y-4">
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Footer Custom Text (multi-line)</label>
-                          <textarea value={cfg.footer} onChange={e=>cfg.setFooter(e.target.value)} rows={3} placeholder="e.g. Visit us again soon&#10;www.billbull.ae | @billbull" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors resize-none" />
-                          <p className="text-[10px] text-gray-400 mt-1">Supports: thank you message, return policy, offer, website, support number.</p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* QR Code / Social Image */}
+                    {/* QR Code / Promo Image — image shared, position per document */}
                     {templateSubTab !== 'jobcard' && (
-                      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-                        <div className="px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><FileText className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                          <h3 className="text-sm font-bold text-[#1E293B]">QR Code / Social Image</h3>
-                        </div>
-                        <div className="p-5 space-y-4">
-                          <div>
-                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">QR / Image</label>
-                            {tplStampDataUrl ? (
-                              <div className="flex items-center gap-3 border border-[#F5C742]/50 bg-[#F5C742]/5 rounded-xl px-4 py-3">
-                                <img src={tplStampDataUrl} alt="QR" className="h-10 w-10 object-contain rounded" />
-                                <span className="text-sm text-[#1E293B] font-medium flex-1">Upload QR Code or Promo Image (PNG, JPG) uploaded</span>
-                                <button type="button" onClick={()=>setTplStampDataUrl(null)} className="text-xs text-red-400 hover:text-red-600 font-semibold flex items-center gap-1"><X className="h-3 w-3" />Remove</button>
-                              </div>
-                            ) : (
-                              <div className="border-2 border-dashed border-gray-200 rounded-xl p-4 flex items-center gap-3 hover:border-[#F5C742]/50 transition-colors cursor-pointer" onClick={()=>document.getElementById('tpl-qr-upload')?.click()}>
-                                <input id="tpl-qr-upload" type="file" accept="image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f){const r=new FileReader();r.onload=ev=>setTplStampDataUrl(ev.target.result);r.readAsDataURL(f);}e.target.value='';}} />
-                                <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-gray-300"><FileText className="h-5 w-5" /></div>
-                                <span className="text-sm text-gray-400">Upload QR Code or Promo Image (PNG, JPG)</span>
-                              </div>
-                            )}
-                            <p className="text-[10px] text-gray-400 mt-1.5">Use for: Google Review QR, WhatsApp QR, Instagram QR, website QR, or promotional image.</p>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">QR / Image Position</label>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                              {[['before','Before Footer Text'],['after','After Footer Text']].map(([val,lbl])=>(
-                                <button key={val} type="button"
-                                  onClick={()=>cfg.setQrPlacement?.(val)}
-                                  className={`py-2.5 px-4 rounded-xl border-2 text-sm font-semibold transition-all ${((cfg.qrPlacement||'before')===val) ? 'border-[#F5C742] bg-[#F5C742]/10 text-[#1E293B]' : 'border-gray-200 text-gray-500 hover:border-[#F5C742]/40'}`}>
+                      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
+                        {sectionHead(<LayoutTemplate className="h-3.5 w-3.5" />, 'QR code / promo image', false, 'Image is shared · position is per document')}
+                        <div className="p-5 flex flex-col sm:flex-row gap-4 sm:items-center">
+                          <input id="tpl-qr-upload" type="file" accept="image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f){const r=new FileReader();r.onload=ev=>setTplStampDataUrl(ev.target.result);r.readAsDataURL(f);}e.target.value='';}} />
+                          {tplStampDataUrl ? (
+                            <div className="flex items-center gap-3 flex-1 min-w-0 rounded-xl border border-gray-200 bg-[#F7F7FA] px-3 py-2.5">
+                              <img src={tplStampDataUrl} alt="QR" className="h-12 w-12 object-contain rounded bg-white" />
+                              <span className="text-sm text-[#1E293B] font-medium flex-1">Image uploaded</span>
+                              <button type="button" onClick={()=>document.getElementById('tpl-qr-upload')?.click()} className="text-xs font-semibold text-gray-600 hover:text-[#1E293B]">Replace</button>
+                              <button type="button" onClick={()=>setTplStampDataUrl(null)} className="text-xs font-semibold text-red-500 hover:text-red-600">Remove</button>
+                            </div>
+                          ) : (
+                            <button type="button" onClick={()=>document.getElementById('tpl-qr-upload')?.click()}
+                              className="flex-1 flex items-center gap-3 rounded-xl border-2 border-dashed border-gray-200 hover:border-[#F5C742]/60 hover:bg-[#FFF8E7]/50 px-4 py-3 text-left transition-colors">
+                              <span className="w-10 h-10 rounded-lg bg-gray-100 text-gray-400 flex items-center justify-center shrink-0"><Plus className="h-5 w-5" /></span>
+                              <span>
+                                <span className="block text-sm font-semibold text-gray-600">Upload QR or promo image</span>
+                                <span className="block text-[11px] text-gray-400">Google review, WhatsApp, Instagram or website QR</span>
+                              </span>
+                            </button>
+                          )}
+                          <div className="shrink-0">
+                            <p className={fieldLabel}>Position</p>
+                            <div className="inline-flex rounded-xl border border-gray-200 p-0.5 bg-gray-50">
+                              {[['before','Before footer'],['after','After footer']].map(([val,lbl])=>(
+                                <button key={val} type="button" onClick={()=>cfg.setQrPlacement?.(val)}
+                                  className={`px-3 h-8 rounded-lg text-xs font-semibold transition-colors ${((cfg.qrPlacement||'before')===val) ? 'bg-white shadow-sm text-[#1E293B]' : 'text-gray-500 hover:text-gray-700'}`}>
                                   {lbl}
                                 </button>
                               ))}
@@ -2503,12 +2011,9 @@ const POSConsole = React.memo((props) => {
                     )}
 
                     {/* Show / Hide Fields */}
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-                      <div className="px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><Eye className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                        <h3 className="text-sm font-bold text-[#1E293B]">Show / Hide Fields</h3>
-                      </div>
-                      <div className="p-5 space-y-5">
+                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
+                      {sectionHead(<Eye className="h-3.5 w-3.5" />, 'What to print', false)}
+                      <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
                         {templateSubTab === 'jobcard' ? (<>
                           {fieldToggleSection('HEADER', [
                             ['Show Logo', cfg.showLogo, cfg.setShowLogo],
@@ -2613,43 +2118,31 @@ const POSConsole = React.memo((props) => {
                   </div>
 
                   {/* ── Right: sticky live preview ── */}
-                  <div className="w-full lg:w-[260px] xl:w-[360px] sticky top-6">
+                  <div className="w-full lg:w-[340px] xl:w-[400px] shrink-0 lg:sticky lg:top-4">
                     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                       {/* Preview header */}
-                      <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-green-400" />
-                          <span className="text-sm font-bold text-[#1E293B]">Live Preview</span>
+                      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-2 h-2 rounded-full bg-green-400 shrink-0" />
+                          <span className="text-sm font-bold text-[#1E293B]">Preview</span>
+                          <span className="text-[11px] font-semibold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-md truncate">
+                            {isSheet ? sheetFormatLabel(cfg.paper) : `${cfg.paper} thermal`}
+                          </span>
                         </div>
-                        <span className="text-[11px] font-semibold text-gray-400 bg-gray-100 px-2.5 py-1 rounded-lg">
-                          {isSheet ? `${sheetFormatLabel(cfg.paper)} document` : `${cfg.paper} thermal`}
-                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button onClick={handleFullPreview} title="Open full preview"
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 border border-gray-200 rounded-lg px-2.5 h-8 hover:bg-gray-50 transition-colors">
+                            <Eye className="h-3.5 w-3.5" />Full
+                          </button>
+                          <button onClick={handleTestPrint} title="Send a test print"
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#8a6d0a] border border-[#F5C742]/60 bg-[#FFF8E7] rounded-lg px-2.5 h-8 hover:bg-[#F5C742]/20 transition-colors">
+                            <Printer className="h-3.5 w-3.5" />Test print
+                          </button>
+                        </div>
                       </div>
 
-                      {/* Which Back Office template an A5 / Pre-printed sheet prints with. */}
-                      {saleSheetTab && isSheet && cfg.paper !== 'A4' && (
-                        sheetTemplate
-                          ? <p className="px-4 pt-3 text-[11px] text-gray-500">Prints with <span className="font-semibold text-[#1E293B]">{sheetTemplate.name}</span>. Edit it under Sales → Print &amp; Email Templates.</p>
-                          : <p className="mx-4 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-                              No {sheetFormatLabel(cfg.paper)} Sales Invoice template exists yet, so the default template prints instead. Create one under Sales → Print &amp; Email Templates.
-                            </p>
-                      )}
-
-                      {/* ── Receipt template selector (Template 1 / Template 2 …) ── */}
-                      {templateSelectorAvailable && (
-                        <div className="px-4 pt-3 flex flex-wrap gap-1.5">
-                          {RECEIPT_TEMPLATES.map(t => (
-                            <button key={t.id} type="button" onClick={() => setReceiptTemplateId(t.id)}
-                              className={`flex-1 min-w-[110px] flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-all ${receiptTemplateId===t.id ? 'bg-[#F5C742]/15 border-[#F5C742]/50 text-[#1E293B]' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
-                              <span>{t.label}</span>
-                              {t.sublabel && <span className={`text-[10px] font-medium ${receiptTemplateId===t.id ? 'text-[#b8920e]' : 'text-gray-400'}`}>{t.sublabel}</span>}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
                       {/* Preview body */}
-                      <div className="p-4 bg-[#F7F7FA] overflow-y-auto flex flex-col gap-4" style={{ maxHeight: 900 }}>
+                      <div className="p-4 bg-[#F1F2F6] overflow-y-auto flex flex-col gap-4" style={{ maxHeight: 'calc(100vh - 160px)', minHeight: 420 }}>
                         {useComponentTemplate
                           ? (() => {
                               const Preview = activeTemplate.Preview;
@@ -2732,74 +2225,26 @@ const POSConsole = React.memo((props) => {
                             />
                         }
                       </div>
-
-                      {/* Preview footer buttons */}
-                      <div className="px-4 py-3 border-t border-gray-100 flex gap-2">
-                        <button onClick={handleFullPreview}
-                          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-gray-600 border border-gray-200 rounded-xl py-2.5 hover:bg-gray-50 transition-colors">
-                          <Eye className="h-3.5 w-3.5" />Full Preview
-                        </button>
-                        <button onClick={handleTestPrint}
-                          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-gray-700 border border-gray-200 rounded-xl py-2.5 hover:bg-gray-50 transition-colors">
-                          <Printer className="h-3.5 w-3.5" />Test Print
-                        </button>
-                      </div>
                     </div>
                   </div>
 
                 </div>
 
                 {/* ── Bottom action bar ── */}
-                <div className="flex items-center justify-between mt-6 pt-5 border-t border-gray-200">
-                  <button type="button" onClick={handleResetDefault}
-                    className="flex items-center gap-2 text-sm font-semibold text-gray-500 border border-gray-200 rounded-xl px-5 py-2.5 hover:bg-gray-50 transition-colors">
-                    <RotateCcw className="h-4 w-4" />Reset to Default
-                  </button>
-                  <button disabled={settingsSaving} onClick={async()=>{
-                    setSettingsSaving(true);
-                    try {
-                      const tplConfig = JSON.stringify({
-                        outletName:tplOutletName,outletTrn:tplOutletTrn,outletAddress:tplOutletAddress,outletPhone:tplOutletPhone,
-                        logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
-                        receiptHeader:tplReceiptHeader,receiptHeaderAr:tplReceiptHeaderAr,receiptFooter:tplReceiptFooter,receiptPaper:tplReceiptPaper,
-                        receiptShowLogo:tplReceiptShowLogo,receiptShowTrn:tplReceiptShowTrn,receiptShowStamp:tplReceiptShowStamp,receiptShowBarcode:tplReceiptShowBarcode,
-                        receiptShowCompanyDetails:tplReceiptShowCompanyDetails,receiptShowCustomerDetails:tplReceiptShowCustomerDetails,
-                        receiptColItemCode:tplReceiptColItemCode,receiptColItemImage:tplReceiptColItemImage,receiptColBatchNo:tplReceiptColBatchNo,receiptColDiscount:tplReceiptColDiscount,receiptColVatPct:tplReceiptColVatPct,receiptColVatAmt:tplReceiptColVatAmt,
-                        receiptShowGrandTotalBanner:tplReceiptShowGrandTotalBanner,receiptShowTerms:tplReceiptShowTerms,receiptShowNotes:tplReceiptShowNotes,receiptShowBankDetails:tplReceiptShowBankDetails,receiptShowQRCode:tplReceiptShowQRCode,receiptShowSignature:tplReceiptShowSignature,
-                        invoiceHeader:tplInvoiceHeader,invoiceHeaderAr:tplInvoiceHeaderAr,invoiceFooter:tplInvoiceFooter,invoicePaper:tplInvoicePaper,
-                        invoiceShowLogo:tplInvoiceShowLogo,invoiceShowCompanyDetails:tplInvoiceShowCompanyDetails,invoiceShowTrn:tplInvoiceShowTrn,
-                        invoiceShowCustomerDetails:tplInvoiceShowCustomerDetails,invoiceShowStamp:tplInvoiceShowStamp,invoiceShowSignature:tplInvoiceShowSignature,
-                        invoiceShowGrandTotalBanner:tplInvoiceShowGrandTotalBanner,invoiceShowTerms:tplInvoiceShowTerms,invoiceShowNotes:tplInvoiceShowNotes,
-                        invoiceShowBankDetails:tplInvoiceShowBankDetails,invoiceShowQRCode:tplInvoiceShowQRCode,invoiceQrPlacement:tplInvoiceQrPlacement,
-                        invoiceColItemCode:tplInvoiceColItemCode,invoiceColItemImage:tplInvoiceColItemImage,invoiceColBarcode:tplInvoiceColBarcode,
-                        invoiceColBatchNo:tplInvoiceColBatchNo,invoiceColDiscount:tplInvoiceColDiscount,invoiceColVatPct:tplInvoiceColVatPct,invoiceColVatAmt:tplInvoiceColVatAmt,
-                        returnHeader:tplReturnHeader,returnFooter:tplReturnFooter,returnPaper:tplReturnPaper,
-                        returnShowLogo:tplReturnShowLogo,returnShowTrn:tplReturnShowTrn,returnShowStamp:tplReturnShowStamp,
-                        returnShowCompanyDetails:tplReturnShowCompanyDetails,returnShowCustomerDetails:tplReturnShowCustomerDetails,
-                        returnColItemCode:tplReturnColItemCode,returnColBatchNo:tplReturnColBatchNo,returnColDiscount:tplReturnColDiscount,returnColVatPct:tplReturnColVatPct,returnColVatAmt:tplReturnColVatAmt,
-                        returnShowGrandTotalBanner:tplReturnShowGrandTotalBanner,returnShowTerms:tplReturnShowTerms,returnShowNotes:tplReturnShowNotes,returnShowQRCode:tplReturnShowQRCode,returnShowSignature:tplReturnShowSignature,returnShowCreditBalance:tplReturnShowCreditBalance,
-                        jobCardFooter:tplJobCardFooter,jobCardPaper:tplJobCardPaper,
-                        jobCardShowLogo:tplJobCardShowLogo,jobCardShowTrn:tplJobCardShowTrn,jobCardShowStamp:tplJobCardShowStamp,
-                        jobCardShowCompanyDetails:tplJobCardShowCompanyDetails,jobCardShowCustomerDetails:tplJobCardShowCustomerDetails,
-                        jobCardShowSerialNumber:tplJobCardShowSerialNumber,jobCardShowWarranty:tplJobCardShowWarranty,jobCardShowTechnician:tplJobCardShowTechnician,
-                        jobCardShowExpectedDate:tplJobCardShowExpectedDate,jobCardShowCustomerSignature:tplJobCardShowCustomerSignature,jobCardShowTerms:tplJobCardShowTerms,
-                        receiptTemplateId,
-                        t2ShowLogo,t2ShowCompanyDetails,t2ShowTrn,t2ShowArabic,t2ShowCustomerDetails,t2ShowAccountBalance,t2ShowDelivery,
-                        t2ShowVatSummary,t2ShowPaymentDetails,t2ShowLoyalty,t2ShowQRCode,t2ShowFooterText,t2ShowBarcode,
-                        t2ReceiptShowLogo,t2ReceiptShowCompanyDetails,t2ReceiptShowTrn,t2ReceiptShowArabic,t2ReceiptShowCustomerDetails,t2ReceiptShowAccountBalance,t2ReceiptShowDelivery,
-                        t2ReceiptShowVatSummary,t2ReceiptShowPaymentDetails,t2ReceiptShowLoyalty,t2ReceiptShowQRCode,t2ReceiptShowFooterText,t2ReceiptShowBarcode,
-                        t2InvoiceShowLogo,t2InvoiceShowCompanyDetails,t2InvoiceShowTrn,t2InvoiceShowArabic,t2InvoiceShowCustomerDetails,t2InvoiceShowAccountBalance,t2InvoiceShowDelivery,
-                        t2InvoiceShowVatSummary,t2InvoiceShowPaymentDetails,t2InvoiceShowLoyalty,t2InvoiceShowQRCode,t2InvoiceShowFooterText,t2InvoiceShowBarcode,
-                      });
-                      const saved = await savePosSettings({ ...(posSettings||{}), printTemplateConfig: tplConfig });
-                      setPosSettings(prev => mergeSavedPosSettings(prev, saved));
-                      setSettingsSavedFlash(true);
-                      setTimeout(()=>setSettingsSavedFlash(false), 2000);
-                    } catch(e){ console.warn('Template save failed',e); } finally { setSettingsSaving(false); }
-                  }}
-                    className="flex items-center gap-2 bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-60 text-[#1E293B] font-bold text-sm px-6 py-2.5 rounded-xl transition-colors">
-                    <CheckCircle className="h-4 w-4" />{settingsSaving ? 'Saving…' : 'Save Templates'}
-                  </button>
+                <div className="sticky bottom-0 z-10 -mx-1 px-1">
+                  <div className="flex items-center justify-between gap-3 bg-white/90 backdrop-blur border border-gray-200 rounded-2xl shadow-sm px-4 py-3">
+                    <button type="button" onClick={handleResetDefault}
+                      className="flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-gray-700 rounded-xl px-3 h-10 hover:bg-gray-50 transition-colors">
+                      <RotateCcw className="h-4 w-4" />Reset POS Receipt to default
+                    </button>
+                    <div className="flex items-center gap-3">
+                      {settingsSavedFlash && <span className="text-xs font-semibold text-green-600 flex items-center gap-1"><CheckCircle className="h-3.5 w-3.5" />Saved</span>}
+                      <button disabled={settingsSaving} onClick={handleSaveTemplates}
+                        className="flex items-center gap-2 bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-60 text-[#1E293B] font-bold text-sm px-6 h-10 rounded-xl transition-colors">
+                        <CheckCircle className="h-4 w-4" />{settingsSaving ? 'Saving…' : 'Save Templates'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             );
@@ -2809,13 +2254,6 @@ const POSConsole = React.memo((props) => {
           {consoleTab === 'terminals' && terminalAdministration && (() => {
             const maxSlots = posSettings?.maxTerminalsPerBranch ?? 5;
 
-            const activeCount = terminalList.filter(t => ['ACTIVE', 'IDLE', 'NEW', 'PENDING_REGISTRATION'].includes(t.status)).length;
-            const blockedCount = terminalList.filter(t => t.status === 'BLOCKED').length;
-            const inactiveCount = terminalList.filter(t => ['INACTIVE', 'MAINTENANCE'].includes(t.status)).length;
-            const offlineCount = terminalList.filter(t => t.status === 'OFFLINE').length;
-            const staleCount = terminalList.filter(t => t.status === 'STALE').length;
-            const archivedCount = terminalList.filter(t => t.status === 'ARCHIVED').length;
-            const decommissionedCount = terminalList.filter(t => t.status === 'DECOMMISSIONED').length;
             // Archived (reversible) and Decommissioned (permanent) terminals both free their slot —
             // match the backend's countActiveLimitByBranchId semantics exactly.
             const slotUsed = terminalList.filter(t => t.status !== 'ARCHIVED' && t.status !== 'DECOMMISSIONED').length;
@@ -3013,186 +2451,192 @@ const POSConsole = React.memo((props) => {
               }
             };
 
+            const mainTerminal = terminalList.find(t => t.isMainPos) || null;
+            const slotFull = slotUsed >= maxSlots;
+            const slotTone = slotFull ? 'red' : slotNearFull ? 'amber' : 'ok';
+
+            // Filter chips double as the health summary: one chip per lifecycle group.
+            const terminalFilterGroups = [
+              { key: 'ALL',            label: 'All',            statuses: null,                                             dot: null },
+              { key: 'ACTIVE',         label: 'Active',         statuses: ['ACTIVE', 'IDLE', 'NEW', 'PENDING_REGISTRATION'], dot: 'bg-green-500' },
+              { key: 'OFFLINE',        label: 'Offline',        statuses: ['OFFLINE'],                                      dot: 'bg-gray-400' },
+              { key: 'STALE',          label: 'Stale',          statuses: ['STALE'],                                        dot: 'bg-orange-500' },
+              { key: 'INACTIVE',       label: 'Inactive',       statuses: ['INACTIVE', 'MAINTENANCE'],                      dot: 'bg-amber-400' },
+              { key: 'BLOCKED',        label: 'Blocked',        statuses: ['BLOCKED'],                                      dot: 'bg-red-500' },
+              { key: 'ARCHIVED',       label: 'Archived',       statuses: ['ARCHIVED'],                                     dot: 'bg-gray-300' },
+              { key: 'DECOMMISSIONED', label: 'Decommissioned', statuses: ['DECOMMISSIONED'],                               dot: 'bg-red-800' },
+            ].map(g => ({ ...g, count: g.statuses ? terminalList.filter(t => g.statuses.includes(t.status)).length : terminalList.length }));
+            const activeFilterGroup = terminalFilterGroups.find(g => g.key === terminalFilter) || terminalFilterGroups[0];
+            const searchNeedle = terminalSearch.trim().toLowerCase();
+            const visibleTerminals = terminalList.filter(t => {
+              if (activeFilterGroup.statuses && !activeFilterGroup.statuses.includes(t.status)) return false;
+              if (!searchNeedle) return true;
+              return [t.terminalName, t.terminalId, t.counterName, t.registeredBy]
+                .some(v => v && String(v).toLowerCase().includes(searchNeedle));
+            });
+
+            const updateTerminalRow = (terminalId, updated) =>
+              setTerminalList(prev => prev.map(x => x.terminalId === terminalId ? updated : x));
+
+            const iconBtn = 'inline-flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-lg border transition-colors';
+
             return (
             <>
             <div className="space-y-5">
 
-              {/* ── Header row ── */}
-              <div className="flex items-center justify-between">
+              {/* ── Header ── */}
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-base font-bold text-[#1E293B]">Terminal & Counter Management</h2>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    Rename terminals, set counter names, manage status, and designate your main POS.
+                  <h2 className="text-lg font-bold text-[#1E293B] leading-tight">Terminals & Counters</h2>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Every browser or device that opens POS registers itself here. Rename it, assign a counter, pick the Main POS, or retire it.
                   </p>
                 </div>
                 <button
                   onClick={loadTerminals}
-                  className="flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-[#1E293B] border border-gray-200 rounded-xl px-4 py-2 hover:bg-gray-50 transition-colors"
+                  disabled={terminalsLoading}
+                  className="flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-[#1E293B] bg-white border border-gray-200 rounded-xl px-4 h-10 hover:bg-gray-50 transition-colors disabled:opacity-60"
                 >
-                  <RefreshCw className="h-4 w-4" /> Refresh
+                  <RefreshCw className={`h-4 w-4 ${terminalsLoading ? 'animate-spin' : ''}`} /> Refresh
                 </button>
               </div>
 
-              {/* ── Stats bar ── */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {[
-                  { label: 'Total', value: terminalList.length, sub: `of ${maxSlots} slots`, color: 'text-[#1E293B]', bg: 'bg-white' },
-                  { label: 'Active',   value: activeCount,   sub: 'online & ready',   color: 'text-green-700', bg: 'bg-green-50' },
-                  { label: 'Inactive', value: inactiveCount, sub: 'temporarily off',   color: 'text-amber-700', bg: 'bg-amber-50' },
-                  { label: 'Blocked',  value: blockedCount,  sub: 'access denied',     color: 'text-red-600',   bg: 'bg-red-50'   },
-                ].map(s => (
-                  <div key={s.label} className={`${s.bg} border border-gray-100 rounded-2xl px-4 py-3 shadow-sm`}>
-                    <p className={`text-2xl font-black ${s.color}`}>{s.value}</p>
-                    <p className="text-[11px] font-bold text-gray-500 mt-0.5">{s.label}</p>
-                    <p className="text-[10px] text-gray-400">{s.sub}</p>
+              {/* ── Overview: slots · this device · main POS ── */}
+              <div className="bg-white border border-gray-200 rounded-2xl shadow-sm grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-100">
+                {/* Slots */}
+                <div className="p-5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
+                      Terminal slots
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Info className="h-3.5 w-3.5 text-gray-300 hover:text-gray-500 cursor-help" tabIndex={0} />
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs text-xs">
+                            Clearing browser data may remove this terminal's saved identity. When POS is opened again, the browser may register as a new terminal and consume another slot.
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </span>
+                    {slotTone !== 'ok' && (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${slotTone === 'red' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>
+                        {slotFull ? 'At capacity' : 'Almost full'}
+                      </span>
+                    )}
                   </div>
-                ))}
-              </div>
-
-              {/* ── Terminal Health Summary ── */}
-              <div className="bg-white border border-gray-200 rounded-2xl px-5 py-4 shadow-sm">
-                <p className="text-xs font-bold text-[#1E293B] mb-3">Terminal Health</p>
-                <div className="flex items-center gap-5 flex-wrap text-sm">
-                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500" /> <strong>{activeCount}</strong> Active</span>
-                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-400" /> <strong>{offlineCount}</strong> Offline</span>
-                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-orange-500" /> <strong>{staleCount}</strong> Stale</span>
-                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-300" /> <strong>{archivedCount}</strong> Archived</span>
-                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-800" /> <strong>{decommissionedCount}</strong> Decommissioned</span>
-                </div>
-              </div>
-
-              {/* ── Terminal Auto Archive settings ── */}
-              <div className="bg-white border border-gray-200 rounded-2xl px-5 py-4 shadow-sm space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-bold text-[#1E293B]">Terminal Auto Archive</p>
-                    <p className="text-xs text-gray-400 mt-0.5">Automatically archive terminals that have been inactive for too long, freeing their slot.</p>
-                  </div>
-                  <label className="flex items-center gap-2 cursor-pointer shrink-0">
-                    <input
-                      type="checkbox"
-                      checked={autoArchiveEnabled}
-                      onChange={e => updateAutoArchiveSetting({ terminalAutoArchiveEnabled: e.target.checked })}
-                      className="h-4 w-4 rounded border-gray-300 text-[#F5C742] focus:ring-[#F5C742]"
-                    />
-                    <span className="text-xs font-semibold text-gray-600">Enable</span>
-                  </label>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Archive after (days)</label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={autoArchiveAfterDays}
-                      onChange={e => updateAutoArchiveSetting({ terminalArchiveAfterDays: Number(e.target.value) })}
-                      className="w-full h-10 px-3 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40 bg-white"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={autoArchiveNotifyBefore}
-                        onChange={e => updateAutoArchiveSetting({ terminalArchiveNotifyBefore: e.target.checked })}
-                        className="h-3.5 w-3.5 rounded border-gray-300 text-[#F5C742] focus:ring-[#F5C742]"
-                      />
-                      Notify before archive
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      disabled={!autoArchiveNotifyBefore}
-                      value={autoArchiveWarningDays}
-                      onChange={e => updateAutoArchiveSetting({ terminalArchiveWarningDays: Number(e.target.value) })}
-                      placeholder="Warning period (days)"
-                      className="w-full h-10 px-3 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40 bg-white disabled:bg-gray-50 disabled:text-gray-300"
-                    />
-                  </div>
-                  <div className="flex items-end">
-                    <button
-                      onClick={handleSaveAutoArchiveSettings}
-                      disabled={autoArchiveConfigInvalid}
-                      className="w-full h-10 text-xs font-bold text-[#1E293B] bg-[#F5C742] hover:bg-[#e6b93a] disabled:bg-gray-100 disabled:text-gray-300 rounded-xl transition-colors"
-                    >
-                      Save
-                    </button>
-                  </div>
-                </div>
-                {autoArchiveConfigInvalid && (
-                  <p className="text-xs text-red-500 font-semibold">
-                    Warning period must be less than archive-after days, and archive-after days must be greater than zero.
+                  <p className="mt-2 flex items-baseline gap-1">
+                    <span className={`text-3xl font-black ${slotTone === 'red' ? 'text-red-600' : 'text-[#1E293B]'}`}>{slotUsed}</span>
+                    <span className="text-sm font-semibold text-gray-400">/ {maxSlots} used</span>
                   </p>
-                )}
+                  <div className="mt-3 h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${slotTone === 'red' ? 'bg-red-500' : slotTone === 'amber' ? 'bg-amber-400' : 'bg-[#F5C742]'}`}
+                      style={{ width: `${slotPct}%` }}
+                    />
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-2 leading-snug">
+                    {slotFull
+                      ? 'New devices can’t register. Archive an unused terminal to free a slot.'
+                      : 'Blocked terminals still use a slot; archived ones don’t.'}
+                  </p>
+                </div>
+
+                {/* This device */}
+                <div className="p-5">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">This device</span>
+                  {currentTerminal ? (
+                    <div className="mt-2 flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-[#F5C742]/15 text-[#b8920e] flex items-center justify-center shrink-0">
+                        <Monitor className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-black text-[#1E293B] truncate">{currentTerminal.terminalName || currentTerminal.terminalId}</p>
+                        <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
+                          <Hash className="h-3 w-3 text-gray-300" />{currentTerminal.counterName || 'No counter'}
+                        </p>
+                        <p className="text-[10px] font-mono text-gray-400 mt-1">{currentTerminal.terminalId}</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-sm text-gray-400">This browser isn't registered as a terminal yet.</p>
+                  )}
+                </div>
+
+                {/* Main POS */}
+                <div className="p-5">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Main POS</span>
+                  {mainTerminal ? (
+                    <div className="mt-2 flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-[#F5C742] text-[#7a4f00] flex items-center justify-center shrink-0">
+                        <Star className="h-5 w-5 fill-current" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-black text-[#1E293B] truncate">{mainTerminal.terminalName || mainTerminal.terminalId}</p>
+                        <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
+                          <Hash className="h-3 w-3 text-gray-300" />{mainTerminal.counterName || 'No counter'}
+                        </p>
+                        <p className="text-[10px] font-mono text-gray-400 mt-1">{mainTerminal.terminalId}</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-sm text-gray-400">Not set. Use <span className="font-semibold text-gray-500">Set Main</span> on an active terminal.</p>
+                  )}
+                </div>
               </div>
 
-              {/* ── Slot usage bar ── */}
-              <div className="bg-white border border-gray-200 rounded-2xl px-5 py-4 shadow-sm">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-[#1E293B] flex items-center gap-1.5">
-                    Terminal Slots
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Info className="h-3.5 w-3.5 text-gray-400 hover:text-gray-600 cursor-help" tabIndex={0} />
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="max-w-xs text-xs">
-                          Clearing browser data may remove this terminal's saved identity. When POS is opened again, the browser may register as a new terminal and consume another slot.
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </span>
-                  <span className={`text-xs font-bold ${slotNearFull ? 'text-red-500' : 'text-gray-500'}`}>
-                    {slotUsed} / {maxSlots} used{slotNearFull && slotUsed < maxSlots ? ' — almost full' : slotUsed >= maxSlots ? ' — at capacity' : ''}
-                  </span>
-                </div>
-                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${slotUsed >= maxSlots ? 'bg-red-500' : slotNearFull ? 'bg-amber-400' : 'bg-[#F5C742]'}`}
-                    style={{ width: `${slotPct}%` }}
-                  />
-                </div>
-                <p className="text-[10px] text-gray-400 mt-1.5">
-                  Each browser/device that opens POS is auto-registered. Blocked terminals still occupy a slot.
-                </p>
-              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
 
-              {/* ── Info banner ── */}
-              <div className="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl px-5 py-3.5 text-sm text-blue-700">
-                <Info className="h-4 w-4 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-semibold">How terminals are registered: </span>
-                  Each browser/device that opens POS Sales is auto-registered as a terminal using a device fingerprint.
-                  Use this panel to rename terminals, assign counters, set the Main POS, or block terminals no longer in use.
-                </div>
-              </div>
+              {/* ── Terminal list column ── */}
+              <div className="space-y-3 min-w-0">
 
-              {/* ── Current terminal highlight ── */}
-              {currentTerminal && (
-                <div className="flex items-center gap-3 bg-[#F5C742]/10 border border-[#F5C742]/40 rounded-xl px-5 py-3">
-                  <Monitor className="h-4 w-4 text-[#b8920e] shrink-0" />
-                  <span className="text-sm text-[#7a6000] font-semibold">
-                    This device is registered as&nbsp;
-                    <span className="font-black text-[#1E293B]">{currentTerminal.terminalName || currentTerminal.terminalId}</span>
-                    &nbsp;·&nbsp;Counter:&nbsp;
-                    <span className="font-black text-[#1E293B]">{currentTerminal.counterName || '—'}</span>
-                    &nbsp;·&nbsp;
-                    <span className="font-mono text-[10px] text-[#b8920e]">{currentTerminal.terminalId}</span>
-                  </span>
+                {/* Toolbar: status filters + search */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
+                    {terminalFilterGroups.map(g => {
+                      const selected = terminalFilter === g.key;
+                      const empty = g.count === 0 && !selected;
+                      return (
+                        <button
+                          key={g.key}
+                          type="button"
+                          onClick={() => setTerminalFilter(g.key)}
+                          disabled={empty}
+                          className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-semibold border transition-colors ${
+                            selected
+                              ? 'bg-[#1E293B] text-white border-[#1E293B]'
+                              : empty
+                                ? 'bg-white text-gray-300 border-gray-100 cursor-default'
+                                : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          {g.dot && <span className={`w-1.5 h-1.5 rounded-full ${empty ? 'bg-gray-200' : g.dot}`} />}
+                          {g.label}
+                          <span className={`tabular-nums ${selected ? 'text-white/70' : empty ? 'text-gray-300' : 'text-gray-400'}`}>{g.count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="relative w-full sm:w-56">
+                    <Search className="h-3.5 w-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={terminalSearch}
+                      onChange={e => setTerminalSearch(e.target.value)}
+                      placeholder="Search name, ID, counter…"
+                      className="w-full h-8 pl-8 pr-3 text-xs border border-gray-200 rounded-full bg-white focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40"
+                    />
+                  </div>
                 </div>
-              )}
 
-              {/* ── Terminal list ── */}
               {terminalsLoading ? (
                 <div className="space-y-3">
                   {[1,2,3].map(i => (
                     <div key={i} className="bg-white rounded-2xl border border-gray-100 p-5 flex items-center gap-4 animate-pulse">
-                      <div className="w-12 h-12 rounded-xl bg-gray-100 shrink-0" />
+                      <div className="w-11 h-11 rounded-xl bg-gray-100 shrink-0" />
                       <div className="flex-1 space-y-2">
                         <div className="h-3 w-48 bg-gray-100 rounded" />
                         <div className="h-2.5 w-32 bg-gray-100 rounded" />
-                        <div className="h-2 w-56 bg-gray-50 rounded" />
                       </div>
                       <div className="w-20 h-6 bg-gray-100 rounded-full shrink-0" />
                     </div>
@@ -3204,7 +2648,7 @@ const POSConsole = React.memo((props) => {
                     <Hash className="h-8 w-8 text-gray-200" />
                   </div>
                   <p className="text-gray-500 font-bold">No terminals loaded</p>
-                  <p className="text-xs text-gray-300 mt-1">Click Refresh to load terminals registered for this branch.</p>
+                  <p className="text-xs text-gray-400 mt-1">Click Refresh to load terminals registered for this branch.</p>
                   <button
                     onClick={loadTerminals}
                     className="mt-4 text-sm font-semibold text-[#327F74] border border-[#327F74]/30 px-5 py-2 rounded-xl hover:bg-[#327F74]/5 transition-colors"
@@ -3212,254 +2656,242 @@ const POSConsole = React.memo((props) => {
                     Load Terminals
                   </button>
                 </div>
+              ) : visibleTerminals.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-10 text-center">
+                  <p className="text-sm font-semibold text-gray-500">No terminals match this filter</p>
+                  <button
+                    onClick={() => { setTerminalFilter('ALL'); setTerminalSearch(''); }}
+                    className="mt-3 text-xs font-semibold text-[#327F74] hover:underline"
+                  >
+                    Clear filters
+                  </button>
+                </div>
               ) : (
-                <div className="space-y-3">
-                  {terminalList.map(t => {
+                <div className="bg-white border border-gray-200 rounded-2xl shadow-sm divide-y divide-gray-100">
+                  {visibleTerminals.map(t => {
                     const isEditing = editingTerminalId === t.terminalId;
                     const isThisDevice = currentTerminal?.terminalId === t.terminalId;
                     const sc = statusConfig[t.status] || statusConfig.ACTIVE;
                     const browserLabel = parseDeviceInfo(t.deviceInfo);
                     const lastSeenLabel = formatLastSeen(t.lastSeenAt);
                     const isRecentlyActive = t.lastSeenAt && (new Date() - new Date(t.lastSeenAt)) < 5 * 60 * 1000;
+                    const isRetired = t.status === 'ARCHIVED' || t.status === 'DECOMMISSIONED';
+                    const canRetire = !isRetired && !t.currentOpenSessionId && !isThisDevice;
+
+                    // Secondary / destructive actions live in the "More" menu.
+                    const menuItems = [];
+                    if (t.status === 'ACTIVE' && canAction('pos.terminals', 'edit')) {
+                      // Plain Deactivate isn't one of the named lifecycle actions, so it stays gated
+                      // on the base pos.terminals edit permission.
+                      menuItems.push({ key: 'deactivate', label: 'Deactivate', icon: <Lock className="h-3.5 w-3.5" />, tone: 'amber', onClick: () => cycleStatus(t) });
+                    }
+                    if (t.status === 'INACTIVE' && canTerminalAction('block')) {
+                      menuItems.push({ key: 'block', label: 'Block', icon: <AlertTriangle className="h-3.5 w-3.5" />, tone: 'red',
+                        onClick: () => setTerminalStatus(t.terminalId, 'BLOCKED').then(u => updateTerminalRow(t.terminalId, u)) });
+                    }
+                    if (t.status === 'ARCHIVED' && t.archiveContextJson) {
+                      menuItems.push({ key: 'history', label: viewHistoryTerminalId === t.terminalId ? 'Hide archive history' : 'View archive history', icon: <Info className="h-3.5 w-3.5" />,
+                        onClick: () => setViewHistoryTerminalId(prev => prev === t.terminalId ? null : t.terminalId) });
+                    }
+                    if (t.status !== 'ARCHIVED' && t.status !== 'DECOMMISSIONED' && canTerminalAction('setautoarchiveexempt')) {
+                      menuItems.push({ key: 'exempt', label: 'Exempt from auto archive', checked: !!t.autoArchiveExempt, onClick: () => handleToggleExempt(t) });
+                    }
+                    if (canRetire && canTerminalAction('archive')) {
+                      menuItems.push({ key: 'archive', label: 'Archive…', icon: <AlertTriangle className="h-3.5 w-3.5" />, tone: 'orange', divider: true, onClick: () => handleArchiveTerminal(t) });
+                    }
+                    if ((canRetire || t.status === 'ARCHIVED') && canTerminalAction('decommission')) {
+                      menuItems.push({ key: 'decommission', label: 'Decommission…', icon: <XCircle className="h-3.5 w-3.5" />, tone: 'red', divider: !menuItems.some(m => m.divider), onClick: () => handleDecommissionTerminal(t) });
+                    }
+                    const menuOpen = terminalMenuId === t.terminalId;
+                    const toneClass = { amber: 'text-amber-700', red: 'text-red-600', orange: 'text-orange-600' };
 
                     return (
                       <div
                         key={t.terminalId}
-                        className={`bg-white rounded-2xl border shadow-sm transition-all ${
-                          isThisDevice          ? 'border-[#F5C742]/60 ring-1 ring-[#F5C742]/30' :
-                          t.status === 'BLOCKED'  ? 'border-red-100 opacity-70' :
-                          t.status === 'INACTIVE' ? 'border-gray-100 opacity-80' : 'border-gray-200'
-                        }`}
+                        className={`relative first:rounded-t-2xl last:rounded-b-2xl ${isThisDevice ? 'bg-[#FFF8E7]/60' : ''}`}
                       >
+                        {isThisDevice && <span className="absolute left-0 top-3 bottom-3 w-1 rounded-r bg-[#F5C742]" />}
+
                         {/* ── View mode ── */}
                         {!isEditing && (
                           <div className="px-5 py-4">
-                            <div className="flex items-start gap-4">
+                            <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4">
 
-                              {/* Terminal icon */}
-                              <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
-                                t.status === 'BLOCKED'  ? 'bg-red-50 text-red-400' :
-                                t.status === 'INACTIVE' ? 'bg-gray-100 text-gray-400' :
-                                t.isMainPos             ? 'bg-[#F5C742] text-[#7a4f00]' :
-                                                          'bg-[#F5C742]/15 text-[#b8920e]'
-                              }`}>
-                                {t.isMainPos ? <Star className="h-5 w-5 fill-current" /> : <Monitor className="h-5 w-5" />}
-                              </div>
-
-                              {/* Main info */}
-                              <div className="flex-1 min-w-0">
-                                {/* Name row */}
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-sm font-black text-[#1E293B]">
-                                    {t.terminalName || t.terminalId}
-                                  </span>
-                                  <span className="text-[10px] font-mono text-gray-400 bg-gray-50 border border-gray-100 px-2 py-0.5 rounded-lg">
-                                    {t.terminalId}
-                                  </span>
-                                  {isThisDevice && (
-                                    <span className="text-[10px] font-black bg-[#F5C742] text-[#1E293B] px-2 py-0.5 rounded-full uppercase tracking-wider">
-                                      This device
-                                    </span>
-                                  )}
-                                  {t.isMainPos && (
-                                    <span className="text-[10px] font-bold bg-[#327F74]/10 text-[#327F74] px-2 py-0.5 rounded-full flex items-center gap-1">
-                                      <Star className="h-2.5 w-2.5 fill-current" /> Main POS
-                                    </span>
-                                  )}
-                                  {isRecentlyActive && t.status === 'ACTIVE' && !isThisDevice && (
-                                    <span className="text-[10px] font-bold bg-green-50 text-green-600 px-2 py-0.5 rounded-full flex items-center gap-1">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" /> Online
-                                    </span>
-                                  )}
-                                  {t.currentOpenSessionId && (
-                                    <span className="text-[10px] font-bold bg-green-50 text-green-700 px-2 py-0.5 rounded-full border border-green-200/50 flex items-center gap-1">
-                                      ● Shift Open
-                                    </span>
-                                  )}
+                              <div className="flex items-start gap-3.5 flex-1 min-w-0">
+                                {/* Terminal icon */}
+                                <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
+                                  isRetired               ? 'bg-gray-100 text-gray-300' :
+                                  t.status === 'BLOCKED'  ? 'bg-red-50 text-red-400' :
+                                  t.status === 'INACTIVE' ? 'bg-gray-100 text-gray-400' :
+                                  t.isMainPos             ? 'bg-[#F5C742] text-[#7a4f00]' :
+                                                            'bg-[#F5C742]/15 text-[#b8920e]'
+                                }`}>
+                                  {t.isMainPos ? <Star className="h-5 w-5 fill-current" /> : <Monitor className="h-5 w-5" />}
                                 </div>
 
-                                {/* Meta row */}
-                                <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                                  <span className="flex items-center gap-1 text-xs text-gray-500">
-                                    <Hash className="h-3 w-3 text-gray-300" />
-                                    {counterList.length > 0 && canTerminalAction('assigncounter') ? (
-                                      <select
-                                        value={t.counterId ?? ''}
-                                        onChange={async (e) => {
-                                          const counterId = e.target.value ? Number(e.target.value) : null;
-                                          try {
-                                            const updated = await assignTerminalCounter(t.id, counterId);
-                                            setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? { ...x, counterId: updated.counterId, counterName: updated.counterName } : x));
-                                            if (currentTerminal?.terminalId === t.terminalId) {
-                                              setCurrentTerminal(prev => ({ ...prev, counterId: updated.counterId, counterName: updated.counterName }));
-                                            }
-                                          } catch (e) { console.warn('Counter assign failed', e); }
-                                        }}
-                                        className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-700 bg-white focus:outline-none focus:border-[#F5C742]"
-                                      >
-                                        <option value="">— No Counter —</option>
-                                        {counterList.map(c => (
-                                          <option key={c.id} value={c.id}>{c.counterName} ({c.counterCode})</option>
-                                        ))}
-                                      </select>
-                                    ) : (
-                                      <strong className="text-gray-700">{t.counterName || 'No counter'}</strong>
+                                <div className={`flex-1 min-w-0 ${isRetired ? 'opacity-60' : ''}`}>
+                                  {/* Name row */}
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-sm font-black text-[#1E293B]">{t.terminalName || t.terminalId}</span>
+                                    <span className="text-[10px] font-mono text-gray-400">{t.terminalId}</span>
+                                    {isThisDevice && (
+                                      <span className="text-[10px] font-black bg-[#F5C742] text-[#1E293B] px-2 py-0.5 rounded-full uppercase tracking-wider">This device</span>
                                     )}
-                                  </span>
-                                  {t.registeredBy && (
-                                    <span className="flex items-center gap-1 text-xs text-gray-400">
-                                      <Users className="h-3 w-3 text-gray-300" />
-                                      {t.registeredBy}
+                                    {t.isMainPos && (
+                                      <span className="text-[10px] font-bold bg-[#327F74]/10 text-[#327F74] px-2 py-0.5 rounded-full flex items-center gap-1">
+                                        <Star className="h-2.5 w-2.5 fill-current" /> Main POS
+                                      </span>
+                                    )}
+                                    {isRecentlyActive && t.status === 'ACTIVE' && !isThisDevice && (
+                                      <span className="text-[10px] font-bold bg-green-50 text-green-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" /> Online
+                                      </span>
+                                    )}
+                                    {t.currentOpenSessionId && (
+                                      <span className="text-[10px] font-bold bg-green-50 text-green-700 px-2 py-0.5 rounded-full border border-green-200/50">● Shift open</span>
+                                    )}
+                                    {t.autoArchiveExempt && !isRetired && (
+                                      <span className="text-[10px] font-semibold bg-gray-50 text-gray-500 border border-gray-200 px-2 py-0.5 rounded-full">Never auto-archived</span>
+                                    )}
+                                  </div>
+
+                                  {/* Meta row */}
+                                  <div className="flex items-center gap-x-4 gap-y-1 mt-1.5 flex-wrap">
+                                    <span className="flex items-center gap-1 text-xs text-gray-500">
+                                      <Hash className="h-3 w-3 text-gray-300" />
+                                      {counterList.length > 0 && canTerminalAction('assigncounter') && !isRetired ? (
+                                        <select
+                                          value={t.counterId ?? ''}
+                                          onChange={async (e) => {
+                                            const counterId = e.target.value ? Number(e.target.value) : null;
+                                            try {
+                                              const updated = await assignTerminalCounter(t.id, counterId);
+                                              setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? { ...x, counterId: updated.counterId, counterName: updated.counterName } : x));
+                                              if (currentTerminal?.terminalId === t.terminalId) {
+                                                setCurrentTerminal(prev => ({ ...prev, counterId: updated.counterId, counterName: updated.counterName }));
+                                              }
+                                            } catch (e) { console.warn('Counter assign failed', e); }
+                                          }}
+                                          className="text-xs font-semibold border border-transparent hover:border-gray-200 rounded-md px-1.5 py-0.5 text-gray-700 bg-transparent hover:bg-white focus:outline-none focus:border-[#F5C742] cursor-pointer"
+                                          title="Assign counter"
+                                        >
+                                          <option value="">— No Counter —</option>
+                                          {counterList.map(c => (
+                                            <option key={c.id} value={c.id}>{c.counterName} ({c.counterCode})</option>
+                                          ))}
+                                        </select>
+                                      ) : (
+                                        <strong className="text-gray-700">{t.counterName || 'No counter'}</strong>
+                                      )}
                                     </span>
-                                  )}
-                                  {browserLabel && (
-                                    <span className="flex items-center gap-1 text-xs text-gray-400">
-                                      <Cpu className="h-3 w-3 text-gray-300" />
-                                      {browserLabel}
-                                    </span>
-                                  )}
-                                  {lastSeenLabel && (
-                                    <span className="flex items-center gap-1 text-xs text-gray-400">
-                                      <Clock className="h-3 w-3 text-gray-300" />
-                                      {lastSeenLabel}
-                                    </span>
-                                  )}
+                                    {lastSeenLabel && (
+                                      <span className="flex items-center gap-1 text-xs text-gray-400">
+                                        <Clock className="h-3 w-3 text-gray-300" />{lastSeenLabel}
+                                      </span>
+                                    )}
+                                    {browserLabel && (
+                                      <span className="flex items-center gap-1 text-xs text-gray-400">
+                                        <Cpu className="h-3 w-3 text-gray-300" />{browserLabel}
+                                      </span>
+                                    )}
+                                    {t.registeredBy && (
+                                      <span className="flex items-center gap-1 text-xs text-gray-400">
+                                        <Users className="h-3 w-3 text-gray-300" />{t.registeredBy}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
 
                               {/* Right side: status + actions */}
-                              <div className="flex flex-col items-end gap-2 shrink-0">
-                                {/* Status badge */}
-                                <span className={`text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${sc.badge}`}>
+                              <div className="flex items-center gap-2 flex-wrap md:flex-nowrap md:justify-end shrink-0 pl-[58px] md:pl-0">
+                                <span className={`text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 whitespace-nowrap ${sc.badge}`}>
                                   {sc.icon}{sc.label}
                                 </span>
 
-                                {/* Action buttons */}
-                                <div className="flex items-center gap-2 flex-wrap justify-end">
-                                  {canTerminalAction('rename') && (
-                                    <button
-                                      onClick={() => startEdit(t)}
-                                      className="flex items-center gap-1.5 text-xs font-semibold text-[#327F74] border border-[#327F74]/30 hover:bg-[#327F74]/5 px-3 py-1.5 rounded-lg transition-colors"
-                                    >
-                                      <Wrench className="h-3.5 w-3.5" /> Rename
-                                    </button>
-                                  )}
+                                {t.status === 'DECOMMISSIONED' ? (
+                                  <span className="text-[11px] text-gray-400 italic">Permanently retired</span>
+                                ) : (
+                                  <>
+                                    {t.status === 'INACTIVE' && canAction('pos.terminals', 'edit') && (
+                                      <button
+                                        onClick={() => setTerminalStatus(t.terminalId, 'ACTIVE').then(u => updateTerminalRow(t.terminalId, u))}
+                                        className={`${iconBtn} text-green-700 border-green-200 hover:bg-green-50`}
+                                      >
+                                        <Unlock className="h-3.5 w-3.5" /> Activate
+                                      </button>
+                                    )}
+                                    {t.status === 'BLOCKED' && canTerminalAction('unblock') && (
+                                      <button
+                                        onClick={() => setTerminalStatus(t.terminalId, 'ACTIVE').then(u => updateTerminalRow(t.terminalId, u))}
+                                        className={`${iconBtn} text-green-700 border-green-200 hover:bg-green-50`}
+                                      >
+                                        <Unlock className="h-3.5 w-3.5" /> Unblock
+                                      </button>
+                                    )}
+                                    {t.status === 'ARCHIVED' && canTerminalAction('restore') && (
+                                      <button
+                                        onClick={() => handleRestoreTerminal(t)}
+                                        className={`${iconBtn} text-gray-700 border-gray-200 hover:bg-gray-50`}
+                                      >
+                                        <RotateCcw className="h-3.5 w-3.5" /> Restore
+                                      </button>
+                                    )}
+                                    {!t.isMainPos && t.status === 'ACTIVE' && canTerminalAction('setmain') && (
+                                      <button
+                                        onClick={() => promoteMainPos(t.terminalId)}
+                                        className={`${iconBtn} text-[#b8920e] border-[#F5C742]/50 hover:bg-[#F5C742]/10`}
+                                      >
+                                        <Star className="h-3.5 w-3.5" /> Set Main
+                                      </button>
+                                    )}
+                                    {canTerminalAction('rename') && !isRetired && (
+                                      <button
+                                        onClick={() => startEdit(t)}
+                                        className={`${iconBtn} text-[#327F74] border-[#327F74]/30 hover:bg-[#327F74]/5`}
+                                      >
+                                        <Wrench className="h-3.5 w-3.5" /> Rename
+                                      </button>
+                                    )}
+                                  </>
+                                )}
 
-                                  {/* Cycle status button — plain Deactivate isn't one of the named
-                                      lifecycle actions, so it stays gated on the base pos.terminals
-                                      edit permission rather than a dedicated permissions.pos.terminal.* key. */}
-                                  {t.status === 'ACTIVE' && canAction('pos.terminals', 'edit') && (
+                                {menuItems.length > 0 && (
+                                  <div className="relative">
                                     <button
-                                      onClick={() => cycleStatus(t)}
-                                      className="flex items-center gap-1.5 text-xs font-semibold text-amber-600 border border-amber-200 hover:bg-amber-50 px-3 py-1.5 rounded-lg transition-colors"
+                                      type="button"
+                                      onClick={() => setTerminalMenuId(menuOpen ? null : t.terminalId)}
+                                      aria-label="More actions"
+                                      aria-expanded={menuOpen}
+                                      className={`inline-flex items-center justify-center w-8 h-8 rounded-lg border transition-colors ${menuOpen ? 'bg-gray-100 border-gray-300 text-gray-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
                                     >
-                                      <Lock className="h-3.5 w-3.5" /> Deactivate
+                                      <MoreHorizontal className="h-4 w-4" />
                                     </button>
-                                  )}
-                                  {t.status === 'INACTIVE' && (
-                                    <>
-                                      {canAction('pos.terminals', 'edit') && (
-                                        <button
-                                          onClick={() => setTerminalStatus(t.terminalId, 'ACTIVE').then(u => setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? u : x)))}
-                                          className="flex items-center gap-1.5 text-xs font-semibold text-green-700 border border-green-200 hover:bg-green-50 px-3 py-1.5 rounded-lg transition-colors"
-                                        >
-                                          <Unlock className="h-3.5 w-3.5" /> Activate
-                                        </button>
-                                      )}
-                                      {canTerminalAction('block') && (
-                                        <button
-                                          onClick={() => setTerminalStatus(t.terminalId, 'BLOCKED').then(u => setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? u : x)))}
-                                          className="flex items-center gap-1.5 text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
-                                        >
-                                          <AlertTriangle className="h-3.5 w-3.5" /> Block
-                                        </button>
-                                      )}
-                                    </>
-                                  )}
-                                  {t.status === 'BLOCKED' && canTerminalAction('unblock') && (
-                                    <button
-                                      onClick={() => setTerminalStatus(t.terminalId, 'ACTIVE').then(u => setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? u : x)))}
-                                      className="flex items-center gap-1.5 text-xs font-semibold text-green-700 border border-green-200 hover:bg-green-50 px-3 py-1.5 rounded-lg transition-colors"
-                                    >
-                                      <Unlock className="h-3.5 w-3.5" /> Unblock
-                                    </button>
-                                  )}
-
-                                  {/* Set as Main POS */}
-                                  {!t.isMainPos && t.status === 'ACTIVE' && canTerminalAction('setmain') && (
-                                    <button
-                                      onClick={() => promoteMainPos(t.terminalId)}
-                                      className="flex items-center gap-1.5 text-xs font-semibold text-[#b8920e] border border-[#F5C742]/50 hover:bg-[#F5C742]/10 px-3 py-1.5 rounded-lg transition-colors"
-                                    >
-                                      <Star className="h-3.5 w-3.5" /> Set Main
-                                    </button>
-                                  )}
-
-                                  {/* Archive / Restore / Decommission */}
-                                  {t.status === 'DECOMMISSIONED' ? (
-                                    <span className="text-xs text-gray-400 italic px-1">Permanently retired — cannot be restored</span>
-                                  ) : t.status === 'ARCHIVED' ? (
-                                    <>
-                                      {canTerminalAction('restore') && (
-                                        <button
-                                          onClick={() => handleRestoreTerminal(t)}
-                                          className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition-colors"
-                                        >
-                                          <Unlock className="h-3.5 w-3.5" /> Restore
-                                        </button>
-                                      )}
-                                      {t.archiveContextJson && (
-                                        <button
-                                          onClick={() => setViewHistoryTerminalId(prev => prev === t.terminalId ? null : t.terminalId)}
-                                          className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition-colors"
-                                        >
-                                          <Info className="h-3.5 w-3.5" /> View History
-                                        </button>
-                                      )}
-                                      {canTerminalAction('decommission') && (
-                                        <button
-                                          onClick={() => handleDecommissionTerminal(t)}
-                                          className="flex items-center gap-1.5 text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
-                                        >
-                                          <XCircle className="h-3.5 w-3.5" /> Decommission
-                                        </button>
-                                      )}
-                                    </>
-                                  ) : (
-                                    !t.currentOpenSessionId && !isThisDevice && (
+                                    {menuOpen && (
                                       <>
-                                        {canTerminalAction('archive') && (
-                                          <button
-                                            onClick={() => handleArchiveTerminal(t)}
-                                            className="flex items-center gap-1.5 text-xs font-semibold text-orange-600 border border-orange-200 hover:bg-orange-50 px-3 py-1.5 rounded-lg transition-colors"
-                                          >
-                                            <AlertTriangle className="h-3.5 w-3.5" /> Archive
-                                          </button>
-                                        )}
-                                        {canTerminalAction('decommission') && (
-                                          <button
-                                            onClick={() => handleDecommissionTerminal(t)}
-                                            className="flex items-center gap-1.5 text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
-                                          >
-                                            <XCircle className="h-3.5 w-3.5" /> Decommission
-                                          </button>
-                                        )}
+                                        <div className="fixed inset-0 z-40" onClick={() => setTerminalMenuId(null)} />
+                                        <div className="absolute right-0 top-full mt-1 z-50 w-60 bg-white border border-gray-200 rounded-xl shadow-lg py-1">
+                                          {menuItems.map(item => (
+                                            <React.Fragment key={item.key}>
+                                              {item.divider && <div className="my-1 border-t border-gray-100" />}
+                                              <button
+                                                type="button"
+                                                onClick={() => { setTerminalMenuId(null); item.onClick(); }}
+                                                className={`w-full flex items-center gap-2.5 px-3.5 py-2 text-xs font-semibold text-left hover:bg-gray-50 ${toneClass[item.tone] || 'text-gray-700'}`}
+                                              >
+                                                {'checked' in item ? (
+                                                  <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center ${item.checked ? 'bg-[#F5C742] border-[#F5C742]' : 'border-gray-300'}`}>
+                                                    {item.checked && <CheckCircle className="h-2.5 w-2.5 text-[#1E293B]" />}
+                                                  </span>
+                                                ) : item.icon}
+                                                {item.label}
+                                              </button>
+                                            </React.Fragment>
+                                          ))}
+                                        </div>
                                       </>
-                                    )
-                                  )}
-                                </div>
-
-                                {/* Exempt from Auto Archive */}
-                                {t.status !== 'ARCHIVED' && canTerminalAction('setautoarchiveexempt') && (
-                                  <label className="flex items-center gap-1.5 text-[10px] font-semibold text-gray-400 cursor-pointer mt-0.5">
-                                    <input
-                                      type="checkbox"
-                                      checked={!!t.autoArchiveExempt}
-                                      onChange={() => handleToggleExempt(t)}
-                                      className="h-3 w-3 rounded border-gray-300 text-[#F5C742] focus:ring-[#F5C742]"
-                                    />
-                                    Exempt from Auto Archive
-                                  </label>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                             </div>
@@ -3470,7 +2902,7 @@ const POSConsole = React.memo((props) => {
                               const archiveAfterDays = posSettings?.terminalArchiveAfterDays ?? 30;
                               const daysRemaining = Math.max(archiveAfterDays - inactiveDays, 0);
                               return (
-                                <div className="mt-3 flex items-center justify-between gap-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5">
+                                <div className="mt-3 ml-0 md:ml-[58px] flex flex-wrap items-center justify-between gap-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5">
                                   <span className="text-xs font-semibold text-orange-700 flex items-center gap-1.5">
                                     <AlertTriangle className="h-3.5 w-3.5" />
                                     Inactive for {inactiveDays} day{inactiveDays === 1 ? '' : 's'} · Archive in {daysRemaining} day{daysRemaining === 1 ? '' : 's'}
@@ -3479,7 +2911,7 @@ const POSConsole = React.memo((props) => {
                                     {canTerminalAction('keepactive') && (
                                       <button
                                         onClick={() => handleKeepActive(t)}
-                                        className="text-xs font-semibold text-green-700 border border-green-200 hover:bg-green-50 px-3 py-1 rounded-lg transition-colors"
+                                        className="text-xs font-semibold text-green-700 bg-white border border-green-200 hover:bg-green-50 px-3 py-1 rounded-lg transition-colors"
                                       >
                                         Keep Active
                                       </button>
@@ -3487,7 +2919,7 @@ const POSConsole = React.memo((props) => {
                                     {canTerminalAction('archive') && (
                                       <button
                                         onClick={() => handleArchiveNow(t)}
-                                        className="text-xs font-semibold text-orange-700 border border-orange-300 hover:bg-orange-100 px-3 py-1 rounded-lg transition-colors"
+                                        className="text-xs font-semibold text-orange-700 bg-white border border-orange-300 hover:bg-orange-100 px-3 py-1 rounded-lg transition-colors"
                                       >
                                         Archive Now
                                       </button>
@@ -3501,15 +2933,23 @@ const POSConsole = React.memo((props) => {
                             {t.status === 'ARCHIVED' && viewHistoryTerminalId === t.terminalId && (() => {
                               const ctx = parseArchiveContext(t.archiveContextJson);
                               if (!ctx) return null;
+                              const rows = [
+                                ['Trigger', ctx.trigger],
+                                ['Days inactive at archive', ctx.daysInactive],
+                                ['Last heartbeat', ctx.lastHeartbeatAt && (formatLastSeen(ctx.lastHeartbeatAt) || ctx.lastHeartbeatAt)],
+                                ['Last session', ctx.lastSessionAt && (formatLastSeen(ctx.lastSessionAt) || ctx.lastSessionAt)],
+                                ['Last transaction', ctx.lastTransactionAt && (formatLastSeen(ctx.lastTransactionAt) || ctx.lastTransactionAt)],
+                                ['Archived at', ctx.archivedAt && (formatLastSeen(ctx.archivedAt) || ctx.archivedAt)],
+                              ].filter(([, v]) => v !== undefined && v !== null && v !== '');
                               return (
-                                <div className="mt-3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-xs text-gray-600 space-y-1">
-                                  <p><strong>Trigger:</strong> {ctx.trigger}</p>
-                                  <p><strong>Days inactive at archive:</strong> {ctx.daysInactive}</p>
-                                  {ctx.lastHeartbeatAt && <p><strong>Last heartbeat:</strong> {formatLastSeen(ctx.lastHeartbeatAt) || ctx.lastHeartbeatAt}</p>}
-                                  {ctx.lastSessionAt && <p><strong>Last session:</strong> {formatLastSeen(ctx.lastSessionAt) || ctx.lastSessionAt}</p>}
-                                  {ctx.lastTransactionAt && <p><strong>Last transaction:</strong> {formatLastSeen(ctx.lastTransactionAt) || ctx.lastTransactionAt}</p>}
-                                  {ctx.archivedAt && <p><strong>Archived at:</strong> {formatLastSeen(ctx.archivedAt) || ctx.archivedAt}</p>}
-                                </div>
+                                <dl className="mt-3 md:ml-[58px] bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-xs grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+                                  {rows.map(([k, v]) => (
+                                    <div key={k} className="flex justify-between gap-3">
+                                      <dt className="text-gray-400">{k}</dt>
+                                      <dd className="font-semibold text-gray-700 text-right">{String(v)}</dd>
+                                    </div>
+                                  ))}
+                                </dl>
                               );
                             })()}
                           </div>
@@ -3517,7 +2957,7 @@ const POSConsole = React.memo((props) => {
 
                         {/* ── Edit mode ── */}
                         {isEditing && (
-                          <div className="px-5 py-4 space-y-4">
+                          <div className="px-5 py-4 space-y-4 bg-[#FFF8E7]/40">
                             <div className="flex items-center gap-2">
                               <div className="w-8 h-8 rounded-lg bg-[#F5C742]/20 flex items-center justify-center">
                                 <Wrench className="h-4 w-4 text-[#b8920e]" />
@@ -3532,8 +2972,10 @@ const POSConsole = React.memo((props) => {
                                 <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Terminal Name</label>
                                 <input
                                   type="text"
+                                  autoFocus
                                   value={editTerminalName}
                                   onChange={e => setEditTerminalName(e.target.value)}
+                                  onKeyDown={e => { if (e.key === 'Enter') saveRename(t.terminalId); if (e.key === 'Escape') cancelEdit(); }}
                                   placeholder="e.g. Cashier Station 1"
                                   className="w-full h-10 px-3 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40 bg-white"
                                 />
@@ -3544,12 +2986,13 @@ const POSConsole = React.memo((props) => {
                                   type="text"
                                   value={editCounterName}
                                   onChange={e => setEditCounterName(e.target.value)}
+                                  onKeyDown={e => { if (e.key === 'Enter') saveRename(t.terminalId); if (e.key === 'Escape') cancelEdit(); }}
                                   placeholder="e.g. Counter 1"
                                   className="w-full h-10 px-3 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40 bg-white"
                                 />
                               </div>
                             </div>
-                            <div className="flex items-center gap-3 pt-1">
+                            <div className="flex items-center gap-3">
                               <button
                                 onClick={() => saveRename(t.terminalId)}
                                 disabled={terminalSaving}
@@ -3560,7 +3003,7 @@ const POSConsole = React.memo((props) => {
                               </button>
                               <button
                                 onClick={cancelEdit}
-                                className="text-sm text-gray-500 hover:text-gray-700 border border-gray-200 px-5 py-2 rounded-xl hover:bg-gray-50 transition-colors"
+                                className="text-sm text-gray-500 hover:text-gray-700 bg-white border border-gray-200 px-5 py-2 rounded-xl hover:bg-gray-50 transition-colors"
                               >
                                 Cancel
                               </button>
@@ -3572,20 +3015,97 @@ const POSConsole = React.memo((props) => {
                   })}
                 </div>
               )}
+              </div>
 
-              {/* ── Summary footer ── */}
-              {terminalList.length > 0 && !terminalsLoading && (
-                <div className="flex items-center gap-6 text-xs text-gray-400 pt-1 px-1">
-                  <span className="font-semibold text-[#1E293B]">{terminalList.length} terminal{terminalList.length !== 1 ? 's' : ''}</span>
-                  <span className="text-green-600 font-semibold flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />{activeCount} active</span>
-                  {inactiveCount > 0 && <span className="text-amber-600 font-semibold flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />{inactiveCount} inactive</span>}
-                  {blockedCount > 0 && <span className="text-red-500 font-semibold flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" />{blockedCount} blocked</span>}
-                  <span className="text-[#b8920e] font-semibold flex items-center gap-1"><Star className="h-3 w-3 fill-current" />{terminalList.filter(t => t.isMainPos).length} main POS</span>
+              {/* ── Side panel: auto archive + how it works ── */}
+              <aside className="space-y-4 xl:sticky xl:top-4">
+                <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5 space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-bold text-[#1E293B]">Auto archive</p>
+                      <p className="text-xs text-gray-400 mt-0.5 leading-snug">Archive terminals that sit unused, freeing their slot.</p>
+                    </div>
+                    <Switch
+                      checked={autoArchiveEnabled}
+                      onCheckedChange={v => updateAutoArchiveSetting({ terminalAutoArchiveEnabled: v })}
+                      aria-label="Enable auto archive"
+                    />
+                  </div>
+
+                  <div className={`space-y-3 ${autoArchiveEnabled ? '' : 'opacity-50'}`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <label htmlFor="terminal-archive-after" className="text-xs font-semibold text-gray-600">Archive after</label>
+                      <div className="relative w-28">
+                        <input
+                          id="terminal-archive-after"
+                          type="number"
+                          min={1}
+                          value={autoArchiveAfterDays}
+                          onChange={e => updateAutoArchiveSetting({ terminalArchiveAfterDays: Number(e.target.value) })}
+                          className="w-full h-9 pl-3 pr-11 text-sm text-right border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40 bg-white"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-gray-400 pointer-events-none">days</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <label className="flex items-center gap-2 text-xs font-semibold text-gray-600 cursor-pointer">
+                        <Switch
+                          checked={autoArchiveNotifyBefore}
+                          onCheckedChange={v => updateAutoArchiveSetting({ terminalArchiveNotifyBefore: v })}
+                          aria-label="Warn before archiving"
+                        />
+                        Warn before
+                      </label>
+                      <div className="relative w-28">
+                        <input
+                          type="number"
+                          min={0}
+                          disabled={!autoArchiveNotifyBefore}
+                          value={autoArchiveWarningDays}
+                          onChange={e => updateAutoArchiveSetting({ terminalArchiveWarningDays: Number(e.target.value) })}
+                          aria-label="Warning period (days)"
+                          className="w-full h-9 pl-3 pr-11 text-sm text-right border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40 bg-white disabled:bg-gray-50 disabled:text-gray-300"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-gray-400 pointer-events-none">days</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {autoArchiveConfigInvalid ? (
+                    <p className="text-xs text-red-500 font-semibold leading-snug">
+                      Archive-after must be more than zero, and the warning period shorter than it.
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-gray-500 leading-snug bg-gray-50 rounded-lg px-3 py-2">
+                      {autoArchiveEnabled
+                        ? <>Terminals idle for <strong>{autoArchiveAfterDays} day{autoArchiveAfterDays === 1 ? '' : 's'}</strong> are archived{autoArchiveNotifyBefore && autoArchiveWarningDays > 0 ? <>, with a warning <strong>{autoArchiveWarningDays} day{autoArchiveWarningDays === 1 ? '' : 's'}</strong> before</> : ''}. Exempt terminals are skipped.</>
+                        : 'Off. Terminals stay until you archive them by hand.'}
+                    </p>
+                  )}
+
+                  <button
+                    onClick={handleSaveAutoArchiveSettings}
+                    disabled={autoArchiveConfigInvalid}
+                    className="w-full h-9 text-xs font-bold text-[#1E293B] bg-[#F5C742] hover:bg-[#e6b93a] disabled:bg-gray-100 disabled:text-gray-300 rounded-lg transition-colors"
+                  >
+                    Save
+                  </button>
                 </div>
-              )}
+
+                <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
+                  <p className="text-sm font-bold text-[#1E293B] flex items-center gap-1.5"><Info className="h-4 w-4 text-gray-400" /> How terminals work</p>
+                  <ul className="mt-3 space-y-2 text-xs text-gray-500 leading-snug">
+                    <li className="flex gap-2"><span className="mt-1.5 w-1 h-1 rounded-full bg-gray-300 shrink-0" />Each browser or device that opens POS is registered automatically from a device fingerprint.</li>
+                    <li className="flex gap-2"><span className="mt-1.5 w-1 h-1 rounded-full bg-gray-300 shrink-0" />Clearing browser data can make the same PC register again and take another slot.</li>
+                    <li className="flex gap-2"><span className="mt-1.5 w-1 h-1 rounded-full bg-gray-300 shrink-0" />Blocked terminals keep their slot. Archived terminals free it and can be restored.</li>
+                    <li className="flex gap-2"><span className="mt-1.5 w-1 h-1 rounded-full bg-gray-300 shrink-0" />Decommissioning is permanent and cannot be undone.</li>
+                  </ul>
+                </div>
+              </aside>
+              </div>
 
               {/* ── Counter Management (embedded) ── */}
-              <div className="border-t border-gray-200 pt-6 mt-2">
+              <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
                 <div className="flex items-center gap-3 mb-5">
                   <div className="w-7 h-7 rounded-lg bg-[#F5C742]/20 flex items-center justify-center">
                     <Layers className="h-4 w-4 text-[#b8920e]" />

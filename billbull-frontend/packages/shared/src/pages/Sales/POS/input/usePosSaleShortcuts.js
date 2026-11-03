@@ -1,6 +1,17 @@
 import { usePosShortcuts } from './PosOverlayContext';
 import { POS_SCOPES } from './posScope';
-import { resolveShortcutLine } from './posShortcuts';
+import { CART_ZONE_ATTR, resolveShortcutLine, stepCartLine } from './posShortcuts';
+
+/** Cart rows carry data-cart-line-id; keep the line the cursor moved to on screen. */
+const scrollCartLineIntoView = (id) => {
+  if (typeof document === 'undefined' || typeof requestAnimationFrame !== 'function') return;
+  requestAnimationFrame(() => {
+    const zone = document.querySelector(`[${CART_ZONE_ATTR}]`);
+    const row = zone && Array.from(zone.querySelectorAll('[data-cart-line-id]'))
+      .find((el) => el.getAttribute('data-cart-line-id') === String(id));
+    row?.scrollIntoView?.({ block: 'nearest' });
+  });
+};
 
 /**
  * The SALE-scope shortcut actions every template shares (posShortcuts.js). The template passes
@@ -12,7 +23,10 @@ import { resolveShortcutLine } from './posShortcuts';
  * @param items          the cart lines
  * @param selectedId     the cart line the cashier selected, if any
  * @param lastEnteredId  the cart line most recently entered (useProductEntry)
- * @param onCheckout     (quickCash|null) → opens checkout through handleCheckout
+ * @param onCheckout     (quickCash|{ tender }|null) → opens checkout through handleCheckout
+ *                       (posShortcuts.checkoutOptions turns the argument into its options)
+ * @param onSelect       (lineId) → selects a cart line (the cart cursor's ↑ / ↓). Without it
+ *                       the template has no cart cursor, and F6 / the cart keys stay inert.
  * @param onHold         the template's Hold action
  * @param onQuantity     (lineId, quantity) → updateQuantity
  * @param onRemove       (lineId) → the guarded remove/void (supervisor rules included)
@@ -31,11 +45,14 @@ export function usePosSaleShortcuts({
   onMode,
   onCustomer = null,
   onSearch = null,
+  onSelect = null,
 }) {
   const target = () => resolveShortcutLine({ items, selectedId, lastEnteredId });
   const actions = {
     // The Checkout and Hold buttons are disabled on an empty cart; so are their keys.
     checkout: (quickCash) => { if (items.length > 0) onCheckout?.(quickCash); },
+    // A tender hotkey with the cart cursor in the cart: checkout, that tender's modal up.
+    tender: (method) => { if (items.length > 0) onCheckout?.({ tender: method }); },
     hold: () => { if (items.length > 0) onHold?.(); },
     qtyStep: (delta) => {
       const line = target();
@@ -52,6 +69,20 @@ export function usePosSaleShortcuts({
     },
     mode: (mode) => onMode?.(mode, target()),
   };
+  if (onSelect) {
+    const select = (id) => {
+      if (id == null) return;
+      onSelect(id);
+      scrollCartLineIntoView(id);
+    };
+    // F6 into the cart: the cursor lands on the line the line shortcuts already target, else
+    // the newest line, so +, − and Delete keep acting on the same line they did a moment ago.
+    actions.cartEnter = () => {
+      const line = target();
+      select(line ? line.id : stepCartLine({ items, currentId: null, delta: 1 }));
+    };
+    actions.cartMove = (delta) => select(stepCartLine({ items, currentId: target()?.id ?? null, delta }));
+  }
   if (onCustomer) actions.customer = onCustomer;
   if (onSearch) actions.search = onSearch;
   usePosShortcuts({ scope: POS_SCOPES.SALE, actions });

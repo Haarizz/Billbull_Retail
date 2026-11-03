@@ -1046,7 +1046,7 @@ describe('6. source — ownership stays in POSSales', () => {
   it('state and handlers the block reads are owned by POSSales / useCheckout, not by the component', () => {
     expect(count(POS_SALES, '  const [showReprintModal, setShowReprintModal] = useState(false);')).toBe(1);
     expect(count(POS_SALES, '  const [receiptShareChannel, setReceiptShareChannel] = useState(null);')).toBe(1);
-    expect(count(POS_SALES, '  const handleReceiptShareSend = useCallback(async (value) => {')).toBe(1);
+    expect(count(POS_SALES, '  const handleReceiptShareSend = useCallback(async (value, options) => {')).toBe(1);
     expect(POS_SALES).toMatch(/\n {4}lastPaidInvoice,\n[\s\S]*?\} = useCheckout\(\{/);
     expect(POS_SALES).toMatch(/^import \{[^}]*\bgetSalesInvoiceById\b[^}]*\} from '\.\.\/\.\.\/api\/salesInvoiceApi';$/m);
   });

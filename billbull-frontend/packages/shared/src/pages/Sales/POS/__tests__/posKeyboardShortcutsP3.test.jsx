@@ -91,7 +91,7 @@ function usePaymentStub(total) {
 }
 
 /** POSSales, reduced to the state the three templates and the checkout read. */
-function PosHarness({ template, api }) {
+function PosHarness({ template, api, quick = true }) {
   const [items, setItems] = useState([]);
   const [lastEnteredLineId, setLastEnteredLineId] = useState(null);
   const [invoiceCounter, setInvoiceCounter] = useState(0);
@@ -180,7 +180,7 @@ function PosHarness({ template, api }) {
   const holdInvoice = useCallback(() => { api.held(); setItems([]); }, [api]);
   // POSSales.handleCheckout: opens checkout and hands a double/triple Enter's request to the panel.
   const handleCheckout = useCallback((opts) => {
-    api.checkout(opts?.quickCash ?? null);
+    api.checkout(opts?.quickCash ?? (opts?.tender ? { tender: opts.tender } : null));
     setCheckoutPhase('payment');
     setShowPaymentDialog(true);
     quickCashSeq.current += 1;
@@ -225,7 +225,7 @@ function PosHarness({ template, api }) {
     classicDiscountType: 'percent', setClassicDiscountType: noop,
     discountInputType: 'percent', setDiscountInputType: noop,
     resetFocusMode: () => { setPosActionMode('none'); setSelectedFocusItemId(null); setBarcodeInput(''); },
-    rightPanelTab, setRightPanelTab, hiddenPanelButtons, posTemplate: template,
+    rightPanelTab, setRightPanelTab, hiddenPanelButtons, posTemplate: template, quickCheckoutEnabled: quick,
     handleCheckout, showFeedback: noop,
     openQuickCustomerModal: noop, showQuickCustomerModal: false, setShowQuickCustomerModal: noop,
     quickCustomerForm: {}, setQuickCustomerForm: noop,
@@ -368,9 +368,9 @@ const makeApi = () => {
   api.expose = (handles) => Object.assign(api, handles);
   return api;
 };
-const setup = async (template) => {
+const setup = async (template, { quick = true } = {}) => {
   const api = makeApi();
-  render(<PosHarness template={template} api={api} />);
+  render(<PosHarness template={template} api={api} quick={quick} />);
   await flush();
   return api;
 };
@@ -993,5 +993,176 @@ describe('settlement through useCheckout', () => {
     chord();
     await flush();
     expect(posCheckout).not.toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// Quick checkout from the cart: the quick-pay bar, and the cart cursor (F6) with its keys.
+const cartZone = () => document.querySelector('[data-pos-cart]');
+const inCart = () => Boolean(cartZone()) && cartZone().contains(document.activeElement);
+// Trade POS: the quick-pay bar under its cart. Classic / Cart Focus: the tender rail.
+const quickPay = (label) => within(screen.queryByTestId('quick-checkout-bar') || screen.getByTestId('quick-checkout-rail'))
+  .getByRole('button', { name: new RegExp(`^Checkout with ${label}`) });
+
+describe.each(TEMPLATES)('%s — quick checkout from the cart', (_, t) => {
+  it('the quick-pay bar is disabled on an empty cart', async () => {
+    await setup(t);
+    for (const label of ['Cash', 'Card', 'Online', 'Credit', 'BNPL']) expect(quickPay(label)).toBeDisabled();
+  });
+
+  it.each([
+    ['Card', PAYMENT_TYPES.CARD, 'Card Payment'],
+    ['Cash', PAYMENT_TYPES.CASH, 'Cash Payment'],
+    ['BNPL', PAYMENT_TYPES.BNPL, 'Buy Now, Pay Later'],
+  ])('a %s tap opens checkout with that tender\'s modal already up, nothing allocated', async (label, type, modal) => {
+    const api = await setup(t);
+    await scan(WIDGET);
+    await click(quickPay(label));
+    expect(checkoutOpen()).toBe(true);
+    expect(api.checkout.mock.calls).toEqual([[{ tender: type }]]);
+    expect(dialog(modal)).not.toBeNull();
+    expect(api.lines()).toEqual([]);
+  });
+
+  it('F6 puts the cursor in the cart on the last entered line, and F6 again returns it to search', async () => {
+    const api = await setup(t);
+    await scan(WIDGET);
+    await scan(GADGET);
+    await press('F6');
+    expect(inCart()).toBe(true);
+    expect(api.selected()).toBe('p2');
+    await press('F6');
+    expectFocus(searchBox(t));
+  });
+
+  it.each([
+    ['d', 'Card Payment', PAYMENT_TYPES.CARD],
+    ['c', 'Cash Payment', PAYMENT_TYPES.CASH],
+    ['B', 'Buy Now, Pay Later', PAYMENT_TYPES.BNPL],
+  ])('with the cursor in the cart, %s opens checkout straight onto its tender', async (k, modal, type) => {
+    const api = await setup(t);
+    await scan(WIDGET);
+    await press('F6');
+    await press(k);
+    expect(checkoutOpen()).toBe(false); // held for the scanner settle window first
+    await settleHotkey();
+    expect(checkoutOpen()).toBe(true);
+    expect(api.checkout.mock.calls).toEqual([[{ tender: type }]]);
+    expect(dialog(modal)).not.toBeNull();
+  });
+
+  it('a tender letter typed in the search is text, never a checkout', async () => {
+    const api = await setup(t);
+    await scan(WIDGET);
+    await type('d');
+    await settleHotkey();
+    expect(checkoutOpen()).toBe(false);
+    expect(api.checkout).not.toHaveBeenCalled();
+    expect(searchBox(t).value).toBe('d');
+  });
+
+  it('a barcode starting with a tender letter, scanned with the cursor in the cart, is a product scan', async () => {
+    const api = await setup(t);
+    await scan(WIDGET);
+    await press('F6');
+    await scan('D12345');
+    expect(checkoutOpen()).toBe(false);
+    expect(api.checkout).not.toHaveBeenCalled();
+    expect(api.added.mock.calls).toEqual([[WIDGET], ['D12345']]);
+  });
+
+  it('↑ / ↓ move the cart cursor, and + acts on the line it is on', async () => {
+    const api = await setup(t);
+    await scan(WIDGET);
+    await scan(GADGET); // Gadget on top, Widget below
+    await press('F6');
+    expect(api.selected()).toBe('p2');
+    await press('ArrowDown');
+    expect(api.selected()).toBe('p1');
+    await press('ArrowDown'); // held at the end
+    expect(api.selected()).toBe('p1');
+    await press('+');
+    await settleHotkey();
+    expect(qtyOf(api, 'p1')).toBe(2);
+    expect(qtyOf(api, 'p2')).toBe(1);
+    await press('ArrowUp');
+    expect(api.selected()).toBe('p2');
+    expect(inCart()).toBe(true);
+  });
+
+  it('Enter in the cart checks out; Esc returns the cursor to search', async () => {
+    const api = await setup(t);
+    await scan(WIDGET);
+    await press('F6');
+    await press('Escape');
+    expectFocus(searchBox(t));
+    await press('F6');
+    await enterTaps(1);
+    expect(checkoutOpen()).toBe(true);
+    expect(api.checkout.mock.calls).toEqual([[null]]);
+  });
+
+  it('a tender key on an empty cart does nothing', async () => {
+    const api = await setup(t);
+    await press('F6');
+    expect(inCart()).toBe(true);
+    await press('d');
+    await settleHotkey();
+    expect(checkoutOpen()).toBe(false);
+    expect(api.checkout).not.toHaveBeenCalled();
+  });
+});
+
+describe.each(TEMPLATES.filter(([, t]) => t !== 'compact'))('%s — Quick Checkout rail', (_, t) => {
+  it('has no separate Checkout button: the tenders are the checkout', async () => {
+    await setup(t);
+    const rail = screen.getByTestId('quick-checkout-rail');
+    expect(within(rail).getAllByRole('button', { name: /^Checkout with/ }).map((b) => b.getAttribute('aria-label')))
+      .toEqual(['Checkout with Cash (C)', 'Checkout with Card (D)', 'Checkout with Credit (R)', 'Checkout with Online (O)', 'Checkout with BNPL (B)']);
+    expect(screen.queryByRole('button', { name: /^checkout$/i })).toBeNull();
+  });
+
+  it('Add-ons swaps the rail for the Functions / History panel, and ✕ brings the rail back', async () => {
+    await setup(t);
+    await click(screen.getByRole('button', { name: /Add-ons/ }));
+    expect(screen.queryByTestId('quick-checkout-rail')).toBeNull();
+    expect(screen.getByRole('button', { name: /^History$/i })).toBeTruthy();
+    await click(screen.getByRole('button', { name: 'Close add-ons' }));
+    expect(screen.getByTestId('quick-checkout-rail')).toBeTruthy();
+  });
+
+  it('Add-ons works on an empty cart while the tenders stay disabled', async () => {
+    await setup(t);
+    expect(quickPay('Cash')).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Add-ons/ })).toBeEnabled();
+  });
+});
+
+describe.each(TEMPLATES.filter(([, t]) => t !== 'compact'))('%s — Quick Checkout switched off', (_, t) => {
+  it('shows the Functions panel with a Checkout button, and no rail', async () => {
+    await setup(t, { quick: false });
+    expect(screen.queryByTestId('quick-checkout-rail')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Add-ons/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /^History$/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^checkout/i })).toBeDisabled();
+  });
+
+  it('the Checkout button opens a plain checkout', async () => {
+    const api = await setup(t, { quick: false });
+    await scan(WIDGET);
+    await click(screen.getByRole('button', { name: /^checkout/i }));
+    expect(checkoutOpen()).toBe(true);
+    expect(api.checkout.mock.calls).toEqual([[null]]);
+    expect(dialog('Card Payment')).toBeNull();
+  });
+
+  it('the cart keys still work: F6 then D checks out on Card', async () => {
+    const api = await setup(t, { quick: false });
+    await scan(WIDGET);
+    await press('F6');
+    await press('d');
+    await settleHotkey();
+    expect(api.checkout.mock.calls).toEqual([[{ tender: PAYMENT_TYPES.CARD }]]);
+    expect(dialog('Card Payment')).not.toBeNull();
   });
 });

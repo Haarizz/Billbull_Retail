@@ -35,7 +35,7 @@ import ShippedProductSearch from '../features/products/ProductSearch';
  * receives exactly the 9 bindings below under their ORIGINAL POSSales names.
  *
  * Pre-extraction region: POSSales.jsx:9765–9851, `{/* ─── SEARCH PRODUCTS MODAL ─── *\/}` ..
- * matching `      )}` — 87 lines (anchor + `{showProductSearch && (` + one JSX tree). A
+ * matching `      )}` — 91 lines (anchor + `{showProductSearch && (` + one JSX tree). A
  * hand-rolled fixed overlay: no Radix Dialog, no portal, no IIFE, no key on the root, no nested
  * dialog. Conditionally MOUNTED: closing unmounts the whole tree (the input DOM node is recreated
  * on reopen). Sits between the PRICE CHECK call site (`      )}`, extracted to PriceCheck.jsx) and the CREDIT BALANCE MODAL
@@ -191,6 +191,10 @@ function ProductSearchHarness({ currentTerminal, currentSession, handleProductSe
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-[#1E293B] leading-tight truncate">{product.name}</p>
                         <p className="text-[11px] font-mono text-gray-400 truncate">{product.code}{product.barcode ? ` | ${product.barcode}` : ''}</p>
+                        <p className="text-[11px] text-gray-500 truncate">
+                          Zone: <span className="font-semibold text-gray-700">{product.zoneName || '-'}</span>
+                          {' | '}Locator: <span className="font-semibold text-gray-700">{product.locatorName || '-'}</span>
+                        </p>
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-sm font-bold text-[#327F74]">{formatCurrency(product.price)}</p>
@@ -906,14 +910,14 @@ describe('source contract', () => {
     expect(CALLSITE).not.toContain('=>');
   });
 
-  it('the pre-extraction reference is the 87-line region', () => {
+  it('the pre-extraction reference is the 91-line region', () => {
     const lines = REGION.split('\n');
-    expect(lines).toHaveLength(87);
+    expect(lines).toHaveLength(91);
     expect(lines[0]).toBe(ANCHOR);
     expect(lines[1]).toBe('      {showProductSearch && (');
     expect(lines[2]).toBe('        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">');
-    expect(lines[85]).toBe('        </div>');
-    expect(lines[86]).toBe('      )}');
+    expect(lines[89]).toBe('        </div>');
+    expect(lines[90]).toBe('      )}');
     expect(REGION).not.toContain('(() => {');
   });
 

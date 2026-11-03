@@ -817,7 +817,10 @@ describe('11. POSSales call sites (source)', () => {
   it('the panel reads nothing from POSSales scope: its only imports are payments/POSCurrency/lucide/react and the POS input layer', () => {
     const imports = PANEL.match(/^import .* from '([^']+)';$/gm).map((l) => l.match(/from '([^']+)'/)[1]);
     expect(imports).toEqual([
-      'react', 'lucide-react', './paymentModel', './paymentFlow', './paymentSelectors', '../POSCurrency',
+      'react', 'lucide-react', './paymentModel',
+      // The tender list the cart's quick-pay bar shares.
+      './paymentMethods',
+      './paymentFlow', './paymentSelectors', '../POSCurrency',
       './PaymentAllocationList',
       './modals/CashPaymentModal', './modals/CardPaymentModal', './modals/OnlinePaymentModal',
       './modals/CreditPaymentModal', './modals/VoucherPaymentModal', './modals/BnplPaymentModal',

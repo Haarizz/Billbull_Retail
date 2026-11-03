@@ -12,6 +12,7 @@ import { usePosInputController } from '../input/usePosInputController';
 import { createPosFocusController } from '../input/usePosFocusController';
 import { POS_FOCUS_TARGETS as T } from '../input/posFocus';
 import { POS_OVERLAY_IDS } from '../input/posScope';
+import { ENTER_MULTI_TAP_MS } from '../input/posShortcuts';
 
 vi.mock('../../../../api/salesInvoiceApi', () => ({
   getCustomerOutstanding: vi.fn(() => Promise.resolve({ outstanding: 0 })),
@@ -333,6 +334,23 @@ const holdButton = (t) => (t === 'compact'
   : screen.getAllByRole('button', { name: 'Hold' })[0]);
 const checkoutButton = () => screen.getAllByRole('button', { name: /checkout/i })
   .find((b) => !b.closest('[data-testid]'));
+/**
+ * A plain checkout (no tender preselected). Trade POS clicks its Checkout button. Classic and
+ * Cart Focus have no Checkout button — their right column is the Quick Checkout tender rail —
+ * so the plain checkout is Enter on the empty search, waited out past its multi-tap window and
+ * the stray-Enter cooldown so the test's next Enter is its own.
+ */
+const openCheckout = async (t) => {
+  if (t === 'compact') {
+    await click(checkoutButton());
+    return;
+  }
+  await press('Enter');
+  advance(ENTER_MULTI_TAP_MS + 5);
+  await flush();
+  advance(ENTER_MULTI_TAP_MS + 10);
+  await flush();
+};
 const customerOpener = () => screen.getAllByRole('button', { name: /Walk-in Customer/ })[0];
 const customerSearch = () => screen.getByPlaceholderText(/Search (Name|Customer)/);
 // A method tile's accessible name starts with its hotkey badge ("c Cash").
@@ -479,7 +497,7 @@ describe.each(TEMPLATES)('%s', (_, t) => {
     const { api } = setup(t);
     await flush();
     await scan(WIDGET);
-    await click(checkoutButton());
+    await openCheckout(t);
     await press('Enter'); // Cash
     expectFocus(screen.getByRole('dialog', { name: 'Cash Payment' }));
     await scan(GADGET);
@@ -511,7 +529,7 @@ describe.each(TEMPLATES)('%s', (_, t) => {
     targets.push(derivedTarget(api));
 
     // CHECKOUT: the first payment method; a scan adds nothing.
-    await click(checkoutButton());
+    await openCheckout(t);
     expectFocus(methodTile('Cash'));
     targets.push(derivedTarget(api));
     await scan(WIDGET);
@@ -555,7 +573,7 @@ describe.each(TEMPLATES)('%s', (_, t) => {
     setup(t);
     await flush();
     await scan(WIDGET);
-    await click(checkoutButton());
+    await openCheckout(t);
     await press('Enter'); // Cash
     await type('4');
     await press('Enter'); // 4 of 10: the next tender opens straight away
@@ -571,7 +589,7 @@ describe.each(TEMPLATES)('%s', (_, t) => {
     const { api } = setup(t);
     await flush();
     await scan(WIDGET);
-    await click(checkoutButton());
+    await openCheckout(t);
     await press('Enter');
     await press('Enter');
     await press('Enter'); // settle

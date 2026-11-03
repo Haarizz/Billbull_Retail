@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
   getCounters, createCounter, updateCounter, setCounterStatus, deleteCounter,
 } from "../../api/counterApi";
+import { confirmDialog } from "../../components/AppConfirmBridge";
 
 const STATUS_COLORS = {
   ACTIVE: "bg-green-100 text-green-700 border-green-200",
@@ -129,7 +130,12 @@ export default function POSCounters({ onCounterChange }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Delete this counter? This cannot be undone.")) return;
+    if (!(await confirmDialog({
+      title: "Delete this counter?",
+      message: "This cannot be undone.",
+      confirmLabel: "Delete counter",
+      tone: "danger",
+    }))) return;
     try {
       await deleteCounter(id);
       setCounters((prev) => prev.filter((c) => c.id !== id));

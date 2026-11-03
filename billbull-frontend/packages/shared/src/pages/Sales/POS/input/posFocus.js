@@ -1,4 +1,5 @@
 import { POS_SCOPES } from './posScope';
+import { CART_ZONE_ATTR } from './posShortcuts';
 
 /**
  * POS focus targets: which control should hold the caret for the current POS state.
@@ -18,13 +19,17 @@ export const POS_FOCUS_TARGETS = Object.freeze({
   PAYMENT_AMOUNT: 'PAYMENT_AMOUNT',
   SETTLE: 'SETTLE',
   NEW_SALE: 'NEW_SALE',
+  // The cart region (the cart cursor). Never derived: only an explicit request (F6) or a click
+  // in the cart puts the caret there.
+  CART: 'CART',
   NONE: 'NONE',
 });
 
 const T = POS_FOCUS_TARGETS;
 
 /** The item keypad modes (posActionMode / classicNumpadMode) and the field each one types into. */
-export const ITEM_ENTRY_FOCUS = Object.freeze({ qty: T.QUANTITY, discount: T.DISCOUNT, price: T.PRICE });
+// 'unit' (the packing-unit picker) keys its choice into the same Alter Item field as Quantity.
+export const ITEM_ENTRY_FOCUS = Object.freeze({ qty: T.QUANTITY, discount: T.DISCOUNT, price: T.PRICE, unit: T.QUANTITY });
 
 /**
  * Targets a pointer interaction re-asserts. In SALE and ITEM_ENTRY the cashier's next keystroke
@@ -68,6 +73,12 @@ export function deriveFocusTarget({
     default:
       return T.NONE;
   }
+}
+
+/** The cart region holding `target` (an element or text node), or null. */
+export function cartZoneOf(target) {
+  const el = target?.nodeType === 3 ? target.parentElement : target;
+  return typeof el?.closest === 'function' ? el.closest(`[${CART_ZONE_ATTR}]`) : null;
 }
 
 const elementOf = (record) => {

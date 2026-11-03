@@ -14,8 +14,13 @@ describe('POS host capabilities', () => {
     expect(EMBEDDED_POS_HOST.terminalAdministration).toBe(true);
   });
 
-  it('lets the standalone host turn terminal administration off', () => {
+  it('gives the standalone host terminal administration too', () => {
     render(<PosHostContext.Provider value={STANDALONE_POS_HOST}><Probe /></PosHostContext.Provider>);
+    expect(screen.getByText('true')).toBeTruthy();
+  });
+
+  it('lets a host turn terminal administration off', () => {
+    render(<PosHostContext.Provider value={{ terminalAdministration: false }}><Probe /></PosHostContext.Provider>);
     expect(screen.getByText('false')).toBeTruthy();
   });
 

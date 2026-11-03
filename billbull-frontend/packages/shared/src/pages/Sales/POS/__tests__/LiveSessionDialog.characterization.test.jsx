@@ -3,10 +3,8 @@ import path from 'node:path';
 import React, { useEffect, useState } from 'react';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Activity, FileText, RefreshCw, X } from 'lucide-react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { Dialog, DialogContent } from '../../../../components/ui/dialog';
 import { CurrencyAmount } from '../POSCurrency';
 import { parseUTCDate } from '../lib/posFormatting';
 import LiveSessionDialog from '../features/session/LiveSessionDialog';
@@ -18,130 +16,12 @@ vi.mock('../lib/posFormatting', async (importOriginal) => {
 });
 
 /**
- * Characterization of the POSSales.jsx "Live Session Quick View" dialog, now extracted to
- * POS/features/session/LiveSessionDialog.jsx.
+ * Characterization of the POS "Live Session" quick-view dialog (POS/features/session/LiveSessionDialog.jsx),
+ * opened from the POSSales dashboard tile. The 2026-11 redesign changed the markup (sales hero, payment
+ * mix, cash-drawer breakdown) but not the behaviour: same props, same figures and fallbacks, same
+ * refresh/close/X-Report wiring, same render-time calculation. Figures are located by data-figure.
  *
- * OriginalLiveSessionMarkup is the pre-extraction reference: its props are named exactly after
- * the POSSales identifiers the markup read, and the JSX between VERBATIM-START/END is the original
- * POSSales block. The "LiveSessionDialog source" block below enforces that the component is that
- * same JSX, line for line, modulo the five prop renames.
- */
-function OriginalLiveSessionMarkup({
-  showLiveSessionDialog,
-  setShowLiveSessionDialog,
-  xReportData,
-  xReportLoading,
-  currentSession,
-  currentTerminal,
-  sessionNowMs,
-  loadXReport,
-  setCurrentView,
-}) {
-  return (
-    // VERBATIM-START
-      <Dialog open={showLiveSessionDialog} onOpenChange={setShowLiveSessionDialog}>
-        <DialogContent className="sm:max-w-lg border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden">
-          {(() => {
-            const xSummary = xReportData?.summary || {};
-            const sess = xReportData?.session || currentSession;
-            const totalSales = Number(xSummary.totalSales ?? 0);
-            const txCount = Number(xSummary.invoiceCount ?? 0);
-            const openingCash = Number(xSummary.openingCash ?? currentSession?.openingCash ?? 0);
-            const cashSales = Number(xSummary.cashSales ?? 0);
-            const cardSales = Number(xSummary.cardSales ?? 0);
-            const walletSales = Number(xSummary.walletSales ?? 0);
-            const dropIn = Number(xSummary.cashDropIn ?? 0);
-            const dropOut = Number(xSummary.cashDropOut ?? 0);
-            const expectedCash = Number(xSummary.expectedCash ?? 0);
-            const sessionStart = sess?.openedAt ? parseUTCDate(sess.openedAt) : (sess?.startTime ? parseUTCDate(sess.startTime) : null);
-            const diffMin = sessionStart ? Math.floor((sessionNowMs - sessionStart.getTime()) / 60000) : 0;
-            const durH = Math.floor(diffMin / 60);
-            const durM = diffMin % 60;
-            const duration = sessionStart ? (durH > 0 ? `${durH}h ${durM}m` : `${durM}m`) : '—';
-            const loading = xReportLoading || xReportData === null;
-
-            const rows = [
-              { label: "Today's Sales", value: <CurrencyAmount amount={totalSales} />, accent: '#327F74' },
-              { label: 'Transactions', value: txCount, accent: '#6366F1' },
-              { label: 'Cash Sales', value: <CurrencyAmount amount={cashSales} />, accent: '#1E293B' },
-              { label: 'Card Sales', value: <CurrencyAmount amount={cardSales} />, accent: '#1E293B' },
-              { label: 'Wallet Sales', value: <CurrencyAmount amount={walletSales} />, accent: '#1E293B' },
-              { label: 'Opening Cash', value: <CurrencyAmount amount={openingCash} />, accent: '#1E293B' },
-              { label: 'Cash Drop In', value: <CurrencyAmount amount={dropIn} />, accent: '#327F74' },
-              { label: 'Cash Out', value: dropOut > 0 ? <>(<CurrencyAmount amount={dropOut} />)</> : <CurrencyAmount amount={0} />, accent: '#EF4444' },
-              { label: 'Expected Cash in Drawer', value: <CurrencyAmount amount={expectedCash} />, accent: '#F5C742' },
-            ];
-
-            return (
-              <>
-                <div className="px-6 pt-6 pb-4 border-b border-gray-100">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2.5 rounded-xl bg-[#F5C742]/15">
-                        <Activity className="h-5 w-5 text-[#b8920e]" />
-                      </div>
-                      <div>
-                        <h2 className="text-base font-bold text-[#1E293B]">Live Session</h2>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          {sess?.id ? `Session #${sess.id}` : 'Current session'} · {duration} elapsed
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={loadXReport} disabled={xReportLoading} title="Refresh"
-                        className="text-gray-400 hover:text-[#327F74] transition-colors mt-0.5 disabled:opacity-40">
-                        <RefreshCw className={`h-4 w-4 ${xReportLoading ? 'animate-spin' : ''}`} />
-                      </button>
-                      <button onClick={() => setShowLiveSessionDialog(false)} className="text-gray-300 hover:text-gray-500 transition-colors mt-0.5">
-                        <X className="h-5 w-5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="px-6 py-5">
-                  <div className="grid grid-cols-2 gap-2 text-xs text-gray-500 mb-4">
-                    <p>Cashier: <span className="text-[#1E293B] font-medium">{sess?.openedBy || '—'}</span></p>
-                    <p>Terminal: <span className="text-[#1E293B] font-medium">{sess?.terminalId || currentTerminal?.terminalId || '—'}</span></p>
-                  </div>
-                  <div className="rounded-xl border border-gray-100 divide-y divide-gray-100 overflow-hidden">
-                    {rows.map(row => (
-                      <div key={row.label} className="flex items-center justify-between px-4 py-2.5">
-                        <span className="text-sm text-gray-600">{row.label}</span>
-                        <span className="text-sm font-bold" style={{ color: row.accent }}>
-                          {loading ? <span className="inline-block h-4 w-16 bg-gray-200 rounded animate-pulse" /> : row.value}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="px-6 pb-6 flex items-center justify-end gap-3">
-                  <button
-                    onClick={() => setShowLiveSessionDialog(false)}
-                    className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
-                  >
-                    Close
-                  </button>
-                  <button
-                    onClick={() => { setShowLiveSessionDialog(false); setCurrentView('x-report'); }}
-                    className="h-10 px-6 text-sm font-semibold rounded-xl bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] flex items-center gap-2 transition-colors"
-                  >
-                    <FileText className="h-4 w-4" />
-                    Full X-Report
-                  </button>
-                </div>
-              </>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
-    // VERBATIM-END
-  );
-}
-
-/**
- * The extracted component mounted through the POSSales call site. The JSX between WIRING-START/END
+ * The component mounted through the POSSales call site. The JSX between WIRING-START/END
  * is enforced line-for-line against POSSales, so the spies in the shared tests observe exactly what
  * the live parent passes (loadXReport by reference, the close and Full X-Report bodies).
  */
@@ -178,17 +58,16 @@ function ExtractedLiveSessionWiring({
 }
 
 const SUBJECTS = [
-  ['original Live Session markup', OriginalLiveSessionMarkup],
   ['LiveSessionDialog via POSSales wiring', ExtractedLiveSessionWiring],
 ];
 
 // ── fixtures ────────────────────────────────────────────────────────────────
-const CONTENT_CLASS = 'sm:max-w-lg border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden';
-const ROW_LABELS = [
+const CONTENT_CLASS = 'sm:max-w-xl border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden';
+// Every figure, in DOM order. Cash sales shows twice: in the payment mix and as a drawer line.
+const FIGURES = [
   "Today's Sales", 'Transactions', 'Cash Sales', 'Card Sales', 'Wallet Sales',
-  'Opening Cash', 'Cash Drop In', 'Cash Out', 'Expected Cash in Drawer',
+  'Opening Cash', 'Drawer Cash Sales', 'Cash Drop In', 'Cash Out', 'Expected Cash in Drawer',
 ];
-const ROW_ACCENTS = ['#327F74', '#6366F1', '#1E293B', '#1E293B', '#1E293B', '#1E293B', '#327F74', '#EF4444', '#F5C742'];
 
 // 2026-09-14 09:05:30 UTC; the naive openedAt below is parsed as 08:00:00 UTC → 65.5 min.
 const NOW = Date.UTC(2026, 8, 14, 9, 5, 30);
@@ -224,12 +103,11 @@ const footerCloseButton = () => buttons()[2];
 const fullXReportButton = () => within(dialog()).getByRole('button', { name: 'Full X-Report' });
 /** The DialogContent primitive's own close button — CSS-hidden via [&>button:last-child]:hidden, still in the DOM. */
 const radixCloseButton = () => buttons()[4];
-const sessionLine = () => within(dialog()).getByRole('heading', { level: 2 }).nextElementSibling;
-const rowEls = () => Array.from(dialog().querySelectorAll('.divide-y > div'));
-const rowValue = (label) => rowEls().find((r) => r.firstElementChild.textContent === label).lastElementChild;
+const sessionLine = () => dialog().querySelector('[data-session-line]');
+const figureEls = () => Array.from(dialog().querySelectorAll('[data-figure]'));
+const rowValue = (label) => dialog().querySelector(`[data-figure="${label}"]`);
 const rowText = (label) => rowValue(label).textContent;
-const infoValue = (prefix) => Array.from(dialog().querySelectorAll('.grid.grid-cols-2 > p'))
-  .find((p) => p.textContent.startsWith(prefix)).querySelector('span').textContent;
+const infoValue = (prefix) => dialog().querySelector(`[data-info="${prefix.replace(':', '').toLowerCase()}"]`).textContent;
 const flushRadixOutsideListener = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 /** Reference DOM of a bare <CurrencyAmount amount={amount} />, rendered the same way as the dialog. */
 const currencyHtml = (amount) => {
@@ -248,8 +126,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// Every behavioural block below runs against both the pre-extraction reference and the extracted
-// component mounted through the exact POSSales call site.
+// Every behavioural block below runs against the component mounted through the exact
+// POSSales call site.
 describe.each(SUBJECTS)('%s', (_label, Subject) => {
   // ── 1. mount / lifecycle ────────────────────────────────────────────────────
   describe('1. mount / lifecycle', () => {
@@ -288,27 +166,24 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
   });
 
   // ── markup ──────────────────────────────────────────────────────────────────
-  describe('1b. exact DOM / content structure', () => {
+  describe('1b. layout / content structure', () => {
     it('has three sections (header, body, footer) followed by the Radix close', () => {
       render(<Subject {...propsFor()} />);
-      expect(Array.from(dialog().children).map((c) => c.tagName + (c.className ? `.${c.className}` : ''))).toEqual([
-        'DIV.px-6 pt-6 pb-4 border-b border-gray-100',
-        'DIV.px-6 py-5',
-        'DIV.px-6 pb-6 flex items-center justify-end gap-3',
-        expect.stringMatching(/^BUTTON\./),
-      ]);
+      const children = Array.from(dialog().children);
+      expect(children).toHaveLength(4);
+      expect(children[0]).toContainElement(within(dialog()).getByRole('heading', { level: 2 }));
+      expect(children[1]).toContainElement(rowValue("Today's Sales"));
+      expect(children[2]).toContainElement(fullXReportButton());
+      expect(children[3].tagName).toBe('BUTTON');
     });
 
-    it('renders the header icon, h2 title and session line (no DialogTitle/Description primitives)', () => {
+    it('renders the h2 title, LIVE badge and session line (no DialogTitle/Description primitives)', () => {
       render(<Subject {...propsFor()} />);
       const h2 = within(dialog()).getByRole('heading', { level: 2 });
       expect(h2).toHaveTextContent(/^Live Session$/);
-      expect(h2.className).toBe('text-base font-bold text-[#1E293B]');
+      expect(h2.nextElementSibling).toHaveTextContent(/^LIVE$/);
       expect(sessionLine().tagName).toBe('P');
-      expect(sessionLine().className).toBe('text-xs text-gray-400 mt-0.5');
-      const iconWrap = h2.parentElement.previousElementSibling;
-      expect(iconWrap.className).toBe('p-2.5 rounded-xl bg-[#F5C742]/15');
-      expect(iconWrap.querySelector('svg')).toHaveClass('lucide-activity', 'h-5', 'w-5', 'text-[#b8920e]');
+      expect(dialog().querySelector('svg.lucide-activity')).not.toBeNull();
       expect(dialog().querySelector('[data-slot="dialog-title"]')).toBeNull();
       expect(dialog().querySelector('[data-slot="dialog-description"]')).toBeNull();
     });
@@ -318,30 +193,48 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
       expect(buttons()).toHaveLength(5);
       expect(buttons()[0]).toBe(refreshButton());
       expect(buttons()[3]).toBe(fullXReportButton());
-      expect(refreshButton().className).toBe('text-gray-400 hover:text-[#327F74] transition-colors mt-0.5 disabled:opacity-40');
+      expect(refreshButton()).toHaveAttribute('aria-label', 'Refresh figures');
       expect(refreshButton().querySelector('svg')).toHaveClass('lucide-refresh-cw', 'h-4', 'w-4');
-      expect(headerXButton().className).toBe('text-gray-300 hover:text-gray-500 transition-colors mt-0.5');
-      expect(headerXButton().querySelector('svg')).toHaveClass('lucide-x', 'h-5', 'w-5');
+      expect(headerXButton()).toHaveAttribute('aria-label', 'Close live session');
+      expect(headerXButton().querySelector('svg')).toHaveClass('lucide-x');
       expect(footerCloseButton()).toHaveTextContent(/^Close$/);
-      expect(footerCloseButton().className).toBe('h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors');
-      expect(fullXReportButton().className).toBe('h-10 px-6 text-sm font-semibold rounded-xl bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] flex items-center gap-2 transition-colors');
-      expect(fullXReportButton().querySelector('svg')).toHaveClass('h-4', 'w-4');
-      for (const b of buttons().slice(0, 4)) {
-        expect(b).not.toHaveAttribute('type');
-        expect(b).not.toHaveAttribute('aria-label');
-      }
+      expect(fullXReportButton().querySelector('svg')).toHaveClass('lucide-file-text');
+      for (const b of buttons().slice(0, 4)) expect(b).toHaveAttribute('type', 'button');
     });
 
-    it('renders the nine figure rows in fixed order with their accent colours and classes', () => {
+    it('renders every figure once, in fixed order, grouped as sales hero, payment mix and cash drawer', () => {
       render(<Subject {...propsFor()} />);
-      expect(rowEls().map((r) => r.firstElementChild.textContent)).toEqual(ROW_LABELS);
-      rowEls().forEach((r, i) => {
-        expect(r.className).toBe('flex items-center justify-between px-4 py-2.5');
-        expect(r.firstElementChild.className).toBe('text-sm text-gray-600');
-        expect(r.lastElementChild.className).toBe('text-sm font-bold');
-        expect(r.lastElementChild).toHaveStyle({ color: ROW_ACCENTS[i] });
-      });
-      expect(rowEls()[0].parentElement.className).toBe('rounded-xl border border-gray-100 divide-y divide-gray-100 overflow-hidden');
+      expect(figureEls().map((el) => el.dataset.figure)).toEqual(FIGURES);
+      expect(within(dialog()).getByText('Payment mix')).toBeInTheDocument();
+      expect(within(dialog()).getByText('Cash drawer')).toBeInTheDocument();
+      expect(within(dialog()).getByText('Expected Cash in Drawer')).toBeInTheDocument();
+    });
+
+    it('signs the drawer lines: opening unsigned, cash sales and drop-in +, cash out −', () => {
+      render(<Subject {...propsFor()} />);
+      const line = (figure) => rowValue(figure).parentElement.textContent;
+      expect(line('Opening Cash')).toBe('200.00');
+      expect(line('Drawer Cash Sales')).toBe('+800.00');
+      expect(line('Cash Drop In')).toBe('+50.00');
+      expect(line('Cash Out')).toBe('−75.50');
+    });
+
+    it('shows the payment mix shares and average sale once loaded', () => {
+      render(<Subject {...propsFor()} />);
+      // 800 / 400.25 / 34.25 of 1234.50 → 65% / 32% / 3%
+      expect(dialog().textContent).toContain('Cash65%');
+      expect(dialog().textContent).toContain('Card32%');
+      expect(dialog().textContent).toContain('Wallet3%');
+      // 1234.50 / 17 = 72.62
+      expect(dialog().textContent).toContain('Avg 72.62');
+    });
+
+    it('hides shares, average and drawer signs while loading or with no tender', () => {
+      render(<Subject {...propsFor({ xReportLoading: true })} />);
+      expect(dialog().textContent).not.toMatch(/%|Avg|\+|−/);
+      cleanup();
+      render(<Subject {...propsFor({ xReportData: { summary: {} } })} />);
+      expect(dialog().textContent).not.toMatch(/%|Avg/);
     });
   });
 
@@ -356,18 +249,19 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
       expect(rowValue('Wallet Sales').innerHTML).toBe(currencyHtml(34.25));
       expect(rowValue('Opening Cash').innerHTML).toBe(currencyHtml(200));
       expect(rowValue('Cash Drop In').innerHTML).toBe(currencyHtml(50));
-      expect(rowValue('Cash Out').innerHTML).toBe(`(${currencyHtml(75.5)})`);
+      expect(rowValue('Drawer Cash Sales').innerHTML).toBe(currencyHtml(800));
+      expect(rowValue('Cash Out').innerHTML).toBe(currencyHtml(75.5));
       expect(rowValue('Expected Cash in Drawer').innerHTML).toBe(currencyHtml(974.5));
-      expect(rowEls().map((r) => r.lastElementChild.textContent)).toEqual([
-        '1234.50', '17', '800.00', '400.25', '34.25', '200.00', '50.00', '(75.50)', '974.50',
+      expect(figureEls().map((el) => el.textContent)).toEqual([
+        '1234.50', '17', '800.00', '400.25', '34.25', '200.00', '800.00', '50.00', '75.50', '974.50',
       ]);
     });
 
     it.each([
-      ['positive → parenthesised amount', 75.5, '(75.50)'],
+      ['positive → amount (shown with a − sign)', 75.5, '75.50'],
       ['zero → CurrencyAmount 0', 0, '0.00'],
       ['negative → CurrencyAmount 0 (value dropped)', -20, '0.00'],
-      ['numeric string → Number()', '12', '(12.00)'],
+      ['numeric string → Number()', '12', '12.00'],
     ])('Cash Out: %s', (_n, cashDropOut, text) => {
       render(<Subject {...propsFor({ xReportData: { summary: { cashDropOut } } })} />);
       expect(rowText('Cash Out')).toBe(text);
@@ -395,22 +289,22 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
       expect(rowText("Today's Sales")).toBe('0.00');
       cleanup();
       render(<Subject {...propsFor({ xReportData: {}, currentSession: null })} />);
-      expect(rowEls().map((r) => r.lastElementChild.textContent)).toEqual(['0.00', '0', '0.00', '0.00', '0.00', '0.00', '0.00', '0.00', '0.00']);
+      expect(figureEls().map((el) => el.textContent)).toEqual(['0.00', '0', '0.00', '0.00', '0.00', '0.00', '0.00', '0.00', '0.00', '0.00']);
     });
 
     describe('loading state = xReportLoading || xReportData === null', () => {
-      const skeletonCount = () => dialog().querySelectorAll('.divide-y span.inline-block.h-4.w-16.bg-gray-200.rounded.animate-pulse').length;
+      const skeletonCount = () => dialog().querySelectorAll('[data-figure] > span.animate-pulse').length;
 
       it.each([
-        ['loading with data', { xReportLoading: true }, 9, true],
-        ['not loading, data null', { xReportData: null }, 9, false],
-        ['loading, data null', { xReportLoading: true, xReportData: null }, 9, true],
+        ['loading with data', { xReportLoading: true }, 10, true],
+        ['not loading, data null', { xReportData: null }, 10, false],
+        ['loading, data null', { xReportLoading: true, xReportData: null }, 10, true],
         ['not loading, data undefined (strict === null → figures shown)', { xReportData: undefined }, 0, false],
         ['not loading, data present', {}, 0, false],
       ])('%s', (_n, overrides, skeletons, refreshDisabled) => {
         render(<Subject {...propsFor(overrides)} />);
         expect(skeletonCount()).toBe(skeletons);
-        if (skeletons) expect(rowValue('Transactions').innerHTML).toBe('<span class="inline-block h-4 w-16 bg-gray-200 rounded animate-pulse"></span>');
+        if (skeletons) expect(rowValue('Transactions').textContent).toBe('');
         // Refresh disabled/spinner follow xReportLoading only — never xReportData === null.
         expect(refreshButton().disabled).toBe(refreshDisabled);
         expect(refreshButton().querySelector('svg').classList.contains('animate-spin')).toBe(refreshDisabled);
@@ -442,14 +336,10 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
         expect(infoValue('Terminal:')).toBe(terminal);
       });
 
-      it('cashier/terminal markup is exact', () => {
+      it('cashier/terminal render as labelled chips', () => {
         render(<Subject {...propsFor()} />);
-        const grid = dialog().querySelector('.grid.grid-cols-2');
-        expect(grid.className).toBe('grid grid-cols-2 gap-2 text-xs text-gray-500 mb-4');
-        expect(grid.innerHTML).toBe(
-          '<p>Cashier: <span class="text-[#1E293B] font-medium">bob</span></p>'
-          + '<p>Terminal: <span class="text-[#1E293B] font-medium">T-XR</span></p>',
-        );
+        expect(dialog().querySelector('[data-info="cashier"]').parentElement.textContent).toBe('Cashier bob');
+        expect(dialog().querySelector('[data-info="terminal"]').parentElement.textContent).toBe('Terminal T-XR');
       });
     });
 
@@ -927,52 +817,6 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
   });
 });
 
-// ── DOM parity ──────────────────────────────────────────────────────────────
-describe('LiveSessionDialog DOM parity', () => {
-  const normaliseIds = (html) => html.replace(/radix-[^"\s]+/g, 'radix-ID');
-  const renderedBody = (element) => {
-    render(element);
-    const html = normaliseIds(document.body.innerHTML);
-    cleanup();
-    return html;
-  };
-
-  const STATES = [
-    ['closed', { showLiveSessionDialog: false }],
-    ['open with X-Report data', {}],
-    ['loading', { xReportLoading: true }],
-    ['data null (skeletons, Refresh enabled)', { xReportData: null }],
-    ['data undefined (strict === null)', { xReportData: undefined }],
-    ['no session, terminal or data', { xReportData: null, currentSession: null, currentTerminal: null }],
-    ['zero cash out, startTime-only session', { xReportData: { summary: { ...SUMMARY, cashDropOut: 0 }, session: { id: 7, startTime: '2026-09-14T09:00:00' } } }],
-    ['clock skew before session start', { sessionNowMs: Date.UTC(2026, 8, 14, 7, 55, 0) }],
-  ];
-
-  it.each(STATES)('POSSales wiring renders document.body identical to the pre-extraction markup when %s', (_n, overrides) => {
-    const props = propsFor(overrides);
-    expect(renderedBody(<ExtractedLiveSessionWiring {...props} />)).toBe(renderedBody(<OriginalLiveSessionMarkup {...props} />));
-  });
-
-  it.each(STATES)('LiveSessionDialog with its own prop names renders identically when %s', (_n, overrides) => {
-    const p = propsFor(overrides);
-    const direct = (
-      <LiveSessionDialog
-        open={p.showLiveSessionDialog}
-        onOpenChange={noop}
-        xReportData={p.xReportData}
-        xReportLoading={p.xReportLoading}
-        currentSession={p.currentSession}
-        currentTerminal={p.currentTerminal}
-        sessionNowMs={p.sessionNowMs}
-        onRefresh={noop}
-        onClose={noop}
-        onOpenFullXReport={noop}
-      />
-    );
-    expect(renderedBody(direct)).toBe(renderedBody(<OriginalLiveSessionMarkup {...p} />));
-  });
-});
-
 // ── 8. source anchors ───────────────────────────────────────────────────────
 /**
  * POSSales.jsx is not rendered by this project's test setup, so the live boundary is asserted
@@ -1001,27 +845,6 @@ const block = (src, startLine, endLine) => {
 const posBlock = (startLine, endLine) => block(POS_SALES, startLine, endLine);
 
 describe('LiveSessionDialog source', () => {
-  it('is the original dialog JSX line for line, with only the five prop renames', () => {
-    const RENAMES = [
-      ['<Dialog open={showLiveSessionDialog} onOpenChange={setShowLiveSessionDialog}>', '<Dialog open={open} onOpenChange={onOpenChange}>'],
-      ['<button onClick={loadXReport} disabled={xReportLoading} title="Refresh"', '<button onClick={onRefresh} disabled={xReportLoading} title="Refresh"'],
-      ['<button onClick={() => setShowLiveSessionDialog(false)} className="text-gray-300 hover:text-gray-500 transition-colors mt-0.5">', '<button onClick={onClose} className="text-gray-300 hover:text-gray-500 transition-colors mt-0.5">'],
-      ['onClick={() => setShowLiveSessionDialog(false)}', 'onClick={onClose}'],
-      ["onClick={() => { setShowLiveSessionDialog(false); setCurrentView('x-report'); }}", 'onClick={onOpenFullXReport}'],
-    ];
-    let applied = 0;
-    const expected = trimmedLines(between(SELF, '// VERBATIM-START\n', '    // VERBATIM-END')).map((line) => {
-      const rename = RENAMES.find(([from]) => line === from);
-      if (!rename) return line;
-      applied += 1;
-      return rename[1];
-    });
-    expect(applied).toBe(5);
-    const live = block(COMPONENT, '      <Dialog open={open} onOpenChange={onOpenChange}>', '\n      </Dialog>');
-    expect(trimmedLines(live)).toEqual(expected);
-    expect(trimmedLines(live)).toHaveLength(93);
-  });
-
   it('passes onRefresh to the Refresh button by reference, so the click event is still forwarded', () => {
     expect(COMPONENT).toContain('<button onClick={onRefresh} disabled={xReportLoading} title="Refresh"');
     expect(COMPONENT.match(/onClick=\{onRefresh\}/g)).toHaveLength(1);
@@ -1046,7 +869,7 @@ describe('LiveSessionDialog source', () => {
       '  onOpenFullXReport,',
       '}) {',
     ].join('\n'));
-    expect(COMPONENT).toContain("import { Activity, FileText, RefreshCw, X } from 'lucide-react';");
+    expect(COMPONENT).toMatch(/import \{[^}]*\bActivity\b[^}]*\bFileText\b[^}]*\bRefreshCw\b[^}]*\bX \} from 'lucide-react';/);
     expect(COMPONENT).toContain("import { Dialog, DialogContent } from '../../../../../components/ui/dialog';");
     expect(COMPONENT).toContain("import { CurrencyAmount } from '../../POSCurrency';");
     expect(COMPONENT).toContain("import { parseUTCDate } from '../../lib/posFormatting';");

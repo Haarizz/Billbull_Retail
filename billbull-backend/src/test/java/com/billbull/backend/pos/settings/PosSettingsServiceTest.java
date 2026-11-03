@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
@@ -174,6 +175,61 @@ class PosSettingsServiceTest {
         incoming.setPosFunctionAccessMode("SUPERVISOR_PASSWORD");
 
         assertEquals("SUPERVISOR_PASSWORD", service.save(incoming).getPosFunctionAccessMode());
+    }
+
+    // Quick Checkout layout toggle: saved when sent, kept when a client that predates it saves.
+    @Test
+    void quickCheckoutToggleIsSavedAndAnAbsentValueKeepsIt() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_ADMIN");
+
+        PosSettings off = new PosSettings();
+        off.setBranchId(1L);
+        off.setLayoutQuickCheckout(false);
+        assertEquals(Boolean.FALSE, service.save(off).getLayoutQuickCheckout());
+
+        // As Jackson builds it from a body without the field: no initializer, so null.
+        PosSettings older = new PosSettings();
+        older.setBranchId(1L);
+        assertNull(older.getLayoutQuickCheckout());
+        assertEquals(Boolean.FALSE, service.save(older).getLayoutQuickCheckout());
+    }
+
+    // The appearance save writes only layout + print-template fields, for any caller.
+    @Test
+    void appearanceSaveWritesOnlyLayoutAndPrintTemplateFields() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        existing.setRequireSupervisorForVoid(true);
+        existing.setPosFunctionAccessMode("SUPERVISOR_ONLY");
+        existing.setLayoutHideItemsPanel(false);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_CASHIER");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setDefaultLayout("focus");
+        incoming.setLayoutQuickCheckout(false);
+        incoming.setPrintTemplateConfig("{\"receiptTemplateId\":2}");
+        // Behaviour fields smuggled into the same body are ignored.
+        incoming.setRequireSupervisorForVoid(false);
+        incoming.setPosFunctionAccessMode("ALL_USERS");
+        incoming.setSupervisorPin("1234");
+
+        PosSettings saved = service.saveAppearance(incoming);
+        assertEquals("focus", saved.getDefaultLayout());
+        assertEquals(Boolean.FALSE, saved.getLayoutQuickCheckout());
+        assertEquals("{\"receiptTemplateId\":2}", saved.getPrintTemplateConfig());
+        assertEquals(Boolean.FALSE, saved.getLayoutHideItemsPanel()); // absent: kept
+        assertEquals(Boolean.TRUE, saved.getRequireSupervisorForVoid());
+        assertEquals("SUPERVISOR_ONLY", saved.getPosFunctionAccessMode());
+        assertNull(saved.getSupervisorPin());
     }
 
     @Test

@@ -89,6 +89,10 @@ function ProductSearch({
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-[#1E293B] leading-tight truncate">{product.name}</p>
                     <p className="text-[11px] font-mono text-gray-400 truncate">{product.code}{product.barcode ? ` | ${product.barcode}` : ''}</p>
+                    <p className="text-[11px] text-gray-500 truncate">
+                      Zone: <span className="font-semibold text-gray-700">{product.zoneName || '-'}</span>
+                      {' | '}Locator: <span className="font-semibold text-gray-700">{product.locatorName || '-'}</span>
+                    </p>
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-sm font-bold text-[#327F74]">{formatCurrency(product.price)}</p>

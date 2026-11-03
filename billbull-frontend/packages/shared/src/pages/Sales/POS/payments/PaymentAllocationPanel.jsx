@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Banknote, CalendarClock, CreditCard, Gift, Landmark, Loader2, RefreshCw, Users } from 'lucide-react';
+import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 
 import { PAYMENT_TYPES, toAmount } from './paymentModel';
+import { VISIBLE_PAYMENT_METHODS } from './paymentMethods';
 import { remainingAfterAllocation, suggestedNextMethod } from './paymentFlow';
 import { allocationTarget } from './paymentSelectors';
 import { CurrencyAmount, DirhamSymbol } from '../POSCurrency';
@@ -18,27 +19,6 @@ import { usePosFocusTarget, usePosFocusV2, usePosInputV2, usePosPaymentHotkeys }
 import { POS_OVERLAY_IDS } from '../input/posScope';
 import { POS_FOCUS_TARGETS } from '../input/posFocus';
 import { CHECKOUT_QUICK_CASH } from '../input/posShortcuts';
-
-/**
- * Hotkeys are the first letter of each method, which is also what the badge shows.
- *
- * `hidden` takes a tender off the method bar without removing it from the system: the modal,
- * the model, the selectors and the backend all still handle it, so an allocation already on a
- * sale stays editable and the tender can be brought back by deleting one flag. Deleting the
- * entry instead would strand any line of that type with no way to open it.
- */
-const METHODS = [
-  { type: PAYMENT_TYPES.CASH, label: 'Cash', hotkey: 'c', icon: Banknote, accent: '#16a34a' },
-  { type: PAYMENT_TYPES.CARD, label: 'Card', hotkey: 'd', icon: CreditCard, accent: '#2563eb' },
-  { type: PAYMENT_TYPES.ONLINE, label: 'Online', hotkey: 'o', icon: Landmark, accent: '#0891b2' },
-  { type: PAYMENT_TYPES.CREDIT, label: 'Credit', hotkey: 'r', icon: Users, accent: '#9333ea' },
-  // 'v' is free; 'c' and 'd' are already Cash and Card.
-  // Temporarily hidden — Credit Voucher redemption is not being offered at the till for now.
-  { type: PAYMENT_TYPES.VOUCHER, label: 'Voucher', hotkey: 'v', icon: Gift, accent: '#8B5CF6', hidden: true },
-  // Buy Now Pay Later — a third-party provider settles the sale and bills the customer in
-  // installments. 'b' is free.
-  { type: PAYMENT_TYPES.BNPL, label: 'BNPL', hotkey: 'b', icon: CalendarClock, accent: '#D97706' },
-];
 
 /**
  * The payment panel shared by every settlement flow — POS checkout, delivery-order
@@ -67,6 +47,8 @@ const METHODS = [
  *                 CHECKOUT_QUICK_CASH), acted on once when it arrives: MODAL opens the Cash
  *                 modal (it keys the exact remaining amount itself), ALLOCATE commits the exact
  *                 remaining amount in Cash. Neither settles. onQuickCashHandled clears it.
+ *                 TENDER ({ method }) comes from the cart's quick-pay bar and opens that
+ *                 tender's modal.
  */
 export default function PaymentAllocationPanel({
   payment,
@@ -118,7 +100,7 @@ export default function PaymentAllocationPanel({
   }, [controllerOwnsFocus]);
 
   const offeredMethods = useMemo(() => {
-    const visible = METHODS.filter((m) => !m.hidden);
+    const visible = VISIBLE_PAYMENT_METHODS;
     return methods ? visible.filter((m) => methods.includes(m.type)) : visible;
   }, [methods]);
   const offeredTypes = useMemo(() => offeredMethods.map((m) => m.type), [offeredMethods]);
@@ -198,6 +180,11 @@ export default function PaymentAllocationPanel({
     setQuickCashSeen(quickCash.seq);
     if (quickCash.mode === CHECKOUT_QUICK_CASH.MODAL && offeredTypes.includes(PAYMENT_TYPES.CASH)) {
       setActiveModal({ type: PAYMENT_TYPES.CASH, line: null });
+    }
+    // A tender picked in the cart (quick-pay bar or its hotkey): that tender's modal, as if its
+    // method button had been pressed here. A tender this checkout does not offer opens nothing.
+    if (quickCash.mode === CHECKOUT_QUICK_CASH.TENDER && offeredTypes.includes(quickCash.method)) {
+      setActiveModal({ type: quickCash.method, line: null });
     }
   }
   // ALLOCATE arrives with the panel, before any modal can be open, so the draft goes straight to

@@ -293,6 +293,20 @@ class PosBranchIsolationTest {
         verify(settingsService).save(ownBranch);
     }
 
+    // Layout / print-template saves are open to every till user (the service writes only those
+    // fields); other POS-less users and other branches are still refused.
+    @Test
+    void theTillCanSaveAppearanceButOnlyForItsOwnBranch() {
+        auth.signIn("TILL_CASHIER", OWN);
+        assertDoesNotThrow(() -> settings().saveAppearance(settingsFor(OWN)));
+        assertForbidden(() -> settings().saveAppearance(settingsFor(OTHER)));
+        verify(settingsService, never()).save(any());
+
+        auth.signIn("HR", OWN);
+        assertThrows(AccessDeniedException.class, () -> settings().saveAppearance(settingsFor(OWN)));
+        verify(settingsService, times(1)).saveAppearance(any());
+    }
+
     @Test
     void settingsOfAnotherBranchCannotBeReadOrSaved() {
         auth.signIn("BRANCH_ADMIN", OWN);
