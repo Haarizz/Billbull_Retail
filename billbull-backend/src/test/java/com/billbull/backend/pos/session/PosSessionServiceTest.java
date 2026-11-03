@@ -49,6 +49,7 @@ import com.billbull.backend.sales.payment.PaymentRepository;
 import com.billbull.backend.sales.returns.SalesReturn;
 import com.billbull.backend.sales.returns.SalesReturnRepository;
 import com.billbull.backend.sales.returns.SalesReturnStatus;
+import com.billbull.backend.sales.returns.SalesReturnRefundMethod;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
@@ -425,7 +426,7 @@ class PosSessionServiceTest {
                 businessDayWindowService.resolveCurrent(1L).phase());
 
         verify(dayCloseRepository, org.mockito.Mockito.never()).save(any());
-        verify(businessDateService, org.mockito.Mockito.never()).advanceBusinessDate(anyLong(), any());
+        verify(businessDateService, org.mockito.Mockito.never()).advanceBusinessDate(anyLong(), any(), any());
     }
 
     @Test
@@ -449,8 +450,8 @@ class PosSessionServiceTest {
 
     /** Day Close domain: tradingDate must be the real calendar day the session opens
      *  on, independent of the Business Date pointer â€” even when the pointer lags
-     *  behind (the exact scenario Skip Date used to exist for). sessionDate keeps
-     *  reflecting the pointer, unchanged. */
+     *  behind (the exact scenario Skip Date used to exist for). sessionDate follows
+     *  the same real Business Day. */
     @Test
     void openSessionStampsTradingDateFromRealCalendarDayIndependentOfLaggingBusinessDate() {
         LocalDate laggingBusinessDate = LocalDate.of(2020, 1, 1); // deliberately not "today"
@@ -458,8 +459,9 @@ class PosSessionServiceTest {
 
         PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
 
-        assertEquals(laggingBusinessDate, opened.getSessionDate(), "sessionDate must still track the pointer");
         assertEquals(LocalDate.now(), opened.getTradingDate(), "tradingDate must be the real open day");
+        assertEquals(opened.getTradingDate(), opened.getSessionDate(),
+                "sessionDate must be the real Business Day, never the lagging pointer");
     }
 
     // ---------------------------------------------------------------------
@@ -566,8 +568,8 @@ class PosSessionServiceTest {
     /** Scenario 4 â€” window DISABLED and the pointer has drifted AHEAD of the
      *  calendar (one advanceBusinessDate per resolved backlog Day Close). The gate
      *  must compare against the Candidate Business Day (= today), not the pointer,
-     *  or today's own unclosed Business Day reads as a prior one. sessionDate keeps
-     *  tracking the pointer, unchanged. */
+     *  or today's own unclosed Business Day reads as a prior one. sessionDate is
+     *  today as well, not the drifted pointer. */
     @Test
     void openSessionWithWindowDisabledGatesOnCandidateDayNotDriftedPointer() {
         Long branchId = 1L;
@@ -590,7 +592,7 @@ class PosSessionServiceTest {
 
         assertEquals(PosSessionStatus.OPEN, opened.getStatus());
         assertEquals(today, opened.getTradingDate());
-        assertEquals(driftedPointer, opened.getSessionDate(), "sessionDate must still track the pointer");
+        assertEquals(today, opened.getSessionDate(), "sessionDate must ignore a pointer that ran ahead");
     }
 
     /** Same unconfigured-window branch, but the unclosed day is GENUINELY prior â€”
@@ -687,19 +689,27 @@ class PosSessionServiceTest {
         LocalDate expected = com.billbull.backend.pos.businessdate.BusinessDayResolver.resolve(
                 businessDayWindowService.clock().now(), bds);
         assertEquals(expected, opened.getTradingDate());
+        // The overnight window (and the Business Day timezone behind it) carries into the
+        // accounting date too: sessionDate is the same resolved Business Day.
+        assertEquals(expected, opened.getSessionDate());
     }
 
+    /** Regression (BR-01, 3 Nov 2026): the stored pointer had fallen 12 days behind across
+     *  idle days, and every new session was dated 22 Oct. sessionDate now follows the real
+     *  Business Day, so the pointer's lag can no longer leak into cash movements, their
+     *  journals, X-Report numbers or advance receipts. */
     @Test
-    void openSessionSessionDateStillTracksBusinessDatePointerUnchanged() {
+    void openSessionSessionDateIsTheTradingDateEvenWhenPointerLags() {
         LocalDate laggingBusinessDate = LocalDate.of(2020, 6, 15);
         stubOpenSessionPreconditions(1L, laggingBusinessDate, "T1");
 
         PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
 
-        assertEquals(laggingBusinessDate, opened.getSessionDate());
+        assertEquals(LocalDate.now(), opened.getSessionDate());
+        assertEquals(opened.getTradingDate(), opened.getSessionDate());
     }
 
-    /** The pointer is still read (sessionDate depends on it), but the already-closed
+    /** The pointer is still read (for the shadow diagnostics), but the already-closed
      *  gate asks about the Candidate Business Day â€” for an unconfigured window,
      *  today â€” so a drifted pointer can no longer decide whether trading is blocked. */
     @Test
@@ -1988,6 +1998,65 @@ class PosSessionServiceTest {
         assertMoney("0", (BigDecimal) summary.get("creditNoteTotal"));
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void xReportIncludesSessionReturnsWhenBusinessDateLagsCalendar() {
+        // Session 53 runs for business date 22 Oct but was opened, sold and returned on 3 Nov.
+        // The returns carry posSessionId=53 and return_date 3 Nov; the old lookup searched
+        // 22 Oct and the X-Report showed no returns at all.
+        PosSession session = openSession();
+        session.setId(53L);
+        session.setSessionDate(LocalDate.of(2026, 10, 22));
+        when(repo.findById(53L)).thenReturn(java.util.Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(53L))
+                .thenReturn(List.of(invoiceWithNumber("INV-2026-0147", 100.0, 4.76)));
+
+        SalesReturn r1 = posSessionReturn(53L, "INV-2026-0147", SalesReturnRefundMethod.CARD_REFUND, 100.0);
+        SalesReturn r2 = posSessionReturn(53L, "INV-2026-0148", SalesReturnRefundMethod.CASH_REFUND, 100.0);
+        when(returnRepository.findByPosSessionIdInWithItems(List.of(53L))).thenReturn(List.of(r1, r2));
+
+        Map<String, Object> summary = (Map<String, Object>) service.getXReport(53L).get("summary");
+
+        assertEquals(2, summary.get("salesReturnCount"));
+        assertMoney("200", (BigDecimal) summary.get("salesReturnTotal"));
+        assertMoney("100", (BigDecimal) summary.get("returnCardRefundTotal"));
+        assertMoney("100", (BigDecimal) summary.get("returnCashRefundTotal"));
+        // Card refund returns reduce the card settlement; they write no refund Payment row.
+        assertMoney("100", (BigDecimal) summary.get("cardRefundSales"));
+        assertEquals(1L, summary.get("cardRefundCount"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void zReportScopesPosReturnsBySessionAndBackOfficeReturnsByDate() {
+        PosSession s1 = openSession();
+        s1.setStatus(PosSessionStatus.CLOSED);
+        PosSession s2 = openSession();
+        s2.setId(2L);
+        s2.setStatus(PosSessionStatus.CLOSED);
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(anyLong(), any(LocalDate.class)))
+                .thenReturn(List.of(s1, s2));
+        when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(anyLong(), any())).thenReturn(List.of());
+
+        // Rung up through session 1 on a later calendar date: still this day's return.
+        SalesReturn sessionReturn = posSessionReturn(1L, "INV-1", SalesReturnRefundMethod.CARD_REFUND, 50.0);
+        when(returnRepository.findByPosSessionIdInWithItems(List.of(1L, 2L))).thenReturn(List.of(sessionReturn));
+        // Same calendar date: a back-office return (counted) and a return from another day's
+        // session (left to that day's Z-Report).
+        SalesReturn backOffice = salesReturn("INV-9", SalesReturnStatus.APPROVED, "Refund", 30.0);
+        backOffice.setRefundMethod(SalesReturnRefundMethod.CASH_REFUND);
+        SalesReturn otherDaySession = posSessionReturn(99L, "INV-8", SalesReturnRefundMethod.CASH_REFUND, 70.0);
+        when(returnRepository.findByReturnDateAndBranchWithItems(any(), any()))
+                .thenReturn(List.of(backOffice, otherDaySession));
+
+        Map<String, Object> summary = (Map<String, Object>) service.getZReport(7L, LocalDate.now()).get("summary");
+
+        assertEquals(2, summary.get("salesReturnCount"));
+        assertMoney("80", (BigDecimal) summary.get("salesReturnTotal"));
+        assertMoney("50", (BigDecimal) summary.get("cardRefundSales"));
+        assertMoney("30", (BigDecimal) summary.get("returnCashRefundTotal"));
+    }
+
     // ---------------------------------------------------------------------
     // getZReport() â€” cross-session aggregation
     // ---------------------------------------------------------------------
@@ -2842,6 +2911,9 @@ class PosSessionServiceTest {
         Map<String, Object> report = service.closeDay(branchId, date);
 
         assertEquals(true, report.get("isDayClosed"));
+        // The business date is moved relative to the date just closed (closed + 1), not
+        // bumped by one from wherever the stored pointer happened to be.
+        verify(businessDateService).advanceBusinessDate(eq(branchId), eq(date), any());
     }
 
     /**
@@ -3924,6 +3996,15 @@ class PosSessionServiceTest {
         r.setStatus(status);
         r.setReturnAction(action);
         r.setTotalAmount(BigDecimal.valueOf(amount));
+        return r;
+    }
+
+    private SalesReturn posSessionReturn(Long sessionId, String linkedInvoice,
+                                         SalesReturnRefundMethod method, double amount) {
+        SalesReturn r = salesReturn(linkedInvoice, SalesReturnStatus.APPROVED, "Refund", amount);
+        r.setPosSessionId(sessionId);
+        r.setRefundMethod(method);
+        r.setRefundAmount(BigDecimal.valueOf(amount));
         return r;
     }
 

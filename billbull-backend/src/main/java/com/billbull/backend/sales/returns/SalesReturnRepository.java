@@ -28,6 +28,13 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
     List<SalesReturn> findByReturnDateAndBranchWithItems(@Param("date") LocalDate date,
                                                           @Param("branchId") Long branchId);
 
+    /** X/Z-Report: returns rung up through the given POS session(s), whatever their calendar
+     *  date. A session's business date can lag the calendar (a session opened on 3 Nov for a
+     *  still-open 22 Oct business day), so date-based lookups miss these returns. */
+    @Query("SELECT DISTINCT r FROM SalesReturn r LEFT JOIN FETCH r.items " +
+           "WHERE r.posSessionId IN :sessionIds")
+    List<SalesReturn> findByPosSessionIdInWithItems(@Param("sessionIds") java.util.Collection<Long> sessionIds);
+
     // ARCHFIX §1.6: items is now LAZY — these JOIN FETCH it for the read paths that serialize the
     // full return (list + by-id). The nested SalesReturnItem.batches load via @BatchSize. DISTINCT
     // collapses the row duplication from the one-to-many join.
