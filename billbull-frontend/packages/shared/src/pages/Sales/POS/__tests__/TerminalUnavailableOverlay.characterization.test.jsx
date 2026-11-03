@@ -65,19 +65,42 @@ const VARIANTS = [
     registerLabel: REGISTER_LABEL,
   }],
 ];
-// Anything that is not exactly "Terminal is {KNOWN_STATUS}" resolves to the fallback.
+// Anything that is not exactly "Terminal is {KNOWN_STATUS}" and is not a safe server message
+// resolves to the fallback copy.
 const FALLBACK_REASONS = [
-  ['an unrelated message', 'Terminal not found'],
-  ['an unknown status', 'Terminal is RETIRED'],
-  ['a lowercase status', 'Terminal is archived'],
-  ['a lowercase prefix', 'terminal is ARCHIVED'],
-  ['a trailing period', 'Terminal is ARCHIVED.'],
-  ['a leading space', ' Terminal is ARCHIVED'],
-  ['a trailing newline', 'Terminal is ARCHIVED\n'],
-  ['a two-word status', 'Terminal is ARCHIVED NOW'],
   ['true', true],
   ['a non-zero number', 403],
   ['an object', { status: 'ARCHIVED', message: 'Terminal is ARCHIVED' }],
+  ['whitespace only', '   '],
+  ['a Java exception', 'java.lang.NullPointerException: Cannot invoke "Branch.getId()"'],
+  ['a stack trace', 'Something failed\n\tat com.billbull.backend.pos.terminal.PosTerminalService.registerOrRefresh(PosTerminalService.java:67)'],
+  ['an SQL error', 'could not execute statement; SQL [n/a]; constraint [uk_pos_terminal_fp]'],
+  ['an HTML error page', '<html><body><h1>403 Forbidden</h1></body></html>'],
+  ['an over-long message', 'x'.repeat(201)],
+];
+// Any other short, user-facing server message is shown in place of the generic fallback text,
+// keeping the fallback title, hint and register-new button.
+const SERVER_MESSAGE_REASONS = [
+  ['an unrelated message', 'Terminal not found', 'Terminal not found'],
+  ['an unknown status', 'Terminal is RETIRED', 'Terminal is RETIRED'],
+  ['a lowercase status', 'Terminal is archived', 'Terminal is archived'],
+  ['a lowercase prefix', 'terminal is ARCHIVED', 'terminal is ARCHIVED'],
+  ['a trailing period', 'Terminal is ARCHIVED.', 'Terminal is ARCHIVED.'],
+  ['a leading space', ' Terminal is ARCHIVED', 'Terminal is ARCHIVED'],
+  ['a trailing newline', 'Terminal is ARCHIVED\n', 'Terminal is ARCHIVED'],
+  ['a two-word status', 'Terminal is ARCHIVED NOW', 'Terminal is ARCHIVED NOW'],
+  ['access denied', 'Access denied', 'Access denied'],
+];
+// The branch terminal cap (PosTerminalService.registerOrRefresh); the limit comes from the message.
+const limitExpected = (limit) => ({
+  title: 'Terminal Limit Reached',
+  message: `Branch terminal limit reached (limit: ${limit}). Archive an unused terminal or increase the branch terminal limit.`,
+  hint: 'Ask an administrator to archive an unused terminal or raise the limit in Console > Terminals & Counters, then reload this page.',
+  registerLabel: null,
+});
+const LIMIT_REASONS = [
+  ['limit (5)', 'Maximum number of terminals (5) reached for this branch.', limitExpected(5)],
+  ['limit (12)', 'Maximum number of terminals (12) reached for this branch.', limitExpected(12)],
 ];
 
 /**
@@ -262,6 +285,10 @@ describe.each(SUBJECTS)('%s', (_label, Subject, confirmMessage) => {
   describe.each([
     ...VARIANTS,
     ...FALLBACK_REASONS.map(([name, reason]) => [`fallback (${name})`, reason, FALLBACK]),
+    ...SERVER_MESSAGE_REASONS.map(([name, reason, shown]) => [
+      `server message (${name})`, reason, { ...FALLBACK, message: shown, showsReason: true },
+    ]),
+    ...LIMIT_REASONS.map(([name, reason, expected]) => [name, reason, expected]),
   ])('status %s', (_status, reason, expected) => {
     it('renders the exact heading and fixed subtitle', () => {
       const { container } = render(<Subject terminalRegistrationError={reason} />);
@@ -296,10 +323,14 @@ describe.each(SUBJECTS)('%s', (_label, Subject, confirmMessage) => {
       }
     });
 
-    it('never renders the raw terminalRegistrationError text', () => {
+    it('renders the raw reason only when it is a safe server message', () => {
       const { container } = render(<Subject terminalRegistrationError={reason} />);
-      if (typeof reason === 'string') {
-        expect(container.textContent).not.toContain(reason.trim());
+      if (typeof reason === 'string' && reason.trim()) {
+        if (expected.showsReason) {
+          expect(container.textContent).toContain(reason.trim());
+        } else {
+          expect(container.textContent).not.toContain(reason.trim());
+        }
       }
       expect(container.textContent).not.toContain('[object Object]');
       expect(container.textContent).not.toContain('403');
@@ -548,6 +579,8 @@ describe('TerminalUnavailableOverlay DOM parity', () => {
     ['0', 0],
     ...VARIANTS.map(([status, reason]) => [status, reason]),
     ...FALLBACK_REASONS.map(([name, reason]) => [`fallback (${name})`, reason]),
+    ...SERVER_MESSAGE_REASONS.map(([name, reason]) => [`server message (${name})`, reason]),
+    ...LIMIT_REASONS.map(([name, reason]) => [name, reason]),
   ])('renders identical DOM to the pre-extraction block when terminalRegistrationError is %s', (_name, value) => {
     const original = renderedHtml(OriginalTerminalUnavailableBlock, { terminalRegistrationError: value });
     const extracted = renderedHtml(ExtractedTerminalUnavailableBlock, { terminalRegistrationError: value });

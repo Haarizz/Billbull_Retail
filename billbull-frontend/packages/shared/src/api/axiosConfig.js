@@ -29,6 +29,11 @@ const retryAfterSeconds = (error) => {
 
 const isRateLimited = (error) => error.response?.status === 429;
 const isAuthEndpoint = (config) => (config?.url || "").includes("/api/auth/");
+// A 403 from terminal registration is not a permission problem (registration has no permission
+// check) — it means the terminal is unavailable or the branch terminal limit is reached. The POS
+// overlay shows the server's reason, so the generic permission toast is skipped for it.
+const isTerminalRegisterEndpoint = (config) =>
+  /\/api\/pos\/terminals\/register\/?(\?|$)/.test(config?.url || "");
 
 // ── Session expiry (401) ─────────────────────────────────────────────────────
 // Retail's default: toast, clear the session and redirect to /login. A host that must not navigate
@@ -118,7 +123,9 @@ api.interceptors.response.use(
         sessionStorage.removeItem("user");
         setTimeout(() => {
           sessionStorage.removeItem("__session_expired");
-          window.location.href = "/login";
+          // Through the app's own base: Retail is served at '/', the standalone till at '/pos/'.
+          // A bare "/login" would send the till out of /pos/.
+          window.location.href = `${import.meta.env.BASE_URL || "/"}login`;
         }, 1500);
       }
       return Promise.reject(error);
@@ -127,7 +134,7 @@ api.interceptors.response.use(
     // Permission denied handling (403)
     if (error.response?.status === 403 && !isAuthEndpoint(error.config)) {
       const errMsg = error.response?.data?.message;
-      if (errMsg !== 'SUPERVISOR_AUTHORIZATION_REQUIRED') {
+      if (errMsg !== 'SUPERVISOR_AUTHORIZATION_REQUIRED' && !isTerminalRegisterEndpoint(error.config)) {
         toast.error("You do not have permission to perform this action.", { id: "permission-denied", duration: 5000 });
       }
       return Promise.reject(error);
