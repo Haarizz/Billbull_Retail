@@ -64,6 +64,16 @@ describe('receipt TOTAL row', () => {
     expect(Buffer.from(bytes).toString('latin1')).not.toContain('TOTAL:');
   });
 
+  it('prints an Arabic customer name as a raster instead of "????"', async () => {
+    stubCanvas();
+    const arabic = { ...invoice, customerName: 'نور الهدى للزهور' };
+    const bytes = await buildEscPosReceipt('80mm', arabic, opts);
+    const text = Buffer.from(bytes).toString('latin1');
+    expect(text).not.toMatch(/Name:\s+\?{3,}/);
+    // Latin-only rows are unchanged text.
+    expect(text).toContain('Payment Mode:');
+  });
+
   it('falls back to double-height text with a tall line pitch when canvas fails', async () => {
     const bytes = await buildEscPosReceipt('80mm', invoice, opts);
     const size = indexOfSequence(bytes, DOUBLE_HEIGHT);

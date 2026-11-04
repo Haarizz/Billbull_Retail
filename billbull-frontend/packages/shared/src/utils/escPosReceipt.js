@@ -478,17 +478,24 @@ const renderTextLineToRasterCommand = (text, { widthDots, fontPx = 28, bold = fa
 // printers (Le Royal's POS-80C) print only the lower part of GS ! enlarged glyphs,
 // while every printer we support prints rasters (logo/stamp) correctly. Shrinks
 // the font if label + value would collide. Returns null on any failure so the
-// caller can fall back to text.
-const renderLabelValueRasterCommand = (label, value, { widthDots, gutterDots = 0, fontPx = 44 } = {}) => {
+// caller can fall back to text. Also used at normal size (fontPx ≈ 24, sans) for
+// body rows holding Arabic or other text the printer's code page can't print.
+const renderLabelValueRasterCommand = (label, value, {
+  widthDots, gutterDots = 0, fontPx = 44, bold = true, mono = true,
+} = {}) => {
   try {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const fontFor = (px) => `bold ${px}px 'Consolas', 'Lucida Console', 'Courier New', monospace`;
+    const family = mono
+      ? "'Consolas', 'Lucida Console', 'Courier New', monospace"
+      : "'Segoe UI', 'Tahoma', 'Arial', sans-serif";
+    const fontFor = (px) => `${bold ? 'bold ' : ''}${px}px ${family}`;
     const usable = widthDots - 2 * gutterDots;
+    const gap = value ? 1 : 0;
     let px = fontPx;
     for (; px > 16; px -= 2) {
       ctx.font = fontFor(px);
-      if (ctx.measureText(label).width + ctx.measureText(value).width + px <= usable) break;
+      if (ctx.measureText(label).width + ctx.measureText(value).width + gap * px <= usable) break;
     }
     const pad = Math.round(px * 0.15);
     canvas.width = widthDots;
@@ -498,9 +505,13 @@ const renderLabelValueRasterCommand = (label, value, { widthDots, gutterDots = 0
     ctx.fillStyle = '#000000';
     ctx.font = fontFor(px);
     ctx.textBaseline = 'middle';
+    // textAlign 'left'/'right' are absolute edges whatever the direction, so an
+    // Arabic string still lands against its gutter while shaping right-to-left.
     ctx.textAlign = 'left';
+    ctx.direction = hasArabic(label) ? 'rtl' : 'ltr';
     ctx.fillText(String(label ?? ''), gutterDots, canvas.height / 2);
     ctx.textAlign = 'right';
+    ctx.direction = hasArabic(value) ? 'rtl' : 'ltr';
     ctx.fillText(String(value ?? ''), widthDots - gutterDots, canvas.height / 2);
 
     const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -867,6 +878,25 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     if (raster) { w.push(raster); w.push([0x0a]); } else { w.line(text); }
   };
 
+  // Left-gutter body row that may hold Arabic/other non-Latin-1 text (customer
+  // name, address, product name). Plain Latin rows print as text exactly as
+  // before; anything else would print as '????', so it is drawn as a raster at
+  // body size instead: label at the left gutter, value at the right. The LF after
+  // the raster is a zero-pitch flush (same join as pushBandedRaster) so the row
+  // takes only the raster's own height. Falls back to text if canvas fails.
+  const emitBodyRow = (label, value = '', { bold = false } = {}) => {
+    const plain = value ? buildFixedWidthLine(label, value, width) : String(label);
+    // Text path is byte-identical to the old gline; the caller owns ESC E bold.
+    if (!hasNonPrintableLatin(`${label}${value}`)) { w.gline(gutter, plain); return; }
+    const raster = renderLabelValueRasterCommand(label, value, {
+      widthDots: PAPER_DOTS[mm], gutterDots: marginDotsFor(mm), fontPx: 24, bold, mono: false,
+    });
+    if (!raster) { w.gline(gutter, plain); return; }
+    w.push(raster);
+    w.push(CMD.LINE_SPACING(0)).push([0x0a]).push(CMD.LINE_SPACING(BODY_LINE_SPACING));
+    w.push(CMD.ALIGN_LEFT);
+  };
+
   w.push(CMD.INIT);
   w.push(CMD.SET_HEATING());
   w.push(CMD.CODEPAGE_WPC1252);
@@ -959,7 +989,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     // readable; the right-aligned price rows below are emitted separately, so
     // wrapping the name never shifts a price out of its column.
     w.push(CMD.BOLD_ON);
-    for (const ln of wrapToWidth(`${qty}x ${name}${isVoided ? ' [VOID]' : ''}`, width, '   ')) w.gline(gutter, ln);
+    for (const ln of wrapToWidth(`${qty}x ${name}${isVoided ? ' [VOID]' : ''}`, width, '   ')) emitBodyRow(ln, '', { bold: true });
     w.push(CMD.BOLD_OFF);
     w.push(CMD.FEED_DOTS(NAME_GAP_DOTS));
     if (lineDiscountAmount > 0) {
@@ -1045,20 +1075,24 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   // and the amount right-aligns cleanly with the totals rows above. (Formatting to
   // width/2 — as if the width had doubled — would leave TOTAL ending mid-paper.)
   // Extra dot-feed above sets the block clearly apart from the totals list.
-  w.push(CMD.FEED(1));
-  w.push(CMD.FEED_DOTS(TOTAL_GAP_BEFORE_DOTS));
   // Printed as a raster first: Le Royal's POS-80C prints only the lower part of
   // GS ! double-height glyphs (even with a tall enough ESC 3 pitch), but prints
-  // rasters correctly. Same flush pattern as pushBandedRaster: zero-pitch LF
-  // before and after so the parser is raster-ready and no paper gap is added.
+  // rasters correctly. Joined EXACTLY like the stamp raster (emitQrOrStamp),
+  // which is proven on that printer: a ' ' + LF flush line before, LF after, then
+  // ALIGN_LEFT because a raster can reset alignment on these clones. The flush
+  // line stands in for the FEED(1) the text path uses, so spacing stays the same.
   const totalRaster = renderLabelValueRasterCommand('TOTAL:', fmt(invoice.invoiceTotal), {
     widthDots: PAPER_DOTS[mm], gutterDots: marginDotsFor(mm),
   });
   if (totalRaster) {
-    w.push(CMD.LINE_SPACING(0)).push([0x0a]);
-    w.push(totalRaster).push([0x0a]);
-    w.push(CMD.LINE_SPACING(BODY_LINE_SPACING));
+    w.push(CMD.FEED_DOTS(TOTAL_GAP_BEFORE_DOTS));
+    w.line(' ');
+    w.push(totalRaster);
+    w.push([0x0a]);
+    w.push(CMD.ALIGN_LEFT);
   } else {
+    w.push(CMD.FEED(1));
+    w.push(CMD.FEED_DOTS(TOTAL_GAP_BEFORE_DOTS));
     w.push(CMD.LINE_SPACING(TALL_LINE_SPACING));
     w.push(CMD.BOLD_ON).push(CMD.CHAR_SIZE(1, 2));
     w.gline(gutter, buildFixedWidthLine('TOTAL:', fmt(invoice.invoiceTotal), width));
@@ -1109,7 +1143,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   // same "CUSTOMER" section label + Name: row the HTML preview uses.
   if (showCustomerDetails) {
     w.push(CMD.BOLD_ON).gline(gutter, 'CUSTOMER').push(CMD.BOLD_OFF);
-    w.gline(gutter, buildFixedWidthLine('Name:', invoice.customerName || 'Walk-in Customer', width));
+    emitBodyRow('Name:', invoice.customerName || 'Walk-in Customer');
     if (customerPhone) w.gline(gutter, buildFixedWidthLine('Mobile:', customerPhone, width));
     if (customerEmail) w.gline(gutter, buildFixedWidthLine('Email:', customerEmail, width));
     const custCode = invoice.customerCode && invoice.customerCode !== 'WALK-IN' ? invoice.customerCode : '';
@@ -1123,7 +1157,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
       .split(/[\n,]+/).map((v) => v.trim()).filter(Boolean).join(', ');
     if (custAddr) {
       w.gline(gutter, 'Address:');
-      for (const ln of wrapToWidth(custAddr, width, '  ')) w.gline(gutter, ln);
+      for (const ln of wrapToWidth(custAddr, width, '  ')) emitBodyRow(ln);
     }
     emitDivider(w, gutter, hr);
   }
