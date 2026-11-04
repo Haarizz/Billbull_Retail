@@ -131,6 +131,11 @@ const ITEM_GAP_DOTS = 8; // extra gap between one product block and the next
 const NAME_GAP_DOTS = 6; // small gap under the bold product name, above its price rows
 const TOTAL_GAP_BEFORE_DOTS = 16; // extra gap before TOTAL so it stands out
 const TOTAL_GAP_AFTER_DOTS = 12; // extra gap after TOTAL, before Payment Mode
+// Line pitch for a double-height row (Font A = 24 dots, ×2 = 48). Epson raises
+// the feed to the character height on its own, but clone printers (POS-80C class)
+// keep the ESC 3 pitch and clip the top of the glyphs when the pitch is shorter
+// than the text — which cut the TOTAL row in half. Set this before any tall row.
+const TALL_LINE_SPACING = 56;
 
 class ByteWriter {
   constructor() {
@@ -997,9 +1002,11 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   // Extra dot-feed above sets the block clearly apart from the totals list.
   w.push(CMD.FEED(1));
   w.push(CMD.FEED_DOTS(TOTAL_GAP_BEFORE_DOTS));
+  w.push(CMD.LINE_SPACING(TALL_LINE_SPACING));
   w.push(CMD.BOLD_ON).push(CMD.CHAR_SIZE(1, 2));
   w.gline(gutter, buildFixedWidthLine('TOTAL:', fmt(invoice.invoiceTotal), width));
   w.push(CMD.CHAR_SIZE_NORMAL).push(CMD.BOLD_OFF);
+  w.push(CMD.LINE_SPACING(BODY_LINE_SPACING));
 
   if (depositApplied != null && parseFloat(depositApplied) > 0) {
     const bal = balanceDue != null ? parseFloat(balanceDue) : (parseFloat(invoice.invoiceTotal || 0) - parseFloat(depositApplied));
@@ -1176,9 +1183,11 @@ export const buildEscPosTestReceipt = ({
   w.push(CMD.SELECT_FONT_A);
   w.push(CMD.LINE_SPACING(36));
   w.push(CMD.ALIGN_CENTER);
+  w.push(CMD.LINE_SPACING(TALL_LINE_SPACING));
   w.push(CMD.BOLD_ON).push(CMD.CHAR_SIZE(2, 2));
   w.line(companyName);
   w.push(CMD.CHAR_SIZE_NORMAL);
+  w.push(CMD.LINE_SPACING(36));
   w.line('POS PRINTER TEST');
   w.push(CMD.BOLD_OFF);
   w.line(hr);
@@ -1192,7 +1201,9 @@ export const buildEscPosTestReceipt = ({
   w.line(hr);
   w.line('Normal text — abcdefgh 0123456789');
   w.push(CMD.BOLD_ON).line('Bold text — abcdefgh').push(CMD.BOLD_OFF);
+  w.push(CMD.LINE_SPACING(TALL_LINE_SPACING));
   w.push(CMD.CHAR_SIZE(2, 2)).line('Big text').push(CMD.CHAR_SIZE_NORMAL);
+  w.push(CMD.LINE_SPACING(36));
   w.line(hr);
   w.push(CMD.ALIGN_CENTER);
   w.line(new Date().toLocaleString('en-GB'));
