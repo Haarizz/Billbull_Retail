@@ -471,6 +471,51 @@ const renderTextLineToRasterCommand = (text, { widthDots, fontPx = 28, bold = fa
   }
 };
 
+// Renders a "label ........ value" row (the receipt TOTAL) as a full-paper-width
+// raster: label left-aligned at the left gutter, value right-aligned at the right
+// gutter, in a bold monospace face close to the printer's own Font A, at roughly
+// double height. Used instead of GS ! double-height text because some clone
+// printers (Le Royal's POS-80C) print only the lower part of GS ! enlarged glyphs,
+// while every printer we support prints rasters (logo/stamp) correctly. Shrinks
+// the font if label + value would collide. Returns null on any failure so the
+// caller can fall back to text.
+const renderLabelValueRasterCommand = (label, value, { widthDots, gutterDots = 0, fontPx = 44 } = {}) => {
+  try {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const fontFor = (px) => `bold ${px}px 'Consolas', 'Lucida Console', 'Courier New', monospace`;
+    const usable = widthDots - 2 * gutterDots;
+    let px = fontPx;
+    for (; px > 16; px -= 2) {
+      ctx.font = fontFor(px);
+      if (ctx.measureText(label).width + ctx.measureText(value).width + px <= usable) break;
+    }
+    const pad = Math.round(px * 0.15);
+    canvas.width = widthDots;
+    canvas.height = px + pad * 2;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#000000';
+    ctx.font = fontFor(px);
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillText(String(label ?? ''), gutterDots, canvas.height / 2);
+    ctx.textAlign = 'right';
+    ctx.fillText(String(value ?? ''), widthDots - gutterDots, canvas.height / 2);
+
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const bits = new Uint8Array(canvas.width * canvas.height);
+    for (let i = 0; i < bits.length; i++) {
+      const o = i * 4;
+      const lum = 0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2];
+      bits[i] = lum < 160 ? 1 : 0;
+    }
+    return packBitmapToRasterCommand(bits, canvas.width, canvas.height);
+  } catch {
+    return null;
+  }
+};
+
 // ── Native ESC/POS QR code (GS ( k, model 2) — printer renders the QR itself,
 // so quality depends on the printer's own dot accuracy rather than a rasterized
 // bitmap pushed through a generic driver's halftone filter. ──────────────────
@@ -1002,11 +1047,24 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   // Extra dot-feed above sets the block clearly apart from the totals list.
   w.push(CMD.FEED(1));
   w.push(CMD.FEED_DOTS(TOTAL_GAP_BEFORE_DOTS));
-  w.push(CMD.LINE_SPACING(TALL_LINE_SPACING));
-  w.push(CMD.BOLD_ON).push(CMD.CHAR_SIZE(1, 2));
-  w.gline(gutter, buildFixedWidthLine('TOTAL:', fmt(invoice.invoiceTotal), width));
-  w.push(CMD.CHAR_SIZE_NORMAL).push(CMD.BOLD_OFF);
-  w.push(CMD.LINE_SPACING(BODY_LINE_SPACING));
+  // Printed as a raster first: Le Royal's POS-80C prints only the lower part of
+  // GS ! double-height glyphs (even with a tall enough ESC 3 pitch), but prints
+  // rasters correctly. Same flush pattern as pushBandedRaster: zero-pitch LF
+  // before and after so the parser is raster-ready and no paper gap is added.
+  const totalRaster = renderLabelValueRasterCommand('TOTAL:', fmt(invoice.invoiceTotal), {
+    widthDots: PAPER_DOTS[mm], gutterDots: marginDotsFor(mm),
+  });
+  if (totalRaster) {
+    w.push(CMD.LINE_SPACING(0)).push([0x0a]);
+    w.push(totalRaster).push([0x0a]);
+    w.push(CMD.LINE_SPACING(BODY_LINE_SPACING));
+  } else {
+    w.push(CMD.LINE_SPACING(TALL_LINE_SPACING));
+    w.push(CMD.BOLD_ON).push(CMD.CHAR_SIZE(1, 2));
+    w.gline(gutter, buildFixedWidthLine('TOTAL:', fmt(invoice.invoiceTotal), width));
+    w.push(CMD.CHAR_SIZE_NORMAL).push(CMD.BOLD_OFF);
+    w.push(CMD.LINE_SPACING(BODY_LINE_SPACING));
+  }
 
   if (depositApplied != null && parseFloat(depositApplied) > 0) {
     const bal = balanceDue != null ? parseFloat(balanceDue) : (parseFloat(invoice.invoiceTotal || 0) - parseFloat(depositApplied));
