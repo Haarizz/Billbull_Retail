@@ -98,8 +98,7 @@ export const resolveLabelPrinter = async ({ branchId, branchLabel = 'this branch
   if (!printer) {
     throw new LabelPrinterError(
       `No label printer is configured for ${branchLabel}.\n\n`
-      + 'Add one under POS → Devices → Add Device → Label Printer, '
-      + 'leave "assign to this terminal" unchecked, and set it as the default.');
+      + 'Set one up under Inventory → Barcode Print & Design → Print Settings → Printers.');
   }
   if (printer.connectionType === 'NETWORK_IP') {
     if (!printer.id || !printer.ipAddress || !printer.portNumber) {

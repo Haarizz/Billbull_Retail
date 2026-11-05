@@ -107,6 +107,24 @@ class ProductLevelPriceServiceTest {
     }
 
     @Test
+    void belowCostPriceIsRefusedOnlyWhenTheRuleBlocksIt() {
+        PricingRulesService rules = org.mockito.Mockito.mock(PricingRulesService.class);
+        service.setRules(rules);
+        when(rules.costs(org.mockito.ArgumentMatchers.anyCollection(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.Map.of(10L, new PricingRulesService.Costs(new BigDecimal("50"), new BigDecimal("90"))));
+
+        when(rules.get()).thenReturn(new PricingRulesService.Rules(new BigDecimal("15"), false, new BigDecimal("0.01")));
+        service.upsert(List.of(new PriceRow(10L, 2L, null, new BigDecimal("40"))));
+        assertThat(rows).singleElement().satisfies(r -> assertThat(r.getPrice()).isEqualByComparingTo("40.00"));
+
+        when(rules.get()).thenReturn(new PricingRulesService.Rules(new BigDecimal("15"), true, new BigDecimal("0.01")));
+        org.junit.jupiter.api.Assertions.assertThrows(PricingException.class,
+                () -> service.upsert(List.of(new PriceRow(10L, 2L, null, new BigDecimal("45")))));
+        service.upsert(List.of(new PriceRow(10L, 2L, null, new BigDecimal("55"))));
+        assertThat(rows).singleElement().satisfies(r -> assertThat(r.getPrice()).isEqualByComparingTo("55.00"));
+    }
+
+    @Test
     void branchAndAllBranchesPricesAreSeparateCells() {
         service.upsert(List.of(
                 new PriceRow(10L, 2L, null, new BigDecimal("80")),

@@ -4,9 +4,9 @@ import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 // branch choice, access denied, errors), so the till never shows a half-rendered POS.
 export default function TillScreen({ title, subtitle, children, tone = 'default' }) {
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-[#F7F7FA] px-4 py-10">
-      <div className="w-full max-w-lg rounded-3xl border border-gray-100 bg-white p-8 shadow-xl">
-        <div className="mb-6 flex flex-col items-center gap-3 text-center">
+    <div className="flex min-h-screen w-full items-center justify-center bg-[#F7F7FA] px-4 py-10 short:py-4">
+      <div className="w-full max-w-lg rounded-3xl border border-gray-100 bg-white p-8 short:p-6 shadow-xl">
+        <div className="mb-6 short:mb-4 flex flex-col items-center gap-3 short:gap-2 text-center">
           <img src={billBullLogo} alt="BillBull" className="h-10 w-auto" />
           <span className="rounded-full bg-[#FFF8E7] px-3 py-1 text-xs font-bold uppercase tracking-wider text-[#8a6a10] border border-[#FDE6A9]">
             Point of Sale

@@ -11,6 +11,9 @@ import org.springframework.data.repository.query.Param;
 
 public interface ProductPriceChangeRepository extends JpaRepository<ProductPriceChange, Long> {
 
+    /** One product's price changes, newest first (Price Levels workspace history). */
+    List<ProductPriceChange> findByProductIdAndIsActiveTrueOrderByCreatedAtDescIdDesc(Long productId, Pageable pageable);
+
     /**
      * Price changes in a window, newest first. The range is pushed into SQL (and {@code Pageable}
      * caps the result) so the audit report never has to load the whole catalogue to show a day's

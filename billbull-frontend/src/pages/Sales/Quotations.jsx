@@ -119,6 +119,7 @@ import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
 import KpiCards from '../../components/common/KpiCards';
 import QuotationPreviewSplitView from './components/QuotationPreviewSplitView';
+import DocumentTermsCard from '../../components/common/DocumentTermsCard';
 import useDocumentPricing, { manualPricePatch } from '@billbull/shared/hooks/useDocumentPricing';
 import PriceSourceTag from '@billbull/shared/components/pricing/PriceSourceTag';
 
@@ -582,6 +583,10 @@ const Quotations = () => {
     const [notesToCustomer, setNotesToCustomer] = useState('');
     const [internalNotes, setInternalNotes] = useState('');
     const [shippingAddress, setShippingAddress] = useState('');
+    // This quotation's own Terms & Conditions. null = not set yet: DocumentTermsCard pre-fills it
+    // from the default Quotation template (quotations saved before terms existed print the
+    // template's terms). Saved with the quotation and printed instead of the template's text.
+    const [termsConditions, setTermsConditions] = useState(null);
 
     // ✅ BILL DISCOUNT STATE (New)
     const [billDiscount, setBillDiscount] = useState(0);
@@ -800,6 +805,7 @@ const Quotations = () => {
             shippingAddress: data.shippingAddress,
             notesToCustomer: data.notesToCustomer,
             internalNotes: data.internalNotes,
+            termsConditions: typeof data.termsConditions === 'string' ? data.termsConditions : null,
             attachments: data.attachments || [],
             // Newest revision first (backend orders them too — this keeps the
             // tree stable even for payloads that arrive unordered).
@@ -1599,6 +1605,7 @@ const Quotations = () => {
             shippingAddress: shippingAddress,
             notesToCustomer: notesToCustomer,
             internalNotes: internalNotes,
+            termsConditions,
             totalAmount: grandTotal,
             taxAmount: totalTax,
             subTotal: subTotal,
@@ -2130,6 +2137,7 @@ const Quotations = () => {
         setExpectedDispatch(qtn.expectedDispatch || new Date().toISOString().split('T')[0]);
         setNotesToCustomer(qtn.notesToCustomer || '');
         setInternalNotes(qtn.internalNotes || '');
+        setTermsConditions(typeof qtn.termsConditions === 'string' ? qtn.termsConditions : null);
         setShippingAddress(qtn.shippingAddress || '');
         setAttachments(qtn.attachments || []);
         {
@@ -2463,7 +2471,9 @@ const Quotations = () => {
                     locationStore: qtn.branchName || qtn.branchCode || '',
                     warehouse: qtn.branchLocation || '',
                     deliveryTerms: qtn.deliveryType || '',
-                    salesPerson: ''
+                    salesPerson: '',
+                    // Saved quotations print their own terms; null (older ones) → template terms.
+                    terms: typeof qtn.termsConditions === 'string' ? qtn.termsConditions : undefined
                 }
             };
             if (defaultTemplate) {
@@ -2498,7 +2508,7 @@ const Quotations = () => {
         const lineFor = summaryLineLookup(qtn.items || [], resolvedSummary);
         const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
         const _cleanName = fullCustomer?.name || (qtn.customerCode && qtn.customer?.endsWith(` - ${qtn.customerCode}`) ? qtn.customer.slice(0, -(` - ${qtn.customerCode}`).length) : qtn.customer);
-        const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, vatMode: qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE', customer: { name: _cleanName, code: qtn.customerCode || '', address: fullCustomer?.address || fullCustomer?.defaultShippingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), ...printLineMoney(lineFor(i), i), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, taxableAmount: resolvedSummary.taxableTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedSummary.footerDiscType === 'percent' ? resolvedSummary.footerDiscValue : 0, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0, footerDiscountAmount: resolvedSummary.billDiscountAmount || 0 }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
+        const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, vatMode: qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE', customer: { name: _cleanName, code: qtn.customerCode || '', address: fullCustomer?.address || fullCustomer?.defaultShippingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), ...printLineMoney(lineFor(i), i), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, taxableAmount: resolvedSummary.taxableTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedSummary.footerDiscType === 'percent' ? resolvedSummary.footerDiscValue : 0, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0, footerDiscountAmount: resolvedSummary.billDiscountAmount || 0 }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '', terms: typeof qtn.termsConditions === 'string' ? qtn.termsConditions : undefined } };
         // Use the PRINT HTML (real @page / page-break CSS) and let the
         // backend render it with headless Chromium — same engine as the
         // print preview, so the PDF paginates and aligns identically.
@@ -2643,6 +2653,7 @@ const Quotations = () => {
         setAttachments([]);
         setNotesToCustomer('');
         setInternalNotes('');
+        setTermsConditions(null);
         setBillDiscount(0);
         setBillDiscountType('percent');
         setSourceInquiry(null);
@@ -2757,7 +2768,9 @@ const Quotations = () => {
             locationStore: quotationBranch?.name || quotationBranch?.code || '',
             warehouse: quotationBranch?.location || '',
             deliveryTerms: deliveryType || '',
-            salesPerson: ''
+            salesPerson: '',
+            // The quotation's own terms replace the template's (undefined → template terms).
+            terms: termsConditions ?? undefined
         }
     });
 
@@ -4211,6 +4224,17 @@ const Quotations = () => {
                                             ></textarea>
                                         </div>
                                     </div>
+
+                                    {/* TERMS & CONDITIONS — this quotation's own terms, pre-filled from the
+                                        default Quotation print template; printed instead of it. */}
+                                    <DocumentTermsCard
+                                        category="Quotation"
+                                        branchId={quotationBranch?.id ?? activeBranch?.id}
+                                        value={termsConditions}
+                                        onChange={setTermsConditions}
+                                        readOnly={isViewMode}
+                                        documentLabel="quotation"
+                                    />
                                 </div>
                             </div> {/* End Main Column */}
 

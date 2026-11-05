@@ -27,6 +27,7 @@ public class DeliveryNoteResponse {
     public String vehicleNo;
     public String trackingNo;
     public String shippingAddress;
+    public String termsConditions;
 
     public String receivedBy;
     public LocalDate receivedDate;

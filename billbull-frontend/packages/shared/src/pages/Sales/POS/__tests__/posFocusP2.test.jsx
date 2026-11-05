@@ -311,16 +311,10 @@ const SEARCH_PLACEHOLDER = {
   classic: 'Scan or search — item, barcode, batch, customer…',
 };
 const searchBox = (t) => screen.getByPlaceholderText(SEARCH_PLACEHOLDER[t]);
-const plusButton = (t) => {
-  if (t === 'compact') return screen.getAllByRole('button', { name: 'Increase quantity' })[0];
-  if (t === 'focus') return screen.getAllByRole('button', { name: '+' })[0];
-  return document.querySelector('.group button svg.lucide-plus').closest('button');
-};
-const minusButton = (t) => {
-  if (t === 'compact') return screen.getAllByRole('button', { name: 'Decrease quantity' })[0];
-  if (t === 'focus') return screen.getAllByRole('button', { name: '−' })[0];
-  return document.querySelector('.group button svg.lucide-minus').closest('button');
-};
+// Every template renders cart lines with the shared CartLineCard, so the stepper
+// buttons carry the same accessible names everywhere.
+const plusButton = () => screen.getAllByRole('button', { name: 'Increase quantity' })[0];
+const minusButton = () => screen.getAllByRole('button', { name: 'Decrease quantity' })[0];
 // A cart row tap opens Alter Item on Quantity; its tabs switch to the other line fields.
 const openAlterItem = async (tab) => {
   await click(screen.getAllByText('Widget')[0]);

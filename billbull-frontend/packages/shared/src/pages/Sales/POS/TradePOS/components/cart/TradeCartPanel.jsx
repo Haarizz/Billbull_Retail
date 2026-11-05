@@ -37,7 +37,7 @@ export const TradeCartPanel = React.memo(({
     <div className="w-full h-full flex flex-col shrink-0 bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
 
       {/* Invoice Header */}
-      <div className="shrink-0 p-3 sm:p-4 border-b border-gray-100 flex items-center justify-between gap-2">
+      <div className="shrink-0 p-3 sm:p-4 short:p-2 border-b border-gray-100 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <ShoppingCart className="w-5 h-5 text-amber-500 shrink-0" />
           <h2 className="font-black text-slate-800 tracking-tight text-sm uppercase truncate">
@@ -108,6 +108,7 @@ export const TradeCartPanel = React.memo(({
           onUpdateQuantity={updateQuantity}
           onRemoveItem={onRemoveItem}
           formatCurrency={formatCurrency}
+          posSettings={posSettings}
         />
       </div>
 
@@ -116,7 +117,7 @@ export const TradeCartPanel = React.memo(({
       {/* Footer / Summary Area */}
       <div className="shrink-0 bg-white border-t border-slate-200 shadow-[0_-4px_15px_-3px_rgba(0,0,0,0.05)] z-10 flex flex-col">
         
-        <div className="p-4 sm:p-5 flex flex-col gap-3 sm:gap-4">
+        <div className="p-4 sm:p-5 short:p-3 flex flex-col gap-3 sm:gap-4 short:gap-2">
           {/* Meta info row */}
           <div className="flex justify-between items-center text-xs font-semibold text-slate-500 gap-2">
             <span className="shrink-0">{totalUnits} units total</span>
@@ -124,7 +125,7 @@ export const TradeCartPanel = React.memo(({
           </div>
 
           {/* Subtotal & VAT info */}
-          <div className="flex flex-col gap-1 pb-3 border-b border-slate-100">
+          <div className="flex flex-col gap-1 pb-3 short:pb-2 border-b border-slate-100">
             <div className="flex justify-between items-center text-xs font-semibold text-slate-500">
               <span>Subtotal</span>
               <span>{formatCurrency ? formatCurrency(currentInvoice?.subtotal || 0) : `AED ${Number(currentInvoice?.subtotal || 0).toFixed(2)}`}</span>
@@ -141,7 +142,7 @@ export const TradeCartPanel = React.memo(({
               <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1">
                 Grand Total
               </span>
-              <span className="text-3xl sm:text-4xl lg:text-[40px] font-black text-slate-900 leading-none tracking-tight">
+              <span className="text-3xl sm:text-4xl lg:text-[40px] short:text-3xl font-black text-slate-900 leading-none tracking-tight">
                 {formatCurrency ? formatCurrency(currentInvoice?.total || 0) : `AED ${Number(currentInvoice?.total || 0).toFixed(2)}`}
               </span>
             </div>
@@ -149,7 +150,7 @@ export const TradeCartPanel = React.memo(({
             <button
               onClick={() => handleCheckout && handleCheckout()}
               disabled={!hasItems}
-              className="h-14 sm:h-16 px-8 sm:px-10 w-full sm:w-auto bg-primary hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 rounded-xl text-slate-900 font-black tracking-wide text-lg sm:text-xl transition-colors shadow-sm shrink-0"
+              className="h-14 sm:h-16 short:h-12 px-8 sm:px-10 w-full sm:w-auto bg-primary hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 rounded-xl text-slate-900 font-black tracking-wide text-lg sm:text-xl transition-colors shadow-sm shrink-0"
             >
               Checkout
               <ChevronRight className="w-6 h-6" />

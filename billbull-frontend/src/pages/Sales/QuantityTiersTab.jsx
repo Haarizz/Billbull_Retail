@@ -204,11 +204,11 @@ function AddTierForm({ onAdd, unit }) {
   );
 }
 
-export default function QuantityTiersTab({ levels, canEdit }) {
+export default function QuantityTiersTab({ levels, canEdit, initialProduct = null, initialLevelId = null, embedded = false }) {
   const { branches = [], isAllBranches, activeBranchId } = useBranch();
   const tierLevels = useMemo(() => levels.filter((l) => l.active), [levels]);
-  const [product, setProduct] = useState(null);
-  const [levelId, setLevelId] = useState('');
+  const [product, setProduct] = useState(initialProduct);
+  const [levelId, setLevelId] = useState(initialLevelId != null ? String(initialLevelId) : '');
   // '' = all branches. A user without all-branch access manages their own branch's tiers.
   const [branchId, setBranchId] = useState(() => (isAllBranches || !activeBranchId || activeBranchId === 'ALL' ? '' : String(activeBranchId)));
   const [showInactive, setShowInactive] = useState(false);
@@ -226,6 +226,7 @@ export default function QuantityTiersTab({ levels, canEdit }) {
 
   // Products that already have tiers (search / level filter).
   useEffect(() => {
+    if (embedded) return undefined;
     let cancelled = false;
     const t = setTimeout(() => {
       listTieredProducts({ search: listSearch, priceLevelId: levelId ? Number(levelId) : undefined, size: 50 })
@@ -233,7 +234,7 @@ export default function QuantityTiersTab({ levels, canEdit }) {
         .catch(() => { if (!cancelled) setTiered({ content: [], totalElements: 0 }); });
     }, 250);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [listSearch, levelId, listVersion]);
+  }, [listSearch, levelId, listVersion, embedded]);
 
   const load = useCallback(async () => {
     if (!product) return;
@@ -285,7 +286,7 @@ export default function QuantityTiersTab({ levels, canEdit }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-sm text-slate-600">
+      <p className={embedded ? 'text-xs text-slate-500' : 'text-sm text-slate-600'}>
         Set a lower unit price for larger quantities. Thresholds and prices are per base unit: a box of 12
         counts as 12 towards a tier and is charged 12 times the tier price. All lines of the same product in
         a sale count together; free (FOC) quantity never counts. A customer&apos;s negotiated price still wins
@@ -293,7 +294,7 @@ export default function QuantityTiersTab({ levels, canEdit }) {
       </p>
 
       <div className="flex flex-wrap items-end gap-3">
-        <ProductPicker onPick={setProduct} />
+        {!embedded && <ProductPicker onPick={setProduct} />}
         <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
           Price level
           <select aria-label="Tier price level" value={levelId} onChange={(e) => setLevelId(e.target.value)}
@@ -367,7 +368,7 @@ export default function QuantityTiersTab({ levels, canEdit }) {
         </div>
       )}
 
-      <div className="flex flex-col gap-2">
+      {!embedded && <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-end justify-between gap-2">
           <h2 className="flex items-center gap-1 text-sm font-semibold text-slate-700"><Layers size={14} /> Products with tiers{level ? ` under ${level.name}` : ''}</h2>
           <label className="relative flex flex-col gap-1 text-xs font-medium text-slate-600">
@@ -395,7 +396,7 @@ export default function QuantityTiersTab({ levels, canEdit }) {
             </tbody>
           </table>
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

@@ -55,6 +55,14 @@ public class DeliveryNote  implements com.billbull.backend.common.ownership.Owne
 	private String vehicleNo;
 	private String trackingNo;
 
+	/**
+	 * Terms & Conditions printed on this delivery note (V132). Pre-filled from the default print template
+	 * of its category and editable per document. Null (delivery notes saved before V132) prints the
+	 * template's own terms; an empty string prints none.
+	 */
+	@Column(name = "terms_conditions", columnDefinition = "TEXT")
+	private String termsConditions;
+
 	@Column(length = 1000)
 	private String shippingAddress;
 
@@ -277,6 +285,9 @@ public class DeliveryNote  implements com.billbull.backend.common.ownership.Owne
 	public void setTrackingNo(String trackingNo) {
 		this.trackingNo = trackingNo;
 	}
+
+	public String getTermsConditions() { return termsConditions; }
+	public void setTermsConditions(String termsConditions) { this.termsConditions = termsConditions; }
 
 	public void setShippingAddress(String shippingAddress) {
 		this.shippingAddress = shippingAddress;

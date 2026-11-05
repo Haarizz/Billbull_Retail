@@ -136,3 +136,78 @@ export const discontinueCustomerPrice = async (id) =>
   (await api.post(`${CUSTOMER_PRICES}/${id}/discontinue`)).data;
 
 export const deleteCustomerPrice = async (id) => { await api.delete(`${CUSTOMER_PRICES}/${id}`); };
+
+// ── Price Levels workspace. Backend: sales/pricing/PricingWorkspaceController.
+
+const WORKSPACE = "/api/pricing-workspace";
+
+/** Card counts: { activeLevels, customerPriceLists, customerPrices, customersWithPrices, marginAlerts|null, ... }. */
+export const getPricingSummary = async () => (await api.get(`${WORKSPACE}/summary`)).data;
+
+/** { minMarginPercent, blockBelowCost, roundTo } */
+export const getPricingRules = async () => (await api.get(`${WORKSPACE}/rules`)).data;
+
+export const savePricingRules = async (rules) => (await api.put(`${WORKSPACE}/rules`, rules)).data;
+
+/**
+ * A page of the product × level matrix: { content: [{ id, code, name, imageUrl, departmentName, brandName,
+ * cost, basePrice, baseMarginPercent, prices: [{ priceLevelId, branchId, price, marginPercent }] }],
+ * totalElements, totalPages, costVisible, minMarginPercent }. filter: ALL | PRICED | UNPRICED | LOW_MARGIN.
+ */
+export const getPriceMatrix = async ({ search, departmentId, brandId, branchId, filter = "ALL", page = 0, size = 25 } = {}, signal) =>
+  (await api.get(`${WORKSPACE}/products`, {
+    params: {
+      search: search || undefined,
+      departmentId: departmentId || undefined,
+      brandId: brandId || undefined,
+      branchId: branchId || undefined,
+      filter,
+      page,
+      size,
+    },
+    signal,
+  })).data;
+
+/** A product's price changes, newest first: [{ kind: LEVEL|CUSTOMER|PRODUCT, label, branchName, oldPrice, newPrice, changedAt, changedBy }]. */
+export const getProductPriceHistory = async (productId, limit = 100) =>
+  (await api.get(`${WORKSPACE}/products/${productId}/history`, { params: { limit } })).data;
+
+/** Bulk level price change (dryRun: true previews): { products, changed, unchanged, skipped, skippedReasons, samples, applied }. */
+export const bulkUpdateLevelPrices = async (body) => (await api.post(`${WORKSPACE}/bulk-update`, body)).data;
+
+/** rows: [{ row, productCode, priceLevel, price }] (blank price removes it) → { applied, cleared, unchanged, errors }. */
+export const importLevelPrices = async (body) => (await api.post(`${WORKSPACE}/import`, body)).data;
+
+/** Customers on a level (levelId omitted = all customers): PageResponse of { id, code, name, mobile, group, priceLevelId, priceLevelName }. */
+export const listLevelCustomers = async ({ levelId, search, customerGroup, page = 0, size = 25 } = {}) =>
+  (await api.get(`${WORKSPACE}/customers`, {
+    params: { levelId: levelId ?? undefined, search: search || undefined, customerGroup: customerGroup || undefined, page, size },
+  })).data;
+
+export const listCustomerGroups = async () => {
+  const res = await api.get(`${WORKSPACE}/customer-groups`);
+  return Array.isArray(res.data) ? res.data : [];
+};
+
+/** body: { customerIds?, customerGroup?, assign: true|false } → { updated, unchanged } */
+export const assignLevelToCustomers = async (levelId, body) =>
+  (await api.put(`${WORKSPACE}/levels/${levelId}/customers`, body)).data;
+
+/**
+ * Negotiated prices with cost / base price / margin / discount. status: ALL | CURRENT | FUTURE | EXPIRED | DISABLED | LIVE.
+ * Rows are flattened: the price fields plus cost, basePrice, marginPercent, discountPercent, belowCost.
+ */
+export const listCustomerPriceRows = async ({ customerId, search, status = "ALL", belowCost = false, page = 0, size = 25 } = {}, signal) => {
+  const data = (await api.get(`${WORKSPACE}/customer-prices`, {
+    params: { customerId: customerId ?? undefined, search: search || undefined, status, belowCost, page, size },
+    signal,
+  })).data;
+  const content = (data?.content || []).map(({ entry, ...extra }) => ({ ...(entry || {}), ...extra }));
+  return { ...data, content };
+};
+
+/** Negotiated prices for one customer across products (dryRun previews). */
+export const bulkCustomerPrices = async (body) => (await api.post(`${WORKSPACE}/customer-prices/bulk`, body)).data;
+
+/** body: { fromCustomerId, toCustomerId, overwrite, dryRun } */
+export const copyCustomerPrices = async (body) => (await api.post(`${WORKSPACE}/customer-prices/copy`, body)).data;

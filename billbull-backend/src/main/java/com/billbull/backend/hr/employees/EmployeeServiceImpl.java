@@ -25,6 +25,7 @@ public class EmployeeServiceImpl implements EmployeeService {
     private final UserService userService;
     private final BranchRepository branchRepository;
     private final com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
+    private final com.billbull.backend.pos.pinlogin.PosPinPolicy posPinPolicy;
 
     /**
      * POS sessions are the only company-wide activity an employee record can be ranked
@@ -40,13 +41,30 @@ public class EmployeeServiceImpl implements EmployeeService {
             AdminSafeguardService adminSafeguardService,
             UserService userService,
             BranchRepository branchRepository,
-            com.billbull.backend.settings.branch.BranchAccessService branchAccessService) {
+            com.billbull.backend.settings.branch.BranchAccessService branchAccessService,
+            com.billbull.backend.pos.pinlogin.PosPinPolicy posPinPolicy) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.adminSafeguardService = adminSafeguardService;
         this.userService = userService;
         this.branchRepository = branchRepository;
         this.branchAccessService = branchAccessService;
+        this.posPinPolicy = posPinPolicy;
+    }
+
+    /**
+     * Till PIN from the HR form. A blank PIN keeps the current one; turning POS access off
+     * removes it. Only the hash is stored (see {@link com.billbull.backend.pos.pinlogin.PosPinPolicy}).
+     */
+    private void applyPosPin(Employee target, Boolean posAccess, String newPin) {
+        if (Boolean.FALSE.equals(posAccess)) {
+            target.setPosPinHash(null);
+            target.setPosPinLength(null);
+        } else if (newPin != null && !newPin.isBlank()) {
+            target.setPosPinHash(posPinPolicy.hash(newPin.trim()));
+            target.setPosPinLength(newPin.trim().length());
+        }
+        target.setPosPin(null);
     }
 
     @Override
@@ -216,6 +234,8 @@ public class EmployeeServiceImpl implements EmployeeService {
     public Employee createEmployee(EmployeeUpsertRequest request, MultipartFile avatar) {
         Employee employee = request.toEmployee();
         validateRequired(employee, null);
+        employee.setPosPinHash(null);
+        applyPosPin(employee, employee.getPosAccess(), request.getPosPin());
         employee.setStatus("Pending");
         employee.setWorkflowStage("HR Review");
         resolveBranchEntity(employee);
@@ -259,7 +279,7 @@ public class EmployeeServiceImpl implements EmployeeService {
         existing.setProbationPeriod(updated.getProbationPeriod());
         existing.setConfirmationDate(updated.getConfirmationDate());
         existing.setPosAccess(updated.getPosAccess());
-        existing.setPosPin(updated.getPosPin());
+        applyPosPin(existing, updated.getPosAccess(), request.getPosPin());
         existing.setPermissionProfile(updated.getPermissionProfile());
         existing.setSalaryType(updated.getSalaryType());
         existing.setBasicSalary(updated.getBasicSalary());
@@ -378,6 +398,9 @@ public class EmployeeServiceImpl implements EmployeeService {
         Employee emp = getById(id);
         emp.setStatus("Active");
         emp.setWorkflowStage("Completed");
+        // Deactivation switched POS access off as part of the exit; undo that on return, or a
+        // re-hired cashier is silently locked out of the till.
+        emp.setPosAccess(true);
         Employee saved = repository.save(emp);
         userService.activatePendingEmployeeAccessForEmployee(id);
         return saved;

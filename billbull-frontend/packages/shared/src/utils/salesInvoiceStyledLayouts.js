@@ -98,6 +98,8 @@ export const STYLED_INVOICE_SECTIONS = {
             ['showBalanceDue', 'Balance Due'],
             ['showNotes', 'Notes'],
             ['showTerms', 'Terms'],
+            ['showBankDetails', 'Bank Details', false],
+            ['showCompanyStamp', 'Company Stamp', false],
             ['showFooterNote', 'Issued-electronically Note']
         ]]
     ],
@@ -142,10 +144,13 @@ export const STYLED_INVOICE_SECTIONS = {
             ['showRoundOff', 'Round Off'],
             ['showAmountInWords', 'Amount in Words'],
             ['showPaymentSummary', 'Paid / Balance Due'],
-            ['showTerms', 'Terms & Conditions']
+            ['showTerms', 'Terms & Conditions'],
+            ['showBankDetails', 'Bank Details', false]
         ]],
         ['Footer', [
             ['showSignature', 'Signature Lines'],
+            ['showCompanyStamp', 'Company Stamp', false],
+            ['showQRCode', 'Verification QR Code', false],
             ['showThankYou', 'Footer Message'],
             ['showContactLine', 'Contact Line']
         ]]
@@ -186,7 +191,9 @@ export const STYLED_INVOICE_SECTIONS = {
         ['Footer', [
             ['showTerms', 'Terms'],
             ['showBankDetails', 'Payment Details'],
-            ['showNotes', 'Notes']
+            ['showNotes', 'Notes'],
+            ['showCompanyStamp', 'Company Stamp', false],
+            ['showQRCode', 'Verification QR Code', false]
         ]]
     ]
 };
@@ -334,15 +341,12 @@ const STYLE_DEFAULTS = {
     'column-bilingual': {
         accentColor: '#0f766e',
         fontFamily: "Arial, 'Helvetica Neue', sans-serif",
-        // Also drives QR generation in printGenerator; this layout has no QR slot.
-        showQRCode: false,
         tagline: '',
         thankYouText: 'Thank You For Your Business!'
     },
     elegant: {
         accentColor: '#080808',
-        fontFamily: 'Arial, Helvetica, sans-serif',
-        showQRCode: false
+        fontFamily: 'Arial, Helvetica, sans-serif'
     }
 };
 
@@ -355,6 +359,12 @@ export const defaultStyledInvoiceSettings = (layoutStyle, templateName) => ({
     orientation: 'portrait',
     paperLocked: true,
     termsText: 'Payment is due within the agreed credit terms. Please use the invoice number as your payment reference.',
+    // A logo / stamp uploaded on the template wins over the branch and company
+    // images (resolveDocumentAssets); empty means "use the branch / company one".
+    logoUrl: '',
+    stampUrl: '',
+    showWatermark: false,
+    watermarkText: 'ORIGINAL',
     ...sectionDefaults(layoutStyle),
     ...(STYLE_DEFAULTS[layoutStyle] || {})
 });
@@ -496,7 +506,7 @@ ${body}
 
 // ── shared view model ────────────────────────────────────────────────────────
 
-const buildView = ({ layout, data, settings, amountInWords }) => {
+const buildView = ({ layout, data, settings, amountInWords, renderTarget }) => {
     const meta = data.meta || {};
     const totals = layout.totals || {};
     const company = layout.company || {};
@@ -544,6 +554,15 @@ const buildView = ({ layout, data, settings, amountInWords }) => {
     const showSellerTrn = !isOff(settings.showTRN) && Boolean(company.trn);
     const currencyConfig = resolveCurrencyDisplayConfig(layout.currency || 'AED');
 
+    // Same rule as the standard layout's stamp: the template toggle, then the
+    // company's own "show stamp in print / email" switch.
+    const stampAllowed = renderTarget === 'email'
+        ? company.showStampInEmail !== false
+        : company.showStampInPrint !== false;
+    const stampUrl = !isOff(settings.showCompanyStamp) && stampAllowed
+        ? firstOf(layout.stampUrl, company.stampUrl)
+        : '';
+
     return {
         title: firstOf(layout.title, 'Invoice'),
         titleAr: arabicTitle(firstOf(layout.title, 'Invoice')),
@@ -585,6 +604,7 @@ const buildView = ({ layout, data, settings, amountInWords }) => {
             trn: firstOf(party.taxId)
         },
         logoUrl: firstOf(layout.logoUrl),
+        stampUrl,
         qrCodeDataUrl: firstOf(layout.qrCodeDataUrl),
         items,
         vatRateText: rates.length === 1 ? `${qtyText(rates[0])}%` : '',
@@ -605,6 +625,26 @@ const buildView = ({ layout, data, settings, amountInWords }) => {
             balanceDue
         }
     };
+};
+
+// [English label, Arabic label, value] for every bank detail that resolves.
+const bankRowsOf = (company) => [
+    ['Bank', 'البنك', company.bankName],
+    ['Account No.', 'رقم الحساب', company.bankAccount],
+    ['IBAN', 'الآيبان', company.bankIban],
+    ['SWIFT', 'سويفت', company.bankSwift]
+].filter(([, , value]) => value);
+
+const stampImage = (url, size, style = '') =>
+    (url ? `<img src="${esc(url)}" alt="Company stamp" style="width:${size}px;height:${size}px;object-fit:contain;${style}" />` : '');
+
+// Diagonal text over every printed sheet (position:fixed repeats per page).
+const watermarkHtml = (value) => {
+    const label = text(value).trim().slice(0, 40);
+    if (!label) return '';
+    return `<div aria-hidden="true" style="position:fixed;top:0;right:0;bottom:0;left:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:10;">
+    <span style="transform:rotate(-30deg);font-family:Arial, Helvetica, sans-serif;font-size:96px;font-weight:800;letter-spacing:0.08em;color:rgba(17,24,39,0.08);white-space:nowrap;">${esc(label)}</span>
+</div>`;
 };
 
 const voidTag = (item) =>
@@ -742,6 +782,22 @@ const renderMinimalBilingual = (view, settings, theme) => {
         ? `Notes &amp; Terms / ${ar('الملاحظات والشروط')}`
         : notes ? `Notes / ${ar('الملاحظات')}` : `Terms / ${ar('الشروط')}`;
 
+    const bankRows = on('showBankDetails') ? bankRowsOf(company) : [];
+    const bankBlock = bankRows.length ? `
+        <div style="flex:1;">
+            <div style="font-size:11px;color:${LABEL};font-weight:600;margin-bottom:6px;">Bank Details / ${ar('البيانات المصرفية')}</div>
+            ${bankRows.map(([en, arText, value]) => `
+            <div style="display:flex;gap:10px;font-size:11px;line-height:1.7;">
+                <span style="min-width:150px;color:${LABEL};">${esc(en)} / ${ar(arText)}</span>
+                <span style="color:${DARK};font-weight:600;${en === 'Bank' ? '' : `font-family:${MONO_FONT};`}">${esc(value)}</span>
+            </div>`).join('')}
+        </div>` : '';
+    const stampBlock = view.stampUrl ? `
+        <div style="margin-left:auto;text-align:center;">
+            ${stampImage(view.stampUrl, 96, 'display:block;margin:0 auto;')}
+            <div style="margin-top:4px;font-size:10px;color:${LABEL};">Company Stamp / ${ar('ختم الشركة')}</div>
+        </div>` : '';
+
     const body = `
 <div class="bb-page" style="padding:4px 48px 8px;font-family:${esc(ff)};color:${DARK};display:flex;flex-direction:column;">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding-bottom:16px;border-bottom:1px solid ${BORDER};">
@@ -811,6 +867,11 @@ const renderMinimalBilingual = (view, settings, theme) => {
     <div class="bb-keep" style="margin-top:12px;border:1px dashed ${col.colorDashedBorder};border-radius:8px;padding:10px 16px;">
         <div style="font-size:11px;color:${LABEL};font-weight:600;margin-bottom:8px;">${notesHeading}</div>
         <p style="font-size:11px;color:${MID};line-height:1.65;">${escLines([notes, terms].filter(Boolean).join('\n'))}</p>
+    </div>` : ''}
+
+    ${bankBlock || stampBlock ? `
+    <div class="bb-keep" style="display:flex;align-items:flex-end;gap:24px;margin-top:14px;">
+        ${bankBlock}${stampBlock}
     </div>` : ''}
 
     ${on('showFooterNote') ? `
@@ -934,11 +995,25 @@ const renderColumnBilingual = (view, settings, theme) => {
         totals.voidedCount > 0 ? totalLine(`Voided Items (${qtyText(totals.voidedCount)})`, 'البنود الملغاة', `- ${money(totals.voidedTotal)}`) : ''
     ].join('');
 
-    const signature = (en, arText) => (on('showSignature') ? `
+    // `above` sits over the signature line (the company stamp on the authorised side).
+    const signature = (en, arText, above = '') => {
+        if (!on('showSignature')) return above ? `<div style="text-align:center;">${above}</div>` : '<div></div>';
+        return `
         <div style="text-align:center;">
+            ${above}
             <span style="display:block;width:88%;margin:0 auto ${px(12)}px;border-top:0.5px solid ${col.colorSignatureLine};"></span>
             <p style="white-space:nowrap;font-size:${px(11)}px;color:${col.colorFooterText};">${bi(en, arText)}</p>
-        </div>` : '<div></div>');
+        </div>`;
+    };
+    const stamp = stampImage(view.stampUrl, px(110), `display:block;margin:0 auto ${px(6)}px;`);
+
+    const qr = on('showQRCode') && view.qrCodeDataUrl ? `
+        <div style="flex-shrink:0;text-align:center;">
+            <img src="${esc(view.qrCodeDataUrl)}" alt="QR code" style="display:block;width:${px(96)}px;height:${px(96)}px;" />
+            <p style="margin-top:${px(3)}px;font-size:${px(9)}px;">Scan to verify ${ar('امسح للتحقق')}</p>
+        </div>` : '';
+
+    const bankRows = on('showBankDetails') ? bankRowsOf(company) : [];
 
     const contactLine = on('showContactLine')
         ? [company.email, company.phone].filter(Boolean).map(esc).join('&nbsp;&nbsp;•&nbsp;&nbsp;')
@@ -946,7 +1021,7 @@ const renderColumnBilingual = (view, settings, theme) => {
     const sep = `<span style="padding:0 ${px(5)}px;color:#9aa1a8;font-weight:400;">|</span>`;
     const tagline = on('showTagline') ? text(settings.tagline).trim() : '';
     const thankYou = on('showThankYou') ? text(settings.thankYouText).trim() : '';
-    const showFooter = on('showSignature') || thankYou || contactLine;
+    const showFooter = on('showSignature') || stamp || thankYou || contactLine;
     const halfGrid = 'display:grid;grid-template-columns:46% 54%;';
 
     const body = `
@@ -980,11 +1055,14 @@ const renderColumnBilingual = (view, settings, theme) => {
         <tbody>${itemRows}${fillerRow}</tbody>
     </table>
 
-    ${on('showRemarks') || totalLines ? `
+    ${on('showRemarks') || totalLines || qr ? `
     <section class="bb-keep" style="${halfGrid}min-height:${px(100)}px;border-bottom:0.5px solid ${RULE};">
-        <div style="padding:${px(13)}px ${px(9)}px;border-right:0.5px solid ${RULE};">
-            ${on('showRemarks') ? bi('Remarks : -', 'ملاحظات') : ''}
-            ${on('showRemarks') && view.notes ? `<p style="margin-top:${px(6)}px;font-size:${px(11)}px;line-height:1.5;">${escLines(view.notes)}</p>` : ''}
+        <div style="display:flex;justify-content:space-between;gap:${px(10)}px;padding:${px(13)}px ${px(9)}px;border-right:0.5px solid ${RULE};">
+            <div>
+                ${on('showRemarks') ? bi('Remarks : -', 'ملاحظات') : ''}
+                ${on('showRemarks') && view.notes ? `<p style="margin-top:${px(6)}px;font-size:${px(11)}px;line-height:1.5;">${escLines(view.notes)}</p>` : ''}
+            </div>
+            ${qr}
         </div>
         <div style="padding:${px(10)}px ${px(9)}px ${px(8)}px;">${totalLines}</div>
     </section>` : ''}
@@ -1016,6 +1094,12 @@ const renderColumnBilingual = (view, settings, theme) => {
         <p style="margin-top:${px(4)}px;">${escLines(view.terms)}</p>
     </section>` : ''}
 
+    ${bankRows.length ? `
+    <section class="bb-keep" style="padding:${px(10)}px ${px(11)}px;border-bottom:0.5px solid ${RULE};font-size:${px(11)}px;line-height:1.5;">
+        ${bi('Bank Details', 'البيانات المصرفية')}
+        <p style="margin-top:${px(4)}px;">${bankRows.map(([en, arText, value]) => `<span style="display:inline-block;margin-right:${px(22)}px;white-space:nowrap;">${bi(en, arText)} : ${esc(value)}</span>`).join('')}</p>
+    </section>` : ''}
+
     ${showFooter ? `
     <footer class="bb-keep" style="display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:end;gap:${px(25)}px;min-height:${px(132)}px;padding:${px(22)}px ${px(25)}px ${px(16)}px;">
         ${signature('Customer Signature', 'توقيع العميل')}
@@ -1023,7 +1107,7 @@ const renderColumnBilingual = (view, settings, theme) => {
             ${thankYou ? `<strong style="font-size:${px(14)}px;font-style:italic;color:${col.colorThankYou};">${esc(thankYou)}</strong>` : ''}
             ${contactLine ? `<p style="margin-top:${px(10)}px;padding:${px(7)}px ${px(5)}px;border:0.5px solid ${RULE};border-radius:3px;font-size:${px(11)}px;color:${col.colorFooterText};">${contactLine}</p>` : ''}
         </div>
-        ${signature('Authorised Signature', 'توقيع المسؤول')}
+        ${signature('Authorised Signature', 'توقيع المسؤول', stamp)}
     </footer>` : ''}
 </div>
 </div>`;
@@ -1132,6 +1216,7 @@ const renderElegant = (view, settings, theme) => {
     ].join('');
 
     const showHeadline = on('showBalanceHeadline');
+    const showQr = on('showQRCode') && view.qrCodeDataUrl;
 
     const body = `
 <div class="bb-page" style="padding:8px 47px 24px;font-family:${esc(theme.fontFamily)};color:${col.colorText};${body13}">
@@ -1184,6 +1269,18 @@ const renderElegant = (view, settings, theme) => {
         <h3 style="margin:0 0 10px;font-size:13px;font-weight:bold;color:${col.colorHeading};">Notes</h3>
         <p>${escLines(view.notes)}</p>
     </section>` : ''}
+
+    ${showQr || view.stampUrl ? `
+    <section class="bb-keep" style="margin-top:33px;display:flex;justify-content:space-between;align-items:flex-end;gap:24px;">
+        <div>${showQr ? `
+            <img src="${esc(view.qrCodeDataUrl)}" alt="QR code" style="display:block;width:90px;height:90px;" />
+            <p style="margin-top:4px;font-size:11px;color:${col.colorMutedText};">Scan to verify</p>` : ''}
+        </div>
+        <div style="text-align:center;">${view.stampUrl ? `
+            ${stampImage(view.stampUrl, 100, 'display:block;margin:0 auto;')}
+            <p style="margin-top:4px;font-size:11px;color:${col.colorMutedText};">Company Stamp</p>` : ''}
+        </div>
+    </section>` : ''}
 </div>`;
 
     return body;
@@ -1226,12 +1323,16 @@ export const renderStyledSalesInvoiceHtml = ({
         fontFamily: layout.theme?.fontFamily || merged.fontFamily,
         colors: resolveStyledInvoiceColors(layoutStyle, merged, accentColor)
     };
-    const view = buildView({ layout, data, settings: merged, amountInWords });
+    const view = buildView({ layout, data, settings: merged, amountInWords, renderTarget });
+    // Email clients drop fixed positioning, so the watermark is print / PDF only.
+    const watermark = renderTarget !== 'email' && merged.showWatermark === true
+        ? watermarkHtml(merged.watermarkText)
+        : '';
 
     return documentShell({
         documentTitle: documentTitle || `${view.title} ${view.docNo}`.trim(),
         fontFamily: theme.fontFamily,
         renderTarget,
-        body: render(view, merged, theme)
+        body: `${render(view, merged, theme)}${watermark}`
     });
 };

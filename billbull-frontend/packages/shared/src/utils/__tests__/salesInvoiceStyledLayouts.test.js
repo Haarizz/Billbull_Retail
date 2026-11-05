@@ -113,7 +113,10 @@ describe('styled sales invoice layouts', () => {
             meta: { ...printData.meta, dueDate: '2026-11-04', paymentTerm: 'Net 30', poNumber: 'PO-1', amountPaid: 500, location: 'Dubai Main' }
         };
         const options = {
-            companyProfile: { ...companyProfile, crn: 'CN-1', email: 'a@acme.ae', phone: '+971 4 000', logoUrl: 'https://example.com/logo.png', bankName: 'ENBD' },
+            companyProfile: {
+                ...companyProfile, crn: 'CN-1', email: 'a@acme.ae', phone: '+971 4 000', logoUrl: 'https://example.com/logo.png',
+                stampUrl: 'https://example.com/stamp.png', bankName: 'ENBD'
+            },
             qrCodeDataUrl: 'data:image/png;base64,AAAA'
         };
         const toggles = STYLED_INVOICE_SECTIONS[layoutStyle].flatMap(([, rows]) => rows.map(([key]) => key));
@@ -191,6 +194,60 @@ describe('styled sales invoice layouts', () => {
         delete stored.showFooterNote;
         legacy.displayOptions = JSON.stringify({ salesDesignerSettings: stored });
         expect(generateDocumentPrintHtml(legacy, printData, { companyProfile })).toContain('issued electronically');
+    });
+
+    it.each(SALES_INVOICE_LAYOUT_STYLES.map((style) => style.id))('%s: a logo and stamp uploaded on the template win over the company ones', (layoutStyle) => {
+        const options = { companyProfile: { ...companyProfile, logoUrl: 'https://example.com/co-logo.png', stampUrl: 'https://example.com/co-stamp.png' } };
+        const uploaded = {
+            logoUrl: 'data:image/png;base64,TEMPLATELOGO',
+            stampUrl: 'data:image/png;base64,TEMPLATESTAMP',
+            showCompanyStamp: true
+        };
+        const html = generateDocumentPrintHtml(templateFor(layoutStyle, uploaded), printData, options);
+        expect(html).toContain('TEMPLATELOGO');
+        expect(html).toContain('TEMPLATESTAMP');
+        expect(html).not.toContain('co-logo.png');
+        expect(html).not.toContain('co-stamp.png');
+
+        // Without an upload the company's own images are used.
+        const fallback = generateDocumentPrintHtml(templateFor(layoutStyle, { showCompanyStamp: true }), printData, options);
+        expect(fallback).toContain('co-logo.png');
+        expect(fallback).toContain('co-stamp.png');
+    });
+
+    it.each(SALES_INVOICE_LAYOUT_STYLES.map((style) => style.id))('%s: stamp, bank details and watermark stay off on templates saved before they existed', (layoutStyle) => {
+        const options = { companyProfile: { ...companyProfile, stampUrl: 'https://example.com/co-stamp.png', bankName: 'ENBD', bankIban: 'AE07 0331' } };
+        const legacy = templateFor(layoutStyle);
+        const stored = JSON.parse(legacy.displayOptions).salesDesignerSettings;
+        ['showCompanyStamp', 'showBankDetails', 'showWatermark', 'watermarkText', 'logoUrl', 'stampUrl']
+            .forEach((key) => delete stored[key]);
+        if (layoutStyle === 'elegant') stored.showBankDetails = false;
+        legacy.displayOptions = JSON.stringify({ salesDesignerSettings: stored });
+        const html = generateDocumentPrintHtml(legacy, printData, options);
+        expect(html).not.toContain('co-stamp.png');
+        expect(html).not.toContain('AE07 0331');
+        expect(html).not.toContain('ORIGINAL');
+    });
+
+    it('honours the company "show stamp in email" switch', () => {
+        const options = { companyProfile: { ...companyProfile, stampUrl: 'https://example.com/co-stamp.png', showStampInEmail: false } };
+        const template = templateFor('minimal-bilingual', { showCompanyStamp: true });
+        expect(generateDocumentPrintHtml(template, printData, options)).toContain('co-stamp.png');
+        expect(generateDocumentEmailHtml(template, printData, options)).not.toContain('co-stamp.png');
+    });
+
+    it('prints the watermark on print and PDF but not in email', () => {
+        const template = templateFor('column-bilingual', { showWatermark: true, watermarkText: 'COPY <b>' });
+        const print = generateDocumentPrintHtml(template, printData, { companyProfile });
+        expect(print).toContain('COPY &lt;b&gt;');
+        expect(generateDocumentPdfHtml(template, printData, { companyProfile })).toContain('COPY &lt;b&gt;');
+        expect(generateDocumentEmailHtml(template, printData, { companyProfile })).not.toContain('COPY');
+    });
+
+    it('fills bank details from the template when the company has none', () => {
+        const html = render('minimal-bilingual', { showBankDetails: true, bankName: 'Mashreq', bankIBAN: 'AE11 2222' });
+        expect(html).toContain('Mashreq');
+        expect(html).toContain('AE11 2222');
     });
 
     it('shows paid amount and balance when the invoice is part-paid', () => {

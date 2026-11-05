@@ -76,7 +76,24 @@ public class Employee {
     // ACCESS & PERMISSIONS
     // =========================
     private Boolean posAccess;
+
+    /**
+     * New till PIN as typed in the HR form. Input only: never stored or returned. The service
+     * validates it and keeps just the BCrypt hash in {@link #posPinHash}. Blank means "unchanged".
+     */
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.WRITE_ONLY)
     private String posPin;
+
+    @Column(name = "pos_pin_hash", length = 100)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String posPinHash;
+
+    /** Digits in the PIN (4–6), so the till keypad can sign in on the last digit. Never the PIN itself. */
+    @Column(name = "pos_pin_length")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Integer posPinLength;
+
     private String permissionProfile;
 
     // =========================
@@ -226,6 +243,21 @@ public class Employee {
 
     public String getPosPin() { return posPin; }
     public void setPosPin(String posPin) { this.posPin = posPin; }
+
+    public String getPosPinHash() { return posPinHash; }
+    public void setPosPinHash(String posPinHash) { this.posPinHash = posPinHash; }
+
+    public Integer getPosPinLength() { return posPinLength; }
+    public void setPosPinLength(Integer posPinLength) { this.posPinLength = posPinLength; }
+
+    /** Lets the HR form show "PIN set" without ever seeing the PIN. */
+    @Transient
+    public boolean getHasPosPin() { return posPinHash != null && !posPinHash.isBlank(); }
+
+    /** Null (legacy rows) counts as allowed, matching the @PrePersist default. */
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public boolean isPosAccessAllowed() { return !Boolean.FALSE.equals(posAccess); }
 
     public String getPermissionProfile() { return permissionProfile; }
     public void setPermissionProfile(String permissionProfile) { this.permissionProfile = permissionProfile; }

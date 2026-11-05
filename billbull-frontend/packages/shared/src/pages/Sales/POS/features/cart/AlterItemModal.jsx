@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Hash, Tag, Percent, X, Delete, CornerDownLeft, ArrowUp, ArrowDown, Lock, Package, Boxes, Check, Loader2 } from 'lucide-react';
+import { Hash, Tag, Percent, X, Delete, CornerDownLeft, ArrowUp, ArrowDown, ArrowRight, Lock, Package, Boxes, Check, Loader2 } from 'lucide-react';
 import { DirhamSymbol } from '../../POSCurrency';
 import { createBurstTracker } from '../../device/scanner/scanGuard';
 import { lineUnitLocked, sameUnit, unitOfLine, unitPriceFor } from './lineUnits';
@@ -41,26 +41,10 @@ import { lineUnitLocked, sameUnit, unitOfLine, unitPriceFor } from './lineUnits'
 const MODES = ['qty', 'price', 'discount', 'unit'];
 
 const SECTIONS = {
-  qty: {
-    label: 'Quantity', short: 'Qty', key: 'Q', Icon: Hash, fieldLabel: 'New quantity',
-    active: 'border-blue-400 bg-blue-50/70 ring-4 ring-blue-100',
-    icon: 'bg-blue-600 text-white', text: 'text-blue-700',
-  },
-  price: {
-    label: 'Unit Price', short: 'Price', key: 'P', Icon: Tag, fieldLabel: 'New unit price',
-    active: 'border-purple-400 bg-purple-50/70 ring-4 ring-purple-100',
-    icon: 'bg-purple-600 text-white', text: 'text-purple-700',
-  },
-  discount: {
-    label: 'Discount', short: 'Disc', key: 'D', Icon: Percent, fieldLabel: 'Discount',
-    active: 'border-[#F5C742] bg-[#FFF8E7] ring-4 ring-[#F5C742]/25',
-    icon: 'bg-[#F5C742] text-[#1E293B]', text: 'text-[#B8942E]',
-  },
-  unit: {
-    label: 'Unit', short: 'Unit', key: 'U', Icon: Boxes, fieldLabel: 'Unit no.',
-    active: 'border-[#327F74] bg-[#327F74]/5 ring-4 ring-[#327F74]/15',
-    icon: 'bg-[#327F74] text-white', text: 'text-[#327F74]',
-  },
+  qty: { label: 'Quantity', short: 'Qty', key: 'Q', fKey: 'F4', Icon: Hash, fieldLabel: 'New quantity' },
+  price: { label: 'Unit Price', short: 'Price', key: 'P', fKey: 'F9', Icon: Tag, fieldLabel: 'New unit price' },
+  discount: { label: 'Discount', short: 'Disc', key: 'D', fKey: 'F8', Icon: Percent, fieldLabel: 'Discount' },
+  unit: { label: 'Unit', short: 'Unit', key: 'U', fKey: null, Icon: Boxes, fieldLabel: 'Unit no.' },
 };
 
 const fmtConversion = (c) => {
@@ -523,6 +507,21 @@ const AlterItemModal = ({
     );
   }
 
+  // Why a section cannot be changed, shown under its name.
+  const lockReason = (m) => {
+    if (m === 'qty' && qtyLocked) return 'Batch line';
+    if (m === 'unit' && lineUnitLocked(item)) return item.batchControlled ? 'Batch line' : 'Order line';
+    if (m === 'unit' && Array.isArray(units)) return unitsError ? 'Unavailable' : 'Single unit';
+    return null;
+  };
+
+  const delta = preview.total - preview.currentTotal;
+  const deltaTone = delta > 0.0005 ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+    : delta < -0.0005 ? 'bg-red-50 text-red-600 ring-red-200'
+      : 'bg-gray-100 text-gray-500 ring-gray-200';
+  const breakdown = `${preview.q} × ${formatCurrency(preview.p)}${preview.d > 0 ? ` − ${preview.d.toFixed(2).replace(/\.00$/, '')}%` : ''}`;
+  const kbd = 'inline-flex min-w-[1.25rem] items-center justify-center rounded-md border border-gray-200 bg-white px-1 py-px font-mono text-[10px] font-semibold text-gray-500 shadow-[0_1px_0_rgba(15,23,42,0.08)]';
+
   return (
     <div
       className="fixed top-0 right-0 bottom-0 left-0 z-50 flex items-center justify-center bg-[#0F172A]/55 backdrop-blur-[2px] p-4"
@@ -536,39 +535,69 @@ const AlterItemModal = ({
         aria-modal="true"
         aria-labelledby="alter-item-title"
         onKeyDown={onKeyDown}
-        className="w-full max-w-180 max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl bg-white shadow-2xl ring-1 ring-black/5"
+        className="flex w-full max-w-190 max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-black/5"
       >
-        {/* Header */}
-        <div className="relative flex items-start justify-between gap-3 border-b border-gray-100 px-5 pt-4 pb-3">
-          <span className="absolute left-0 top-4 bottom-3 w-1 rounded-r bg-[#327F74]" />
-          <div className="min-w-0">
-            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[#327F74]">Alter Item</p>
-            <h2 id="alter-item-title" className="truncate text-base font-bold text-[#1E293B]">{item.name}</h2>
-            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-gray-500">
-              {code && <span className="font-mono">{code}</span>}
-              <span>{item.quantity} × {formatCurrency(item.price)}</span>
-              <span className="font-semibold text-[#1E293B]">= {formatCurrency(preview.currentTotal)}</span>
-            </p>
+        {/* Header: the line, and what it becomes */}
+        <div className="shrink-0 border-b border-gray-100 bg-linear-to-b from-[#327F74]/6 to-white px-6 pt-5 pb-4">
+          <div className="flex items-start gap-4">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#327F74] text-white shadow-sm">
+              <Package className="h-6 w-6" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#327F74]">Alter item</p>
+              <h2 id="alter-item-title" className="truncate text-lg font-bold leading-tight text-[#1E293B]">{item.name}</h2>
+              <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
+                {code && <span className="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-600">{code}</span>}
+                {lineUnitName && <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold text-gray-600">{lineUnitName}</span>}
+                <span className="tabular-nums">{item.quantity} × {formatCurrency(item.price)}</span>
+              </p>
+            </div>
+            <button
+              type="button"
+              aria-label="Close alter item"
+              onMouseDown={keepFocus}
+              onClick={onClose}
+              className="-mr-2 -mt-1 shrink-0 rounded-xl p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+            >
+              <X className="h-5 w-5" />
+            </button>
           </div>
-          <button
-            type="button"
-            aria-label="Close alter item"
-            onMouseDown={keepFocus}
-            onClick={onClose}
-            className="shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-colors"
-          >
-            <X className="h-4 w-4" />
-          </button>
+
+          {/* Before → after */}
+          <div className="mt-4 flex items-center gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Current total</p>
+              <p className={`text-base font-bold tabular-nums ${preview.changed ? 'text-gray-400 line-through decoration-gray-300' : 'text-[#1E293B]'}`}>
+                {formatCurrency(preview.currentTotal)}
+              </p>
+            </div>
+            <ArrowRight className={`h-4 w-4 shrink-0 ${preview.changed ? 'text-[#327F74]' : 'text-gray-300'}`} />
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">New total</p>
+              <p className="flex items-baseline gap-2">
+                <span className={`text-2xl font-black tabular-nums ${preview.changed ? 'text-[#1E293B]' : 'text-gray-300'}`}>
+                  {formatCurrency(preview.total)}
+                </span>
+                <span className="truncate text-[11px] tabular-nums text-gray-500">{breakdown}</span>
+              </p>
+            </div>
+            <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold tabular-nums ring-1 ${deltaTone}`}>
+              {preview.changed
+                ? `${delta >= 0 ? '+' : '−'}${formatCurrency(Math.abs(delta))}`
+                : 'No changes'}
+            </span>
+          </div>
         </div>
 
-        <div className="grid gap-4 p-5 sm:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]">
-          {/* Sections */}
-          <div role="tablist" aria-orientation="vertical" aria-label="Field to alter" className="flex flex-col gap-2">
+        <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto p-6 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
+          {/* Fields */}
+          <div role="tablist" aria-orientation="vertical" aria-label="Field to alter" className="flex flex-col gap-1.5">
             {MODES.map((m) => {
               const s = SECTIONS[m];
               const isActive = m === mode;
               const locked = isLocked(m);
-              const draft = draftLabel(m);
+              const draft = locked ? null : draftLabel(m);
+              const reason = locked ? lockReason(m) : null;
               return (
                 <button
                   key={m}
@@ -579,62 +608,75 @@ const AlterItemModal = ({
                   disabled={locked}
                   onMouseDown={keepFocus}
                   onClick={() => switchMode(m)}
-                  className={`group flex items-center gap-3 rounded-xl border-2 px-3 py-2.5 text-left transition-all ${
-                    isActive ? s.active : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
-                  } ${locked ? 'cursor-not-allowed opacity-50' : ''}`}
+                  className={`relative flex items-center gap-3 rounded-2xl px-3 py-3 text-left transition-all ${
+                    isActive
+                      ? 'bg-[#327F74] text-white shadow-md shadow-[#327F74]/25'
+                      : locked
+                        ? 'cursor-not-allowed bg-gray-50 text-gray-400'
+                        : 'bg-white text-[#1E293B] ring-1 ring-gray-200 hover:bg-gray-50 hover:ring-gray-300'
+                  }`}
                 >
-                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${isActive ? s.icon : 'bg-gray-100 text-gray-500'}`}>
+                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+                    isActive ? 'bg-white/15 text-white' : locked ? 'bg-gray-100 text-gray-400' : 'bg-[#327F74]/10 text-[#327F74]'
+                  }`}
+                  >
                     {locked ? <Lock className="h-4 w-4" /> : <s.Icon className="h-4 w-4" />}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className={`flex items-center justify-between text-sm font-bold ${isActive ? s.text : 'text-[#1E293B]'}`}>
+                    <span className="flex items-center justify-between gap-2 text-sm font-bold">
                       {s.label}
-                      <kbd className="rounded border border-gray-200 bg-white px-1 text-[9px] font-semibold text-gray-400">{s.key}</kbd>
-                    </span>
-                    <span className="mt-0.5 flex items-center gap-1 truncate text-[11px] tabular-nums">
-                      <span className={draft ? 'text-gray-400 line-through' : 'text-gray-500'}>{currentLabel(m)}</span>
-                      {draft && <span className={`font-bold ${s.text}`}>→ {draft}</span>}
-                      {locked && m === 'qty' && <span className="text-gray-400">· batch line</span>}
-                      {locked && m === 'unit' && lineUnitLocked(item) && (
-                        <span className="text-gray-400">· {item.batchControlled ? 'batch line' : 'order line'}</span>
+                      {!locked && (
+                        <kbd className={`rounded-md px-1.5 py-px font-mono text-[10px] font-semibold ${
+                          isActive ? 'bg-white/15 text-white/80' : 'bg-gray-100 text-gray-400'
+                        }`}
+                        >
+                          {s.key}
+                        </kbd>
                       )}
-                      {locked && m === 'unit' && !lineUnitLocked(item) && Array.isArray(units) && (
-                        <span className="text-gray-400">· single unit</span>
+                    </span>
+                    <span className="mt-0.5 flex items-center gap-1 truncate text-xs tabular-nums">
+                      {reason ? (
+                        <span>{reason}</span>
+                      ) : (
+                        <>
+                          <span className={draft
+                            ? `line-through ${isActive ? 'text-white/50' : 'text-gray-400'}`
+                            : (isActive ? 'text-white/80' : 'text-gray-500')}
+                          >
+                            {currentLabel(m)}
+                          </span>
+                          {draft && <span className={`font-bold ${isActive ? 'text-[#F5C742]' : 'text-[#327F74]'}`}>→ {draft}</span>}
+                        </>
                       )}
                     </span>
                   </span>
+                  {draft && !isActive && <span aria-hidden="true" className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[#F5C742] ring-2 ring-white" />}
                 </button>
               );
             })}
-
-            {/* New line total */}
-            <div className="mt-auto rounded-xl bg-[#1E293B] px-3 py-2.5 text-white">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-white/60">New line total</p>
-              <p className="text-lg font-black tabular-nums text-[#F5C742]">{formatCurrency(preview.total)}</p>
-              <p className="text-[10px] tabular-nums text-white/60">
-                {preview.q} × {formatCurrency(preview.p)}{preview.d > 0 ? ` − ${preview.d.toFixed(2).replace(/\.00$/, '')}%` : ''}
-              </p>
-            </div>
           </div>
 
           {/* Entry */}
-          <div className="flex flex-col gap-2">
-            {discountToggle('bg-gray-100', 'bg-white text-[#1E293B] shadow-sm', 'text-gray-500 hover:text-gray-700')}
-
-            <label className={`flex items-center gap-2 rounded-xl border-2 bg-gray-50 px-3 py-2 focus-within:bg-white ${active.active.split(' ')[0]}`}>
-              <span className={`shrink-0 text-[10px] font-black uppercase tracking-wide ${active.text}`}>{fieldLabel}</span>
-              {field('min-w-0 flex-1 bg-transparent text-right font-mono text-2xl font-bold text-[#1E293B] placeholder:text-gray-300 focus:outline-none')}
+          <div className="flex flex-col gap-3">
+            <label className="block rounded-2xl border-2 border-[#327F74] bg-white px-4 pt-2.5 pb-2 ring-4 ring-[#327F74]/10">
+              <span className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#327F74]">{fieldLabel}</span>
+                <span className="text-[11px] tabular-nums text-gray-400">{mode === 'discount' && !(Number(item.discount) > 0) ? 'No discount yet' : `Current ${currentLabel(mode)}`}</span>
+              </span>
+              {field('mt-0.5 w-full bg-transparent text-right font-mono text-4xl font-bold tracking-tight text-[#1E293B] placeholder:text-gray-300 focus:outline-none')}
             </label>
 
-            {mode === 'unit' ? <div className="min-h-54">{unitList}</div> : (
-            <div className="grid grid-cols-3 gap-1.5">
+            {discountToggle('bg-gray-100', 'bg-white text-[#327F74] shadow-sm', 'text-gray-500 hover:text-gray-700')}
+
+            {mode === 'unit' ? <div className="min-h-62">{unitList}</div> : (
+            <div className="grid grid-cols-3 gap-2">
               {['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0'].map((k) => (
                 <button
                   key={k}
                   type="button"
                   onMouseDown={keepFocus}
                   onClick={() => press(k)}
-                  className="h-12 rounded-xl border border-gray-200 bg-white text-lg font-bold text-[#1E293B] shadow-[0_1px_0_rgba(15,23,42,0.06)] transition-all hover:border-[#F5C742] hover:bg-[#FFF8E7] active:scale-95"
+                  className="h-14 rounded-2xl bg-gray-50 text-xl font-bold text-[#1E293B] ring-1 ring-gray-200 transition-all hover:bg-white hover:ring-[#327F74]/40 active:scale-95 active:bg-[#327F74]/10"
                 >
                   {k}
                 </button>
@@ -644,43 +686,65 @@ const AlterItemModal = ({
                 aria-label="Backspace"
                 onMouseDown={keepFocus}
                 onClick={() => onValueChange(value.slice(0, -1))}
-                className="flex h-12 items-center justify-center rounded-xl border border-gray-200 bg-gray-100 text-gray-600 transition-all hover:bg-gray-200 active:scale-95"
+                className="flex h-14 items-center justify-center rounded-2xl bg-gray-100 text-gray-600 ring-1 ring-gray-200 transition-all hover:bg-gray-200 active:scale-95"
               >
                 <Delete className="h-5 w-5" />
               </button>
             </div>
             )}
-
-            <div className="grid grid-cols-[1fr_2fr] gap-1.5">
-              <button
-                type="button"
-                onMouseDown={keepFocus}
-                onClick={() => (mode === 'unit' ? setUnitDraft(null) : onValueChange(''))}
-                className="h-12 rounded-xl border border-red-200 bg-red-50 text-sm font-bold text-red-600 transition-colors hover:bg-red-100"
-              >
-                Clear
-              </button>
-              <button
-                type="button"
-                onMouseDown={keepFocus}
-                onClick={apply}
-                disabled={!preview.changed}
-                className="flex h-12 items-center justify-center gap-2 rounded-xl bg-[#F5C742] text-sm font-black text-[#1E293B] shadow-sm transition-colors hover:bg-[#e6b838] disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Apply changes <CornerDownLeft className="h-4 w-4" />
-              </button>
-            </div>
           </div>
         </div>
 
-        {/* Keyboard legend */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-gray-100 bg-gray-50/80 px-5 py-2 text-[10px] text-gray-500 rounded-b-2xl">
-          <span className="flex items-center gap-1"><ArrowUp className="h-3 w-3" /><ArrowDown className="h-3 w-3" /> / Tab switch field</span>
-          <span><b className="text-gray-600">Q P D U</b> or <b className="text-gray-600">F4 F9 F8</b> jump</span>
-          {mode === 'discount' && <span><b className="text-gray-600">← →</b> % / amount</span>}
-          {mode === 'unit' && <span><b className="text-gray-600">1–9</b> or <b className="text-gray-600">← →</b> pick unit</span>}
-          <span><b className="text-gray-600">Enter</b> apply</span>
-          <span><b className="text-gray-600">Esc</b> cancel</span>
+        {/* Actions + keyboard legend */}
+        <div className="shrink-0 border-t border-gray-100 bg-gray-50/80 px-6 py-4">
+          <div className="grid grid-cols-[auto_1fr] gap-2 sm:grid-cols-[7rem_7rem_1fr]">
+            <button
+              type="button"
+              onMouseDown={keepFocus}
+              onClick={onClose}
+              className="hidden h-14 rounded-2xl bg-white text-sm font-bold text-gray-600 ring-1 ring-gray-200 transition-colors hover:bg-gray-100 sm:block"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onMouseDown={keepFocus}
+              onClick={() => (mode === 'unit' ? setUnitDraft(null) : onValueChange(''))}
+              className="h-14 rounded-2xl bg-white px-4 text-sm font-bold text-red-600 ring-1 ring-red-200 transition-colors hover:bg-red-50"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              aria-label="Apply changes"
+              onMouseDown={keepFocus}
+              onClick={apply}
+              disabled={!preview.changed}
+              className="flex h-14 items-center justify-between gap-3 rounded-2xl bg-[#F5C742] px-5 text-[#1E293B] shadow-sm transition-colors hover:bg-[#e6b838] disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none"
+            >
+              <span className="flex items-center gap-2 text-sm font-black">
+                Apply changes <CornerDownLeft className="h-4 w-4" />
+              </span>
+              <span className="text-lg font-black tabular-nums">{preview.changed ? formatCurrency(preview.total) : ''}</span>
+            </button>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-gray-500">
+            <span className="flex items-center gap-1">
+              <kbd className={kbd}><ArrowUp className="h-2.5 w-2.5" /></kbd>
+              <kbd className={kbd}><ArrowDown className="h-2.5 w-2.5" /></kbd>
+              <kbd className={kbd}>Tab</kbd> field
+            </span>
+            <span className="flex items-center gap-1">
+              {MODES.map((m) => <kbd key={m} className={kbd}>{SECTIONS[m].key}</kbd>)}
+              <span className="mx-0.5">or</span>
+              {MODES.filter((m) => SECTIONS[m].fKey).map((m) => <kbd key={m} className={kbd}>{SECTIONS[m].fKey}</kbd>)} jump
+            </span>
+            {mode === 'discount' && <span className="flex items-center gap-1"><kbd className={kbd}>←</kbd><kbd className={kbd}>→</kbd> % / amount</span>}
+            {mode === 'unit' && <span className="flex items-center gap-1"><kbd className={kbd}>1–9</kbd><kbd className={kbd}>←</kbd><kbd className={kbd}>→</kbd> pick unit</span>}
+            <span className="flex items-center gap-1"><kbd className={kbd}>Enter</kbd> apply</span>
+            <span className="flex items-center gap-1"><kbd className={kbd}>Esc</kbd> cancel</span>
+          </div>
         </div>
       </div>
     </div>

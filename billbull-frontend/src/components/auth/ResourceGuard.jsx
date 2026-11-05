@@ -11,9 +11,10 @@ import { ShieldAlert, Lock } from 'lucide-react';
  * @param {React.ReactNode} children - Content to show if access is granted
  * @param {boolean} showMessage - If true, shows "Access Denied" UI; if false, redirects to Dashboard
  */
-const ResourceGuard = ({ 
-  module, 
-  action = 'view', 
+const ResourceGuard = ({
+  module,
+  anyOf = null, // optional list of modules: access if any one of them allows the action
+  action = 'view',
   children, 
   showMessage = true 
 }) => {
@@ -27,7 +28,9 @@ const ResourceGuard = ({
     );
   }
 
-  const hasAccess = canAction(module, action);
+  const hasAccess = Array.isArray(anyOf) && anyOf.length > 0
+    ? anyOf.some((m) => canAction(m, action))
+    : canAction(module, action);
 
   if (!hasAccess) {
     if (!showMessage) {

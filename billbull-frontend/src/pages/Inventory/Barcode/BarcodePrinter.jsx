@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { flushSync } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import JsBarcode from 'jsbarcode';
 import {
     Search, Printer, X, Plus, Minus, Trash2,
@@ -1744,6 +1744,14 @@ const BarcodePrinter = () => {
         setShowPrintSettings(false);
     };
 
+    // The test label matches the template selected on the page, so a test proves the label size too.
+    const labelPrinterTestSize = (() => {
+        const t = templates.find(x => String(x.id) === String(selectedTemplate));
+        const widthMm = Number(t?.width);
+        const heightMm = Number(t?.height);
+        return widthMm > 0 && heightMm > 0 ? { widthMm, heightMm } : null;
+    })();
+
     const quickPrintInitialTemplateId = (() => {
         const wanted = printSettings.defaultTemplateId ?? selectedTemplate;
         const match = templates.find(t => String(t.id) === String(wanted))
@@ -2442,8 +2450,8 @@ const BarcodePrinter = () => {
                     </div>
                 )}
 
-                {showSearchModal && (
-                    <div className="absolute inset-0 z-50 bg-white/10 backdrop-blur-sm flex items-center justify-center p-6">
+                {showSearchModal && createPortal((
+                    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-6 overscroll-contain" role="dialog" aria-modal="true">
                         <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl h-full max-h-[85vh] flex flex-col overflow-hidden border border-slate-200">
                             <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50">
                                 <div>
@@ -2672,12 +2680,12 @@ const BarcodePrinter = () => {
                             </div>
                         </div>
                     </div>
-                )}
+                ), document.body)}
 
                 {/* TEMPLATE MANAGER MODAL */}
                 {
-                    showTemplateManager && (
-                        <div className="absolute inset-0 z-50 bg-white/10 backdrop-blur-sm flex items-center justify-center p-6">
+                    showTemplateManager && createPortal((
+                        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-6 overscroll-contain" role="dialog" aria-modal="true">
                             <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-slate-200">
                                 {/* Header */}
                                 <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0">
@@ -3064,7 +3072,7 @@ const BarcodePrinter = () => {
                                 </div>
                             </div>
                         </div>
-                    )
+                    ), document.body)
                 }
 
                 {/* Hidden print area: every browser print renders here with the prices it resolved. */}
@@ -3104,6 +3112,7 @@ const BarcodePrinter = () => {
                     printersLoading={labelPrintersLoading}
                     printersError={labelPrintersError}
                     onReloadPrinters={loadLabelPrinters}
+                    testLabelSize={labelPrinterTestSize}
                     onSave={savePrintSettings}
                     onClose={() => setShowPrintSettings(false)}
                 />}

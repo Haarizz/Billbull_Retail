@@ -299,7 +299,7 @@ export const TradePOSTouchScreen = React.memo((props) => {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 min-h-0 flex flex-col p-4 gap-4">
+      <main className="flex-1 min-h-0 flex flex-col p-3 gap-3 xl:p-4 xl:gap-4 short:p-2 short:gap-2">
         
         {/* Global Search Bar */}
         <div className="w-full max-w-5xl mx-auto shrink-0">
@@ -323,7 +323,7 @@ export const TradePOSTouchScreen = React.memo((props) => {
               type="button"
               onClick={openSalespersonScanModal}
               aria-label={verifiedSalesperson ? 'Change salesperson' : 'Scan salesperson barcode'}
-              className={`w-full flex items-center justify-between gap-3 rounded-xl border px-4 py-2.5 text-left transition ${
+              className={`w-full flex items-center justify-between gap-3 rounded-xl border px-4 py-2.5 short:py-1.5 text-left transition ${
                 verifiedSalesperson
                   ? 'border-emerald-300 bg-emerald-50 hover:bg-emerald-100'
                   : 'border-amber-300 bg-amber-50 hover:bg-amber-100'
@@ -348,7 +348,7 @@ export const TradePOSTouchScreen = React.memo((props) => {
         )}
 
         {/* Responsive 2-Column Layout, tabbed on mobile/tablet */}
-        <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-4 lg:gap-6 w-full max-w-[1600px] mx-auto">
+        <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-3 xl:gap-6 short:gap-2 w-full max-w-[1600px] mx-auto">
 
           {/* LEFT PANEL: Customer & Quick Picks */}
           <section

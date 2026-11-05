@@ -80,6 +80,20 @@ public class CustomerProductPriceService {
         this.resolver = resolver;
     }
 
+    /** Pricing rules (below-cost guard); setter-injected so hand-built tests keep compiling. */
+    private PricingRulesService rules;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRules(PricingRulesService rules) {
+        this.rules = rules;
+    }
+
+    private void assertNotBelowCost(CustomerProductPrice row, Product product) {
+        if (rules == null || !row.isEnabled()) return;
+        rules.assertNotBelowCost(row.getProductId(), product.getCode(), row.getBranchId(), row.getPrice(),
+                "The negotiated price");
+    }
+
     // ------------------------------------------------------------------
     // DTOs
     // ------------------------------------------------------------------
@@ -230,6 +244,7 @@ public class CustomerProductPriceService {
         row.setNotes(notes(request.getNotes()));
         validateDates(row);
         assertNoOverlap(row);
+        assertNotBelowCost(row, product);
 
         CustomerProductPrice saved = repository.saveAndFlush(row);
         audit(saved, customer, null, saved.getPrice());
@@ -261,6 +276,7 @@ public class CustomerProductPriceService {
         row.setNotes(notes(request.getNotes()));
         validateDates(row);
         assertNoOverlap(row);
+        if (before == null || before.compareTo(row.getPrice()) != 0) assertNotBelowCost(row, product);
 
         CustomerProductPrice saved = repository.saveAndFlush(row);
         if (before == null || before.compareTo(saved.getPrice()) != 0) audit(saved, customer, before, saved.getPrice());
@@ -434,7 +450,7 @@ public class CustomerProductPriceService {
     }
 
     /** Batch-loads the customers, products and branches the rows name: three queries per page. */
-    private List<PriceResponse> toResponses(List<CustomerProductPrice> rows, LocalDate today) {
+    List<PriceResponse> toResponses(List<CustomerProductPrice> rows, LocalDate today) {
         if (rows.isEmpty()) return List.of();
         Set<Long> customerIds = rows.stream().map(CustomerProductPrice::getCustomerId).collect(Collectors.toSet());
         Set<Long> productIds = rows.stream().map(CustomerProductPrice::getProductId).collect(Collectors.toSet());

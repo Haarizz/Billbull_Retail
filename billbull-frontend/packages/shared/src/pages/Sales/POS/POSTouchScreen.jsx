@@ -1,17 +1,18 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Heart, AlertTriangle, AlertCircle, Eye, Gift } from 'lucide-react';
+import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Heart, AlertCircle, Eye, Gift } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import BusinessDayStatusChip from '../../../components/pos/BusinessDayStatusChip';
 import PriceLevelSelect from '../../../components/pricing/PriceLevelSelect';
-import { CurrencyAmount, formatCurrencyStr } from './POSCurrency';
+import { formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
-import { toNumber, getCartPriceWarning, getPosVatLabel, isCustomerPricedLine, tierMarkerOf } from './posUtils';
+import { toNumber, getPosVatLabel } from './posUtils';
 import { buildPosFunctionButtons, groupPosFunctionButtons } from './lib/posFunctionButtons';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../../utils/vatMath';
-import { ScanLine, Handshake, Layers } from 'lucide-react';
+import { ScanLine } from 'lucide-react';
 import QuickCustomerModal from './features/customers/QuickCustomerModal';
 import QuickAddProductModal from '../../../components/inventory/QuickAddProductModal';
 import AlterItemModal from './features/cart/AlterItemModal';
+import CartLineCard from './features/cart/CartLineCard';
 import { AddonsHeader, CART_ZONE_FOCUS_CLASS, QuickCheckoutRail, usePosCartZone } from './features/cart/QuickCheckoutBar';
 import { checkoutOptions } from './input/posShortcuts';
 import {
@@ -37,13 +38,6 @@ import { usePosSaleShortcuts } from './input/usePosSaleShortcuts';
  * a name chosen from a list is not a verification, and offering one would be a way around the
  * barcode rule rather than a convenience.
  */
-// Cart table column tracks for the classic POS layout. ITEM takes all the slack and
-// may shrink to nothing (minmax(0,1fr)); QTY/RATE/AMT/void get fixed tracks sized to
-// their own controls, so the row's intrinsic width can never exceed the cart panel.
-// The header and the item rows are separate grid containers, so they must share this
-// exact string or the headings stop lining up with the values under them.
-const CART_GRID_COLS =
-  'grid-cols-[minmax(0,1fr)_4.5rem_2.5rem_4.25rem_0.875rem] xl:grid-cols-[minmax(0,1fr)_5rem_3rem_4.75rem_1rem]';
 
 const SalespersonBar = ({ required = false, verified = null, onScan }) => {
   if (!required) return null;
@@ -144,8 +138,6 @@ const POSTouchScreen = React.memo((props) => {
     rightPanelTab, setRightPanelTab, hiddenPanelButtons, hideCategoriesPanel, hideItemsPanel,
     // layout
     posTemplate, quickCheckoutEnabled = true,
-    // cart view
-    cartViewDetailed, cartLineDetails,
     // checkout / payment — handleCheckout is the ONLY way into settlement from this template.
     // setShowPaymentDialog/setCheckoutPhase are deliberately NOT destructured: the
     // salesperson-verification gate lives in handleCheckout, and these two Checkout buttons used
@@ -571,7 +563,7 @@ const POSTouchScreen = React.memo((props) => {
   return (
     <div className="h-screen flex flex-col bg-[#F7F7FA]">
       {/* Top Bar */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4 flex-shrink-0">
+      <div className="bg-white border-b border-gray-200 px-4 xl:px-6 py-3 xl:py-4 short:py-1.5 flex-shrink-0">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-4 min-w-0">
             <Button
@@ -682,86 +674,22 @@ const POSTouchScreen = React.memo((props) => {
               onScan={openSalespersonScanModal}
             />
 
-            {/* Cart table header + rows — horizontal scroll is the safety net on narrow
-                widths so the 12-col grid degrades to scrollable instead of clipping. */}
-            <div className="flex-1 flex flex-col overflow-x-auto overflow-y-hidden min-h-0">
-              {/* Cart table header */}
-              <div className="bg-[#F5C742]/10 border-b border-[#327F74]/20 flex-shrink-0 grid grid-cols-12 gap-1 px-3 py-2 min-w-[360px]">
-                <span className="col-span-6 text-[10px] font-bold uppercase tracking-wide text-gray-500">Item</span>
-                <span className="col-span-2 text-[10px] font-bold uppercase tracking-wide text-gray-500 text-center">Qty</span>
-                <span className="col-span-2 text-[10px] font-bold uppercase tracking-wide text-gray-500 text-right">Rate</span>
-                <span className="col-span-1 text-[10px] font-bold uppercase tracking-wide text-gray-500 text-right">Amt</span>
-                <span className="col-span-1"></span>
-              </div>
-
-              {/* Cart rows — the cart cursor's region (F6 / click) */}
-              <div {...cartZone} className={`flex-1 overflow-y-auto min-w-[360px] ${CART_ZONE_FOCUS_CLASS}`}>
+            {/* Cart lines as cards — the shared CartLineCard used by every template. */}
+            <div className="flex-1 flex flex-col overflow-x-hidden overflow-y-hidden min-h-0">
+              {/* Cart cards — the cart cursor's region (F6 / click) */}
+              <div {...cartZone} className={`flex-1 overflow-y-auto overflow-x-hidden bg-[#F7F7FA] px-2 py-2 space-y-2 ${CART_ZONE_FOCUS_CLASS}`}>
                 {currentInvoice.items.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-gray-300">
                     <ShoppingCart className="h-14 w-14 mb-3" />
                     <p className="text-sm font-medium text-gray-400">Scan a barcode to begin</p>
                   </div>
                 ) : (
-                  currentInvoice.items.map((item, idx) => {
-                    return (
-                      <div key={item.id} data-cart-line-id={item.id} onClick={() => onCartRowClick(item)}
-                        className={`grid grid-cols-12 gap-1 px-3 py-2 border-b border-[#327F74]/20 items-start ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/10' : idx % 2 === 1 ? 'bg-[#F5C742]/10' : 'bg-white'} ${!item.isVoided ? 'cursor-pointer' : ''}`}>
-                        <div className="col-span-6 min-w-0">
-                          {/* Voided line: muted red + [VOID] tag + negative amounts (no
-                              strike-through). Excluded from the total; disclosed below. */}
-                          <p className={`text-xs font-semibold leading-tight break-words ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>
-                            {item.name}
-                            {Number(item.unitConversion) > 1 && <span className="ml-1 inline-block rounded bg-[#327F74]/10 px-1 text-[9px] font-bold text-[#327F74]">{item.unit}</span>}
-                            {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">[VOID]</span>}
-                          </p>
-                          {!item.isVoided && (item.nameAr ? <p className="text-[10px] text-gray-400 leading-tight break-words" dir="rtl">{item.nameAr}</p> : null)}
-                          {!item.isVoided && (cartViewDetailed ? (
-                            <div className="mt-0.5 space-y-px">
-                              {cartLineDetails(item).map(d => (
-                                <p key={d.label} className="text-[8px] font-mono text-gray-500 leading-tight break-all">
-                                  <span className="text-gray-400">{d.label}:</span> <span className="text-[#327F74] font-semibold">{d.value}</span>
-                                </p>
-                              ))}
-                            </div>
-                          ) : (
-                            <>
-                              <p className="text-[9px] font-mono text-[#F5C742] mt-0.5">{item.barcode || item.code || item.id}</p>
-                              {item.pinnedBatchNumber && (
-                                <span className="inline-block mt-0.5 px-1 py-px rounded bg-[#327F74]/10 text-[8px] font-mono font-bold text-[#327F74]">⛓ {item.pinnedBatchNumber}</span>
-                              )}
-                            </>
-                          ))}
-                        </div>
-                        <div className="col-span-2 flex items-center justify-center gap-0.5 pt-0.5">
-                          {!item.isVoided && !item.batchControlled && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
-                            className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">−</button>}
-                          <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? `- ${item.quantity}` : item.quantity}</span>
-                          {!item.isVoided && !item.batchControlled && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
-                            className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">+</button>}
-                        </div>
-                        <span className={`col-span-2 flex items-center justify-end gap-0.5 text-[10px] text-right pt-1 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-gray-400'}`}>
-                          {(() => {
-                            const priceWarning = getCartPriceWarning(item);
-                            return priceWarning && (
-                              <AlertTriangle title={priceWarning.message} className={`h-2.5 w-2.5 shrink-0 ${priceWarning.level === 'error' ? 'text-red-500' : 'text-amber-500'}`} />
-                            );
-                          })()}
-                          {isCustomerPricedLine(item) && (
-                            <Handshake aria-label="Customer price" className="h-2.5 w-2.5 shrink-0 text-emerald-600" data-testid="customer-price-marker" />
-                          )}
-                          {tierMarkerOf(item) && (
-                            <Layers aria-label={tierMarkerOf(item)} title={tierMarkerOf(item)} className="h-2.5 w-2.5 shrink-0 text-amber-600" data-testid="tier-price-marker" />
-                          )}
-                          {item.isVoided ? <CurrencyAmount amount={item.price} prefix="- " /> : formatCurrency(item.price)}
-                        </span>
-                        <span className={`col-span-1 text-xs font-bold text-right pt-1 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-[#F5C742]'}`}>{item.isVoided ? <CurrencyAmount amount={item.total} prefix="- " /> : formatCurrency(item.total)}</span>
-                        <button type="button" aria-label="Remove item" onClick={(e) => { e.stopPropagation(); voidFromInvoice(item.id); }}
-                          className={`col-span-1 flex justify-center pt-1 transition-colors ${item.isVoided ? 'text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
-                          <XCircle className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    );
-                  })
+                  currentInvoice.items.map((item, idx) => (
+                    <CartLineCard key={item.id} item={item} index={idx}
+                      selected={selectedFocusItemId === item.id}
+                      posSettings={posSettings} formatCurrency={formatCurrency}
+                      onClick={onCartRowClick} onUpdateQuantity={updateQuantity} onRemove={voidFromInvoice} />
+                  ))
                 )}
               </div>
             </div>
@@ -802,7 +730,7 @@ const POSTouchScreen = React.memo((props) => {
             {/* Alter Item takes over the last-item card and scan keypad while a line is edited. */}
             {alterItemProps ? <AlterItemModal key={alterItem.id} variant="panel" {...alterItemProps} /> : (<>
             {/* Last scanned item panel */}
-            <div className="border-b border-[#327F74]/20 flex-shrink min-h-0 max-h-[30vh] flex flex-col justify-center bg-white overflow-y-auto">
+            <div className="border-b border-[#327F74]/20 flex-shrink min-h-0 max-h-[45vh] flex flex-col justify-center bg-white overflow-y-auto">
               {lastScannedItem ? (
                 (() => {
                   const cartItem = currentInvoice.items.find(i => i.barcode === lastScannedItem.barcode || i.code === lastScannedItem.barcode || i.id === lastScannedItem.barcode || i.name === lastScannedItem.name) || currentInvoice.items[0];
@@ -821,14 +749,14 @@ const POSTouchScreen = React.memo((props) => {
                   const displayStock = stockQty != null ? `${stockQty} units` : '--';
 
                   return (
-                    <div className="bg-gradient-to-br from-[#FFF8E7] to-white p-5 flex-1 flex flex-col justify-between text-[#1E293B] border-l-4 border-[#F5C742]">
+                    <div className="bg-gradient-to-br from-[#FFF8E7] to-white p-5 [@media(max-height:820px)]:p-3 flex-1 flex flex-col justify-between text-[#1E293B] border-l-4 border-[#F5C742]">
                       <div>
-                        <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center justify-between mb-3 short:mb-1.5">
                           <span className="text-[10px] font-bold uppercase tracking-widest text-[#B8942E]">Last Scanned Item</span>
                           <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">{lastScannedItem.name} added</span>
                         </div>
-                        <div className="flex items-start gap-3 mb-4">
-                          <div className="w-12 h-12 rounded-2xl bg-[#F5C742]/15 border border-[#F5C742]/40 flex items-center justify-center flex-shrink-0 text-[#B8942E]">
+                        <div className="flex items-start gap-3 mb-4 [@media(max-height:820px)]:mb-2">
+                          <div className="w-12 h-12 [@media(max-height:820px)]:hidden rounded-2xl bg-[#F5C742]/15 border border-[#F5C742]/40 flex items-center justify-center flex-shrink-0 text-[#B8942E]">
                             <Package className="h-6 w-6" />
                           </div>
                           <div className="flex-1 min-w-0">
@@ -846,30 +774,30 @@ const POSTouchScreen = React.memo((props) => {
                           </div>
                         </div>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 border-t border-[#F5C742]/30 pt-4">
-                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 text-center shadow-sm">
+                      <div className="grid grid-cols-3 gap-2 [@media(max-height:820px)]:gap-1.5 short:hidden border-t border-[#F5C742]/30 pt-4 [@media(max-height:820px)]:pt-2">
+                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 [@media(max-height:820px)]:p-1 text-center shadow-sm">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Qty</p>
-                          <p className="text-sm font-bold text-[#1E293B] mt-1">x{qty}</p>
+                          <p className="text-sm font-bold text-[#1E293B] mt-1 [@media(max-height:820px)]:mt-0">x{qty}</p>
                         </div>
-                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 text-center shadow-sm">
+                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 [@media(max-height:820px)]:p-1 text-center shadow-sm">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Unit Price</p>
-                          <p className="text-sm font-bold text-[#1E293B] mt-1">{formatCurrency(unitPrice)}</p>
+                          <p className="text-sm font-bold text-[#1E293B] mt-1 [@media(max-height:820px)]:mt-0">{formatCurrency(unitPrice)}</p>
                         </div>
-                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 text-center shadow-sm">
+                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 [@media(max-height:820px)]:p-1 text-center shadow-sm">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Discount</p>
-                          <p className="text-sm font-bold text-[#1E293B] mt-1">{discountPct}%</p>
+                          <p className="text-sm font-bold text-[#1E293B] mt-1 [@media(max-height:820px)]:mt-0">{discountPct}%</p>
                         </div>
-                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 text-center shadow-sm">
+                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 [@media(max-height:820px)]:p-1 text-center shadow-sm">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">VAT ({taxRate}%)</p>
-                          <p className="text-sm font-bold text-[#1E293B] mt-1">{formatCurrency(vatAmount)}</p>
+                          <p className="text-sm font-bold text-[#1E293B] mt-1 [@media(max-height:820px)]:mt-0">{formatCurrency(vatAmount)}</p>
                         </div>
-                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 text-center shadow-sm">
+                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 [@media(max-height:820px)]:p-1 text-center shadow-sm">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Net Price</p>
-                          <p className="text-sm font-bold text-[#1E293B] mt-1">{formatCurrency(netPrice)}</p>
+                          <p className="text-sm font-bold text-[#1E293B] mt-1 [@media(max-height:820px)]:mt-0">{formatCurrency(netPrice)}</p>
                         </div>
-                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 text-center shadow-sm">
+                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 [@media(max-height:820px)]:p-1 text-center shadow-sm">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Stock</p>
-                          <p className="text-sm font-bold text-[#1E293B] mt-1">{displayStock}</p>
+                          <p className="text-sm font-bold text-[#1E293B] mt-1 [@media(max-height:820px)]:mt-0">{displayStock}</p>
                         </div>
                       </div>
                     </div>
@@ -887,9 +815,9 @@ const POSTouchScreen = React.memo((props) => {
             </div>
 
             {/* Numpad + Barcode Input */}
-            <div className="flex-1 flex flex-col justify-between p-4 bg-white min-h-0 overflow-y-auto">
+            <div className="flex-1 flex flex-col justify-between p-4 short:p-2.5 bg-white min-h-0 overflow-y-auto">
               {/* Input Box & Scanner Status */}
-              <div className="mb-3 relative">
+              <div className="mb-3 short:mb-2 relative">
                 {scannerReady && (
                   <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-green-700 border border-green-200">
                     <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
@@ -977,30 +905,30 @@ const POSTouchScreen = React.memo((props) => {
               <div className="grid grid-cols-3 gap-2">
                 {['7', '8', '9', '4', '5', '6', '1', '2', '3'].map(k => (
                   <button key={k} type="button" onClick={() => setBarcodeInput(prev => prev + k)}
-                    className="h-12 text-xl font-bold text-[#1E293B] bg-gray-50 hover:bg-[#F5C742] hover:text-white active:scale-95 rounded-xl border border-[#327F74]/20 hover:border-[#F5C742] transition-all shadow-sm">
+                    className="h-12 short:h-10 text-xl font-bold text-[#1E293B] bg-gray-50 hover:bg-[#F5C742] hover:text-white active:scale-95 rounded-xl border border-[#327F74]/20 hover:border-[#F5C742] transition-all shadow-sm">
                     {k}
                   </button>
                 ))}
                 <button type="button" onClick={() => setBarcodeInput(prev => prev + '*')}
-                  className="h-12 text-xl font-bold text-[#F5C742] bg-gray-50 hover:bg-[#F5C742] hover:text-white active:scale-95 rounded-xl border border-[#327F74]/20 hover:border-[#F5C742] transition-all shadow-sm">
+                  className="h-12 short:h-10 text-xl font-bold text-[#F5C742] bg-gray-50 hover:bg-[#F5C742] hover:text-white active:scale-95 rounded-xl border border-[#327F74]/20 hover:border-[#F5C742] transition-all shadow-sm">
                   ×
                 </button>
                 <button type="button" onClick={() => setBarcodeInput(prev => prev + '0')}
-                  className="h-12 text-xl font-bold text-[#1E293B] bg-gray-50 hover:bg-[#F5C742] hover:text-white active:scale-95 rounded-xl border border-[#327F74]/20 hover:border-[#F5C742] transition-all shadow-sm">
+                  className="h-12 short:h-10 text-xl font-bold text-[#1E293B] bg-gray-50 hover:bg-[#F5C742] hover:text-white active:scale-95 rounded-xl border border-[#327F74]/20 hover:border-[#F5C742] transition-all shadow-sm">
                   0
                 </button>
                 <button type="button" onClick={() => setBarcodeInput(prev => prev.slice(0, -1))}
-                  className="h-12 text-xl font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 active:scale-95 rounded-xl border border-[#327F74]/20 transition-all shadow-sm flex items-center justify-center">
+                  className="h-12 short:h-10 text-xl font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 active:scale-95 rounded-xl border border-[#327F74]/20 transition-all shadow-sm flex items-center justify-center">
                   ⌫
                 </button>
               </div>
               <div className="grid grid-cols-2 gap-2 mt-2">
                 <button type="button" onClick={() => setBarcodeInput('')}
-                  className="h-12 text-sm font-bold text-red-500 bg-red-50 hover:bg-red-100 rounded-xl border border-red-200 transition-colors">
+                  className="h-12 short:h-10 text-sm font-bold text-red-500 bg-red-50 hover:bg-red-100 rounded-xl border border-red-200 transition-colors">
                   Clear
                 </button>
                 <button type="button" onClick={() => handleBarcodeScan(barcodeInput)}
-                  className="h-12 text-sm font-bold text-white bg-[#F5C742] hover:opacity-90 rounded-xl transition-all shadow-sm">
+                  className="h-12 short:h-10 text-sm font-bold text-white bg-[#F5C742] hover:opacity-90 rounded-xl transition-all shadow-sm">
                   Enter ↵
                 </button>
               </div>
@@ -1275,21 +1203,12 @@ const POSTouchScreen = React.memo((props) => {
               </div>
             </div>
 
-            {/* Cart table header + rows — CART_GRID_COLS sizes the fixed columns to their
-                own controls and lets ITEM absorb the remainder, so a row can never grow
-                wider than the panel. overflow-x-hidden is only a backstop, not the fix. */}
+            {/* Cart lines as cards — numbered, colour-coded, with qty stepper and a
+                per-line VAT / base breakdown. Each card is a flex column, so it always
+                fits the panel width; overflow-x-hidden is only a backstop. */}
             <div className="flex-1 flex flex-col overflow-x-hidden overflow-y-hidden min-h-0">
-              {/* Cart table header */}
-              <div className={`grid ${CART_GRID_COLS} gap-x-1 px-3 py-1.5 border-b border-gray-100 bg-gray-50 shrink-0`}>
-                <span className="text-[9px] font-bold uppercase tracking-wide text-gray-400 truncate">Item</span>
-                <span className="text-[9px] font-bold uppercase tracking-wide text-gray-400 text-center">Qty</span>
-                <span className="text-[9px] font-bold uppercase tracking-wide text-gray-400 text-right">Rate</span>
-                <span className="text-[9px] font-bold uppercase tracking-wide text-gray-400 text-right pr-0.5">Amt</span>
-                <span></span>
-              </div>
-
-              {/* Cart item rows — the cart cursor's region (F6 / click) */}
-              <div {...cartZone} className={`flex-1 overflow-y-auto overflow-x-hidden ${CART_ZONE_FOCUS_CLASS}`}>
+              {/* Cart item cards — the cart cursor's region (F6 / click) */}
+              <div {...cartZone} className={`flex-1 overflow-y-auto overflow-x-hidden bg-[#F7F7FA] px-2 py-2 space-y-2 ${CART_ZONE_FOCUS_CLASS}`}>
                 {currentInvoice.items.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-gray-300 gap-2">
                     <ShoppingCart className="h-10 w-10" />
@@ -1298,64 +1217,10 @@ const POSTouchScreen = React.memo((props) => {
                   </div>
                 ) : (
                   currentInvoice.items.map((item, idx) => (
-                    <div key={item.id} data-cart-line-id={item.id}
-                      className={`grid ${CART_GRID_COLS} gap-x-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
-                      onClick={() => onCartRowClick(item)}>
-                      <div className="min-w-0 pr-1">
-                        {/* Voided line: muted red + [VOID] tag + negative amounts (no
-                            strike-through). Excluded from the total; disclosed below. */}
-                        <p className={`text-[11px] font-semibold break-words line-clamp-2 leading-tight ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>
-                          {item.name}
-                          {Number(item.unitConversion) > 1 && <span className="ml-1 inline-block rounded bg-[#327F74]/10 px-1 text-[9px] font-bold text-[#327F74]">{item.unit}</span>}
-                          {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">[VOID]</span>}
-                        </p>
-                        {!item.isVoided && (cartViewDetailed ? (
-                          cartLineDetails(item).map(d => (
-                            <p key={d.label} className="text-[8px] font-mono text-gray-500 leading-tight break-all">
-                              <span className="text-gray-400">{d.label}:</span> <span className="text-[#327F74] font-semibold">{d.value}</span>
-                            </p>
-                          ))
-                        ) : (
-                          item.pinnedBatchNumber && (
-                            <span className="inline-block px-1 py-px rounded bg-[#327F74]/10 text-[8px] font-mono font-bold text-[#327F74]">⛓ {item.pinnedBatchNumber}</span>
-                          )
-                        ))}
-                        {!item.isVoided && item.discount > 0 && <p className="text-[9px] text-green-600">−{item.discount}% disc</p>}
-                      </div>
-                      <div className="flex items-center justify-center gap-0.5 min-w-0">
-                        {!item.isVoided && !item.batchControlled && <>
-                          <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
-                            className="w-6 h-6 xl:w-7 xl:h-7 shrink-0 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
-                            <Minus className="h-2.5 w-2.5" />
-                          </button>
-                        </>}
-                        <span className={`text-xs font-bold w-4 xl:w-5 shrink-0 text-center tabular-nums ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? `- ${item.quantity}` : item.quantity}</span>
-                        {!item.isVoided && !item.batchControlled && <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
-                          className="w-6 h-6 xl:w-7 xl:h-7 shrink-0 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
-                          <Plus className="h-2.5 w-2.5" />
-                        </button>}
-                      </div>
-                      <span className={`flex items-center justify-end gap-0.5 min-w-0 overflow-hidden text-[10px] text-right tabular-nums ${item.isVoided ? 'text-red-500' : 'text-gray-500'}`}>
-                        {(() => {
-                          const priceWarning = getCartPriceWarning(item);
-                          return priceWarning && (
-                            <AlertTriangle title={priceWarning.message} className={`h-2.5 w-2.5 shrink-0 ${priceWarning.level === 'error' ? 'text-red-500' : 'text-amber-500'}`} />
-                          );
-                        })()}
-                        {isCustomerPricedLine(item) && (
-                          <Handshake aria-label="Customer price" className="h-2.5 w-2.5 shrink-0 text-emerald-600" data-testid="customer-price-marker" />
-                        )}
-                        {tierMarkerOf(item) && (
-                          <Layers aria-label={tierMarkerOf(item)} title={tierMarkerOf(item)} className="h-2.5 w-2.5 shrink-0 text-amber-600" data-testid="tier-price-marker" />
-                        )}
-                        {item.isVoided ? `- ${item.price.toFixed(0)}` : item.price.toFixed(0)}
-                      </span>
-                      <span className={`text-[11px] font-bold text-right pr-0.5 truncate tabular-nums ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? <CurrencyAmount amount={item.total} prefix="- " /> : formatCurrency(item.total)}</span>
-                      <button type="button" aria-label="Remove item" onClick={e => { e.stopPropagation(); voidFromInvoice(item.id); }}
-                        className={`flex items-center justify-center justify-self-center opacity-0 group-hover:opacity-100 transition-all ${item.isVoided ? 'opacity-100 text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
-                        <XCircle className="h-3 w-3" />
-                      </button>
-                    </div>
+                    <CartLineCard key={item.id} item={item} index={idx}
+                      selected={selectedFocusItemId === item.id}
+                      posSettings={posSettings} formatCurrency={formatCurrency}
+                      onClick={onCartRowClick} onUpdateQuantity={updateQuantity} onRemove={voidFromInvoice} />
                   ))
                 )}
               </div>
@@ -1555,7 +1420,7 @@ const POSTouchScreen = React.memo((props) => {
                       {posProductsError}
                     </div>
                   )}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-3 gap-y-2.5 justify-items-center">
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(5.5rem,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-x-3 gap-y-2.5">
                     {filteredProducts.map(product => {
                       const isFav = favouriteProductIds.has(product.id);
                       return (
@@ -1572,7 +1437,7 @@ const POSTouchScreen = React.memo((props) => {
                           }
                           if (pin) setSearchQuery('');
                         }}
-                          className="group w-full max-w-[215px] bg-white rounded-xl border border-gray-200 hover:border-[#F5C742] hover:shadow-md transition-all text-left overflow-hidden active:scale-95">
+                          className="group w-full min-w-0 bg-white rounded-xl border border-gray-200 hover:border-[#F5C742] hover:shadow-md transition-all text-left overflow-hidden active:scale-95">
                           {/* Image area */}
                           <div className="h-16 sm:h-[72px] xl:h-20 bg-gradient-to-br from-[#F7F7FA] to-gray-100 flex items-center justify-center relative border-b border-gray-100">
                             {product.image ? (
@@ -1625,9 +1490,9 @@ const POSTouchScreen = React.memo((props) => {
                     })}
                   </div>
                   {posProductsLoading && (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-3 gap-y-2.5 justify-items-center">
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(5.5rem,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-x-3 gap-y-2.5">
                       {Array.from({ length: 10 }).map((_, index) => (
-                        <div key={index} className="h-[136px] w-full max-w-[215px] animate-pulse rounded-xl border border-gray-200 bg-white">
+                        <div key={index} className="h-[136px] w-full animate-pulse rounded-xl border border-gray-200 bg-white">
                           <div className="h-16 sm:h-[72px] xl:h-20 rounded-t-xl bg-gray-100" />
                           <div className="space-y-2 p-2">
                             <div className="h-3 rounded bg-gray-100" />

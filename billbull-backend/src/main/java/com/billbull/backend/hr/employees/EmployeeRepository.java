@@ -12,6 +12,9 @@ public interface EmployeeRepository extends JpaRepository<Employee, Long> {
 
     List<Employee> findByStatus(String status);
 
+    /** Candidates for till PIN sign-in: a PIN is set and the employee is in the given status. */
+    List<Employee> findByPosPinHashIsNotNullAndStatus(String status);
+
     long countByStatus(String status);
 
     List<Employee> findByStatusIn(List<String> statuses);
