@@ -13,9 +13,9 @@ export const TradeEmptyState = React.memo(({
   action // optional TradeButton
 }) => {
   return (
-    <div className={`flex flex-col items-center justify-center p-8 text-center h-full w-full ${className}`}>
+    <div className={`flex flex-col items-center justify-center p-8 short:p-3 text-center h-full w-full ${className}`}>
       {icon && (
-        <div className="text-gray-300 mb-4 [&>svg]:w-12 [&>svg]:h-12">
+        <div className="text-gray-300 mb-4 short:mb-2 [&>svg]:w-12 [&>svg]:h-12 short:[&>svg]:w-8 short:[&>svg]:h-8">
           {icon}
         </div>
       )}
@@ -27,7 +27,7 @@ export const TradeEmptyState = React.memo(({
       )}
       
       {description && (
-        <p className="text-sm text-gray-500 max-w-sm mb-6">
+        <p className="text-sm text-gray-500 max-w-sm mb-6 short:mb-0">
           {description}
         </p>
       )}

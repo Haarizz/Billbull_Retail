@@ -3,6 +3,10 @@
    own files are found by Tailwind's automatic detection from that app's Vite root. */
 @source ".";
 
+/* Short screens: POS panels at 1024x600 (and browser windows that lose height to toolbars).
+   Use as `short:` to tighten vertical chrome so the cart and keypad keep their room. */
+@custom-variant short (@media (max-height: 700px));
+
 /* ── shadcn/ui design tokens (required for bg-background, bg-card, etc.) ── */
 :root {
   --background: #ffffff;

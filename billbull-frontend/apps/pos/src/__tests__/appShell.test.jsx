@@ -15,7 +15,7 @@ vi.mock('@billbull/shared/context/BranchContext', () => ({
 const authState = { authenticated: false };
 vi.mock('@billbull/shared/api/auth', () => ({
   isAuthenticated: () => authState.authenticated,
-  login: vi.fn(), persistLoginSession: vi.fn(), describeLoginError: vi.fn(), getDecodedToken: () => null,
+  login: vi.fn(), persistLoginSession: vi.fn(), describeLoginError: vi.fn(), getDecodedToken: () => null, hasRole: () => false,
 }));
 vi.mock('@billbull/shared/api/axiosConfig', () => ({ setSessionExpiredHandler: vi.fn() }));
 // The real workspace is the 10k-line POSSales; here it only has to report the host it was given.
@@ -37,13 +37,13 @@ describe('till routes', () => {
   it('sends a signed-out visitor to the POS login', () => {
     authState.authenticated = false;
     at('/');
-    expect(screen.getByText('Sign in to the till')).toBeTruthy();
+    expect(screen.getByText('Sign in with PIN')).toBeTruthy();
   });
 
   it('sends unknown paths (e.g. Retail routes) to the till, never a back-office page', () => {
     authState.authenticated = false;
     at('/dashboard');
-    expect(screen.getByText('Sign in to the till')).toBeTruthy();
+    expect(screen.getByText('Sign in with PIN')).toBeTruthy();
   });
 
   it('renders the workspace with terminal administration turned on, plus the till rail', () => {

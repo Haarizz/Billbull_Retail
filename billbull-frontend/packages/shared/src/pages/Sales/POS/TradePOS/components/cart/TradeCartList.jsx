@@ -10,7 +10,8 @@ export const TradeCartList = React.memo(({
   onEditItem,
   onUpdateQuantity,
   onRemoveItem,
-  formatCurrency
+  formatCurrency,
+  posSettings
 }) => {
   const listRef = useRef(null);
 
@@ -23,7 +24,7 @@ export const TradeCartList = React.memo(({
 
   if (!items || items.length === 0) {
     return (
-      <div className="flex-1 w-full flex items-center justify-center bg-gray-50/50 min-h-0">
+      <div className="flex-1 w-full flex items-center justify-center bg-gray-50/50 min-h-0 overflow-hidden">
         <TradeEmptyState
           icon={<ShoppingCart />}
           title="Cart is empty"
@@ -36,13 +37,15 @@ export const TradeCartList = React.memo(({
   return (
     <div 
       ref={listRef}
-      className="flex-1 overflow-y-auto no-scrollbar bg-white min-h-0"
+      className="flex-1 overflow-y-auto no-scrollbar bg-[#F7F7FA] min-h-0"
     >
-      <div className="flex flex-col">
-        {items.map((item) => (
+      <div className="flex flex-col gap-2 p-2 sm:p-3">
+        {items.map((item, idx) => (
           <TradeInvoiceRow
             key={item.id}
             item={item}
+            index={idx}
+            posSettings={posSettings}
             selected={item.id === selectedItemId}
             onClick={onSelectItem}
             onDoubleClick={onEditItem}

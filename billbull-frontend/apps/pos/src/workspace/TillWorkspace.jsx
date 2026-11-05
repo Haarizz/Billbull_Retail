@@ -1,8 +1,14 @@
-import { LogOut } from 'lucide-react';
+import { useState } from 'react';
+import { KeyRound, LogOut } from 'lucide-react';
+import { hasRole } from '@billbull/shared/api/auth';
 import POSSales from '@billbull/shared/pages/Sales/POSSales';
 import { PosHostContext, STANDALONE_POS_HOST } from '@billbull/shared/pages/Sales/POS/posHost';
 import { useBranch } from '@billbull/shared/context/BranchContext';
 import { signOutOfTill } from '../shell/signOut';
+import PinSignInDialog from '../shell/PinSignInDialog';
+
+// Who may turn PIN sign-in on or off for a till (mirrors PosPinDeviceController).
+const PIN_ADMIN_ROLES = ['ADMIN', 'SUPER_ADMIN', 'BRANCH_ADMIN'];
 
 // The till: the existing POS workspace (Classic / Compact / Cart Focus, Console, reports, returns,
 // layaways, held sales, delivery, devices and printing — all chosen and owned inside POSSales)
@@ -28,6 +34,8 @@ function TillRail() {
   const { activeBranch } = useBranch();
   const fullName = sessionStorage.getItem('fullName') || sessionStorage.getItem('user') || '';
   const branchLabel = activeBranch?.code || activeBranch?.name || '';
+  const canManagePin = PIN_ADMIN_ROLES.some((role) => hasRole(role));
+  const [pinDialogOpen, setPinDialogOpen] = useState(false);
 
   return (
     <nav aria-label="Till" className="flex h-full w-16 flex-shrink-0 flex-col items-center justify-between border-r border-[#E2E8F0] bg-white py-4 text-[#1E1E1E]">
@@ -44,11 +52,18 @@ function TillRail() {
         <div className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-[#E2E8F0] bg-[#F5C742] text-xs font-bold text-[#1E1E1E]" title={fullName}>
           {initials(fullName)}
         </div>
+        {canManagePin && (
+          <button type="button" onClick={() => setPinDialogOpen(true)} title="PIN sign-in on this till" aria-label="PIN sign-in on this till"
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#CBD5E1] text-[#334155] transition hover:border-[#F5C742] hover:bg-[#F5C742]/10 hover:text-[#1E1E1E]">
+            <KeyRound className="h-5 w-5" />
+          </button>
+        )}
         <button type="button" onClick={() => signOutOfTill()} title="Sign out" aria-label="Sign out"
           className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#CBD5E1] text-[#334155] transition hover:border-[#F5C742] hover:bg-[#F5C742]/10 hover:text-[#1E1E1E]">
           <LogOut className="h-5 w-5" />
         </button>
       </div>
+      {pinDialogOpen && <PinSignInDialog onClose={() => setPinDialogOpen(false)} />}
     </nav>
   );
 }

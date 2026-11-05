@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { X, Printer, Settings2, RefreshCw, RotateCcw } from 'lucide-react';
+import { X, Printer, Settings2, RefreshCw, RotateCcw, SlidersHorizontal } from 'lucide-react';
+import LabelPrinterSetupPanel from './LabelPrinterSetupPanel';
 import {
     BULK_QTY_MODES,
     DEFAULT_BARCODE_PRINT_SETTINGS,
@@ -32,17 +33,23 @@ const BarcodePrintSettingsDialog = ({
     printersLoading,
     printersError,
     onReloadPrinters,
+    testLabelSize,
+    initialTab = 'general',
     onSave,
     onClose,
 }) => {
     // Mounted only while open, so the draft always starts from the saved settings.
     const [draft, setDraft] = useState(settings);
+    const [tab, setTab] = useState(initialTab === 'printers' ? 'printers' : 'general');
 
     if (!open) return null;
 
     const hasBranch = branchId != null && branchId !== 'ALL';
     const branchKey = hasBranch ? String(branchId) : null;
     const pickedPrinterId = branchKey ? (draft.printerByBranch?.[branchKey] ?? '') : '';
+    const pickedPrinter = pickedPrinterId ? printers.find(p => String(p.id) === String(pickedPrinterId)) : null;
+    const branchDefault = printers.find(p => p.defaultPrinter) || null;
+    const tabCls = (active) => `px-3 py-2 text-sm font-semibold border-b-2 -mb-px flex items-center gap-1.5 ${active ? 'border-[#F5C742] text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800'}`;
 
     const set = (patch) => setDraft(prev => ({ ...prev, ...patch }));
     const setPrinter = (printerId) => {
@@ -60,7 +67,7 @@ const BarcodePrintSettingsDialog = ({
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50" role="dialog" aria-modal="true" aria-labelledby="bb-print-settings-title">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
                 <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
                     <div className="flex items-center gap-2">
                         <Settings2 size={18} className="text-[#D4A017]" />
@@ -74,6 +81,56 @@ const BarcodePrintSettingsDialog = ({
                     </button>
                 </div>
 
+                <div className="flex gap-1 px-5 border-b border-slate-200" role="tablist">
+                    <button type="button" role="tab" aria-selected={tab === 'general'} className={tabCls(tab === 'general')} onClick={() => setTab('general')}>
+                        <SlidersHorizontal size={14} /> General
+                    </button>
+                    <button type="button" role="tab" aria-selected={tab === 'printers'} className={tabCls(tab === 'printers')} onClick={() => setTab('printers')}>
+                        <Printer size={14} /> Printers
+                        {hasBranch && !printersLoading && !printersError && printers.length === 0 && (
+                            <span className="w-2 h-2 rounded-full bg-amber-500" title="No label printer set up" />
+                        )}
+                    </button>
+                </div>
+
+                {tab === 'printers' ? (
+                <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                    {/* Which printer this PC sends labels to (saved with Save Settings) */}
+                    <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
+                        <div className="flex items-center justify-between mb-1">
+                            <label htmlFor="bb-ps-printer" className="text-xs font-bold text-slate-700">
+                                This PC prints labels to
+                            </label>
+                            {hasBranch && (
+                                <button type="button" onClick={onReloadPrinters} className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1">
+                                    <RefreshCw size={12} className={printersLoading ? 'animate-spin' : ''} /> Refresh
+                                </button>
+                            )}
+                        </div>
+                        {!hasBranch ? (
+                            <p className="text-xs text-amber-800">Select a branch to choose its label printer. Label printing never guesses a branch.</p>
+                        ) : (
+                            <>
+                                <select id="bb-ps-printer" className={inputCls} value={pickedPrinterId} onChange={e => setPrinter(e.target.value)}>
+                                    <option value="">Branch default printer{branchDefault ? ` (${branchDefault.deviceName})` : ''}</option>
+                                    {printers.map(p => (
+                                        <option key={p.id} value={String(p.id)}>{describePrinter(p)}</option>
+                                    ))}
+                                </select>
+                                {printersError && <p className="text-xs text-red-600 mt-1">{printersError}</p>}
+                                <p className="text-[11px] text-slate-500 mt-1">Only this computer. Click Save Settings to keep the choice.</p>
+                            </>
+                        )}
+                    </div>
+
+                    <LabelPrinterSetupPanel
+                        branchId={hasBranch ? branchId : null}
+                        branchLabel={branchLabel}
+                        testLabelSize={testLabelSize}
+                        onChanged={onReloadPrinters}
+                    />
+                </div>
+                ) : (
                 <div className="flex-1 overflow-y-auto p-5 space-y-5">
                     {/* Print method */}
                     <div>
@@ -90,39 +147,23 @@ const BarcodePrintSettingsDialog = ({
                         </div>
                     </div>
 
-                    {/* Label printer */}
-                    <div>
-                        <div className="flex items-center justify-between mb-1">
-                            <label htmlFor="bb-ps-printer" className="text-xs font-bold text-slate-700">
-                                Label printer {hasBranch ? <span className="font-normal text-slate-500">for {branchLabel}</span> : null}
-                            </label>
-                            {hasBranch && (
-                                <button type="button" onClick={onReloadPrinters} className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1">
-                                    <RefreshCw size={12} className={printersLoading ? 'animate-spin' : ''} /> Refresh
-                                </button>
-                            )}
+                    {/* Which printer, at a glance; set up on the Printers tab */}
+                    {draft.printMethod === PRINT_METHODS.ZEBRA && (
+                        <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2">
+                            <div className="min-w-0">
+                                <p className="text-xs font-bold text-slate-700">Label printer</p>
+                                <p className="text-xs text-slate-500 truncate">
+                                    {!hasBranch ? 'Select a branch first'
+                                        : pickedPrinter ? describePrinter(pickedPrinter)
+                                            : branchDefault ? `Branch default — ${describePrinter(branchDefault)}`
+                                                : printersLoading ? 'Loading…' : 'None set up yet'}
+                                </p>
+                            </div>
+                            <button type="button" onClick={() => setTab('printers')} className="shrink-0 text-xs font-semibold text-[#8a6d0a] hover:underline">
+                                {hasBranch && !printersLoading && printers.length === 0 ? 'Set up a printer' : 'Change'}
+                            </button>
                         </div>
-                        {!hasBranch ? (
-                            <p className="text-xs text-amber-800 bg-[#FFF8E7] border border-[#FDE6A9] rounded-lg px-3 py-2">
-                                Select a branch to choose its label printer. Label printing never guesses a branch.
-                            </p>
-                        ) : (
-                            <>
-                                <select id="bb-ps-printer" className={inputCls} value={pickedPrinterId} onChange={e => setPrinter(e.target.value)}>
-                                    <option value="">Branch default printer</option>
-                                    {printers.map(p => (
-                                        <option key={p.id} value={String(p.id)}>{describePrinter(p)}</option>
-                                    ))}
-                                </select>
-                                {printersError && <p className="text-xs text-red-600 mt-1">{printersError}</p>}
-                                {!printersLoading && !printersError && printers.length === 0 && (
-                                    <p className="text-xs text-slate-500 mt-1">
-                                        No label printer set up for this branch. Add one under POS → Devices → Add Device → Label Printer.
-                                    </p>
-                                )}
-                            </>
-                        )}
-                    </div>
+                    )}
 
                     {/* Default template */}
                     <div>
@@ -191,6 +232,7 @@ const BarcodePrintSettingsDialog = ({
                         </label>
                     </div>
                 </div>
+                )}
 
                 <div className="px-5 py-3 border-t border-slate-200 flex items-center justify-between gap-2 bg-slate-50">
                     <button

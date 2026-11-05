@@ -86,6 +86,14 @@ public class Quotation  implements com.billbull.backend.common.ownership.OwnedEn
     @Column(length = 1000)
     private String internalNotes;
 
+    /**
+     * Terms & Conditions printed on this quotation (V132). Pre-filled from the default print template
+     * of its category and editable per document. Null (quotations saved before V132) prints the
+     * template's own terms; an empty string prints none.
+     */
+    @Column(name = "terms_conditions", columnDefinition = "TEXT")
+    private String termsConditions;
+
     @Enumerated(EnumType.STRING)
     private QuotationStatus status = QuotationStatus.DRAFT;
 
@@ -204,6 +212,9 @@ public class Quotation  implements com.billbull.backend.common.ownership.OwnedEn
 
     public String getInternalNotes() { return internalNotes; }
     public void setInternalNotes(String internalNotes) { this.internalNotes = internalNotes; }
+
+    public String getTermsConditions() { return termsConditions; }
+    public void setTermsConditions(String termsConditions) { this.termsConditions = termsConditions; }
 
     public QuotationStatus getStatus() { return status; }
     public void setStatus(QuotationStatus status) { this.status = status; }

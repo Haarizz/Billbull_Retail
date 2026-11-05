@@ -103,6 +103,7 @@ import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNu
 import TableSkeleton from '../../components/common/TableSkeleton';
 import KpiCards from '../../components/common/KpiCards';
 import SalesOrderPreviewSplitView from './components/SalesOrderPreviewSplitView';
+import DocumentTermsCard from '../../components/common/DocumentTermsCard';
 import useDocumentPricing, { manualPricePatch } from '@billbull/shared/hooks/useDocumentPricing';
 import PriceSourceTag from '@billbull/shared/components/pricing/PriceSourceTag';
 
@@ -417,6 +418,10 @@ const SalesOrders = () => {
   // Notes
   const [customerNotes, setCustomerNotes] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
+  // This order's own Terms & Conditions. null = not set yet: DocumentTermsCard pre-fills it from
+  // the default Sales Order template (orders saved before terms existed print the template's
+  // terms). Saved with the order and printed instead of the template's text.
+  const [termsConditions, setTermsConditions] = useState(null);
 
   // Attachments
   const [attachmentName, setAttachmentName] = useState('No file chosen');
@@ -1229,7 +1234,9 @@ const SalesOrders = () => {
           locationStore: printBranch.name || printBranch.code || '',
           warehouse: printBranch.defaultWarehouseName || '',
           deliveryTerms: deliveryType || '',
-          salesPerson: ''
+          salesPerson: '',
+          // The order's own terms replace the template's (undefined → template terms).
+          terms: termsConditions ?? undefined
         };
       })()
     };
@@ -1397,6 +1404,7 @@ const SalesOrders = () => {
       // Notes
       customerNotes,
       internalNotes,
+      termsConditions,
       status: targetStatus,
 
       // Map Items
@@ -1679,6 +1687,7 @@ const SalesOrders = () => {
     setDeliveryInstructions(order.deliveryInstructions || '');
     setCustomerNotes(order.customerNotes || '');
     setInternalNotes(order.internalNotes || '');
+    setTermsConditions(typeof order.termsConditions === 'string' ? order.termsConditions : null);
     setStatus(order.status);
 
     setAttachmentName('No file chosen');
@@ -1757,6 +1766,7 @@ const SalesOrders = () => {
     setDeliveryInstructions('');
     setCustomerNotes('');
     setInternalNotes('');
+    setTermsConditions(null);
     setStatus('DRAFT');
     setAttachmentName('No file chosen');
     setAttachmentFile(null);
@@ -2929,6 +2939,17 @@ const SalesOrders = () => {
                 </div>
               </div>
             </div>
+
+            {/* TERMS & CONDITIONS — this order's own terms, pre-filled from the default
+                Sales Order print template; printed instead of it. */}
+            <DocumentTermsCard
+              category="Sales Order (SO)"
+              branchId={loadedSoBranchId ?? activeBranch?.id}
+              value={termsConditions}
+              onChange={setTermsConditions}
+              readOnly={isLocked}
+              documentLabel="order"
+            />
 
           </div> {/* End Main Column */}
 

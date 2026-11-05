@@ -87,19 +87,19 @@ export default function PaymentModalShell({
       footer={(
         <>
           <button type="button" onClick={onCancel}
-            className="rounded-xl border-2 border-gray-200 px-5 py-3 text-sm font-bold text-gray-600 hover:bg-gray-50">
+            className="rounded-xl border-2 border-gray-200 px-5 py-3 short:py-2.5 text-sm font-bold text-gray-600 hover:bg-gray-50">
             Cancel
           </button>
           <button type="button" onClick={onConfirm} disabled={confirmDisabled}
-            className="flex-1 rounded-xl py-3 text-sm font-black text-white transition-all disabled:cursor-not-allowed disabled:bg-gray-300"
+            className="flex-1 rounded-xl py-3 short:py-2.5 text-sm font-black text-white transition-all disabled:cursor-not-allowed disabled:bg-gray-300"
             style={confirmDisabled ? undefined : { backgroundColor: accent }}>
             {confirmLabel}
           </button>
         </>
       )}
     >
-      <div className="space-y-3 p-5">
-          <div className="flex items-center justify-between rounded-xl border-2 px-4 py-3"
+      <div className="space-y-3 p-5 short:space-y-2 short:p-3">
+          <div className="flex items-center justify-between rounded-xl border-2 px-4 py-3 short:py-2"
             style={{ borderColor: accent }}>
             <span className="text-xs font-bold uppercase tracking-wide text-gray-500">{amountLabel}</span>
             <span className="text-2xl font-black text-[#1E293B]">
@@ -111,7 +111,7 @@ export default function PaymentModalShell({
             <div className="flex flex-wrap gap-2">
               {quickAmounts.map(({ label, value }) => (
                 <button key={label} type="button" onClick={() => onQuickAmount(value)}
-                  className="rounded-lg border-2 px-3 py-1.5 text-sm font-bold transition-all hover:bg-gray-50"
+                  className="rounded-lg border-2 px-3 py-1.5 short:py-1 text-sm font-bold transition-all hover:bg-gray-50"
                   style={{ borderColor: accent, color: accent }}>
                   {label}
                 </button>
@@ -122,7 +122,7 @@ export default function PaymentModalShell({
           <div className="grid grid-cols-3 gap-2">
             {keys.map((k) => (
               <button key={k} type="button" tabIndex={-1} onClick={() => onAmountKey(k)}
-                className={`rounded-xl py-3 text-lg font-bold transition-all ${
+                className={`rounded-xl py-3 short:py-2 text-lg font-bold transition-all ${
                   k === '⌫' ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-gray-50 text-[#1E293B] hover:bg-gray-100'
                 }`}>
                 {k}
@@ -204,9 +204,9 @@ export function PaymentModalFrame({
         tabIndex={-1}
         data-pos-keyboard-owner="true"
         onKeyDown={onKeyDown || undefined}
-        className="w-full max-w-md max-h-[92vh] overflow-y-auto rounded-2xl bg-white shadow-2xl outline-none"
+        className="flex w-full max-w-md max-h-[92vh] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl outline-none"
       >
-        <div className="flex items-center gap-3 rounded-t-2xl px-5 py-4 text-white" style={{ backgroundColor: accent }}>
+        <div className="flex shrink-0 items-center gap-3 rounded-t-2xl px-5 py-4 short:py-2.5 text-white" style={{ backgroundColor: accent }}>
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/20">
             <Icon className="h-5 w-5" />
           </div>
@@ -221,13 +221,16 @@ export function PaymentModalFrame({
           </button>
         </div>
 
-        {children}
+        {/* Only the body scrolls, so Confirm / Cancel stay on screen on a short (1024x600) till. */}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {children}
+        </div>
 
-        <div className="flex items-center gap-2 border-t border-gray-100 p-4">
+        <div className="flex shrink-0 items-center gap-2 border-t border-gray-100 p-4 short:p-3">
           {footer}
         </div>
         {hint && (
-          <p className="px-4 pb-3 text-center text-[10px] text-gray-400">{hint}</p>
+          <p className="shrink-0 px-4 pb-3 short:pb-2 text-center text-[10px] text-gray-400">{hint}</p>
         )}
       </div>
     </div>

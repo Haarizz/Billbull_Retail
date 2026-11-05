@@ -52,7 +52,8 @@ class EmployeeServiceImplTest {
                 adminSafeguardService,
                 userService,
                 branchRepository,
-                branchAccessService);
+                branchAccessService,
+                new com.billbull.backend.pos.pinlogin.PosPinPolicy(new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder(4)));
     }
 
     @Test
@@ -218,6 +219,7 @@ class EmployeeServiceImplTest {
         employee.setId(42L);
         employee.setStatus("Inactive");
         employee.setWorkflowStage("Deactivated");
+        employee.setPosAccess(false); // as deactivateEmployee leaves it
 
         when(repository.findById(42L)).thenReturn(Optional.of(employee));
         when(repository.save(any(Employee.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -227,6 +229,7 @@ class EmployeeServiceImplTest {
         assertEquals("Active", employee.getStatus());
         assertEquals("Completed", employee.getWorkflowStage());
         verify(userService).activatePendingEmployeeAccessForEmployee(42L);
+        assertTrue(employee.getPosAccess(), "reactivation restores the POS access that deactivation removed");
     }
 
     @Test
@@ -244,5 +247,72 @@ class EmployeeServiceImplTest {
         assertEquals("Active", employee.getStatus());
         assertEquals("Completed", employee.getWorkflowStage());
         verify(userService).activatePendingEmployeeAccessForEmployee(57L);
+    }
+
+    // ---- Till PIN -------------------------------------------------------
+
+    @Test
+    void createEmployeeStoresOnlyAHashOfThePosPin() {
+        EmployeeUpsertRequest request = validCreateRequest();
+        request.setPosAccess(true);
+        request.setPosPin("2580");
+        when(repository.save(any(Employee.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        employeeService.createEmployee(request, null);
+
+        ArgumentCaptor<Employee> saved = ArgumentCaptor.forClass(Employee.class);
+        verify(repository).save(saved.capture());
+        assertEquals(null, saved.getValue().getPosPin());
+        assertTrue(saved.getValue().getPosPinHash().startsWith("$2"));
+        assertTrue(new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder()
+                .matches("2580", saved.getValue().getPosPinHash()));
+        assertEquals(4, saved.getValue().getPosPinLength());
+    }
+
+    @Test
+    void createEmployeeRejectsAnEasyPosPin() {
+        EmployeeUpsertRequest request = validCreateRequest();
+        request.setPosPin("1234");
+
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class,
+                () -> employeeService.createEmployee(request, null));
+
+        assertTrue(ex.getMessage().contains("too easy to guess"));
+        verify(repository, never()).save(any(Employee.class));
+    }
+
+    @Test
+    void updateEmployeeKeepsThePinWhenTheFieldIsBlankAndClearsItWhenPosAccessIsOff() {
+        Employee existing = new Employee();
+        existing.setId(70L);
+        existing.setEmployeeCode("EMP1234");
+        existing.setPosPinHash("$2a$04$existinghash");
+        when(repository.findById(70L)).thenReturn(Optional.of(existing));
+        when(repository.save(any(Employee.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        EmployeeUpsertRequest keep = validCreateRequest();
+        keep.setPosAccess(true);
+        keep.setPosPin("");
+        employeeService.updateEmployee(70L, keep, null);
+        assertEquals("$2a$04$existinghash", existing.getPosPinHash());
+
+        EmployeeUpsertRequest off = validCreateRequest();
+        off.setPosAccess(false);
+        employeeService.updateEmployee(70L, off, null);
+        assertEquals(null, existing.getPosPinHash());
+        assertEquals(null, existing.getPosPinLength());
+    }
+
+    @Test
+    void thePinAndItsHashAreNeverSerialized() throws Exception {
+        Employee employee = new Employee();
+        employee.setPosPin("2580");
+        employee.setPosPinHash("$2a$04$secret");
+
+        String json = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules().writeValueAsString(employee);
+
+        assertTrue(json.contains("\"hasPosPin\":true"), json);
+        assertTrue(!json.contains("2580") && !json.contains("secret") && !json.contains("posPin\""), json);
     }
 }

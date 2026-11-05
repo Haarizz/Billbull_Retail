@@ -122,6 +122,7 @@ import TableSkeleton from '../../components/common/TableSkeleton';
 import ProformaPreviewSplitView from './components/ProformaPreviewSplitView';
 import useDocumentPricing, { manualPricePatch } from '@billbull/shared/hooks/useDocumentPricing';
 import PriceSourceTag from '@billbull/shared/components/pricing/PriceSourceTag';
+import DocumentTermsCard from '../../components/common/DocumentTermsCard';
 
 const ProformaInvoice = () => {
   const { company } = useCompany();
@@ -347,6 +348,10 @@ const ProformaInvoice = () => {
   // Notes
   const [notesToCustomer, setNotesToCustomer] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
+  // This proforma's own Terms & Conditions. null = not set yet: DocumentTermsCard pre-fills it
+  // from the default Proforma Invoice template (proformas saved before terms existed print the
+  // template's terms). Saved with the proforma and printed instead of the template's text.
+  const [termsConditions, setTermsConditions] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
 
   // Summary Calcs
@@ -623,7 +628,9 @@ const ProformaInvoice = () => {
         locationStore: printBranch.name || printBranch.code || '',
         warehouse: printBranch.defaultWarehouseName || '',
         deliveryTerms: '',
-        salesPerson: ''
+        salesPerson: '',
+        // The proforma's own terms replace the template's (undefined → template terms).
+        terms: termsConditions ?? undefined
       }
     };
   };
@@ -953,6 +960,7 @@ const ProformaInvoice = () => {
       setPaymentMethod(full.paymentMethod || "Cash");
       setPaymentNotes(full.paymentNotes || "");
       setNotesToCustomer(full.notesToCustomer || "");
+      setTermsConditions(typeof full.termsConditions === 'string' ? full.termsConditions : null);
 
       // Map Items safely by calculating correctly
       const mappedItems = (full.items || []).map((item, index) =>
@@ -1013,6 +1021,7 @@ const ProformaInvoice = () => {
     setSourceSearch('');
     setPaymentRef('');
     setPaymentNotes('');
+    setTermsConditions(null);
     setActiveTab('create');
   };
 
@@ -1051,6 +1060,7 @@ const ProformaInvoice = () => {
         taxInclusive: vatMode === 'INCLUSIVE',
         paymentNotes,
         notesToCustomer,
+        termsConditions,
         shippingAddress,
         items: validItems.map(i => ({
           itemCode: i.code,
@@ -1173,6 +1183,7 @@ const ProformaInvoice = () => {
         taxInclusive: vatMode === 'INCLUSIVE',
         paymentNotes,
         notesToCustomer,
+        termsConditions,
         shippingAddress,
         items: validItems.map(i => ({
           itemCode: i.code,
@@ -2295,6 +2306,17 @@ const ProformaInvoice = () => {
                     </div>
                   </div>
                 </div>
+
+                {/* TERMS & CONDITIONS — this proforma's own terms, pre-filled from the default
+                    Proforma Invoice print template; printed instead of it. */}
+                <DocumentTermsCard
+                  category="Proforma Invoice (PI)"
+                  branchId={loadedPiBranchId ?? activeBranch?.id}
+                  value={termsConditions}
+                  onChange={setTermsConditions}
+                  readOnly={isReadOnly}
+                  documentLabel="proforma"
+                />
 
               </div> {/* End Main Column */}
 

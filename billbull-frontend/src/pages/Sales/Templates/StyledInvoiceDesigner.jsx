@@ -8,6 +8,7 @@ import {
     Download,
     Eye,
     FileText,
+    Image as ImageIcon,
     Loader2,
     Palette,
     Printer,
@@ -177,7 +178,18 @@ const ACCENT_PRESETS = {
 const PANELS = [
     { id: "style", label: "Style", icon: Palette },
     { id: "sections", label: "Sections", icon: AlignLeft },
+    { id: "branding", label: "Branding", icon: ImageIcon },
     { id: "typography", label: "Typography", icon: Type }
+];
+
+// Uploaded images are stored inside the template as data URLs, so keep them small.
+const MAX_IMAGE_BYTES = 1024 * 1024;
+
+const BANK_FIELDS = [
+    ["bankName", "Bank Name"],
+    ["bankAccount", "Account Number"],
+    ["bankIBAN", "IBAN"],
+    ["bankSWIFT", "SWIFT / BIC"]
 ];
 
 // A4 at 96 dpi, and the printable height per sheet: the layouts print with a
@@ -241,6 +253,55 @@ function Switch({ value, onChange, label }) {
 
 function FieldLabel({ children }) {
     return <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">{children}</p>;
+}
+
+// One branding block: a show/hide switch plus an optional image upload.
+function ImageField({ label, hint, enabled, onToggle, value, onChange, round = false }) {
+    const inputId = React.useId();
+    const handleFile = (event) => {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file) return;
+        if (!file.type.startsWith("image/")) {
+            toast.error("Please choose an image file");
+            return;
+        }
+        if (file.size > MAX_IMAGE_BYTES) {
+            toast.error("Image is too large — use one under 1 MB");
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => onChange(String(reader.result || ""));
+        reader.readAsDataURL(file);
+    };
+    const box = round ? "h-14 w-14 rounded-full" : "h-14 w-24 rounded-lg";
+    return (
+        <div className="rounded-lg border border-gray-200 p-3">
+            <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-bold text-gray-700">{label}</span>
+                <Switch label={`Show ${label}`} value={enabled} onChange={onToggle} />
+            </div>
+            <div className="flex items-center gap-3">
+                <div className={`flex shrink-0 items-center justify-center overflow-hidden border border-dashed border-gray-300 bg-gray-50 ${box}`}>
+                    {value
+                        ? <img src={value} alt={`${label} preview`} className="h-full w-full object-contain" />
+                        : <span className="text-[9px] text-gray-400">Default</span>}
+                </div>
+                <div className="flex flex-col items-start gap-1">
+                    <label htmlFor={inputId} className="cursor-pointer text-xs font-semibold text-[#A16207] hover:underline">
+                        {value ? "Change image" : "Upload image"}
+                    </label>
+                    <input id={inputId} type="file" accept="image/*" className="hidden" onChange={handleFile} aria-label={`Upload ${label}`} />
+                    {value && (
+                        <button type="button" onClick={() => onChange("")} className="text-[11px] text-gray-400 hover:text-red-600">
+                            Remove
+                        </button>
+                    )}
+                </div>
+            </div>
+            <p className="mt-2 text-[11px] leading-4 text-gray-400">{hint}</p>
+        </div>
+    );
 }
 
 function SectionGroup({ title, toggles, settings, open, onToggleOpen, onChange }) {
@@ -703,9 +764,9 @@ export function StyledInvoiceDesigner({ layoutStyle, templateName, initialSettin
                                     />
                                 </div>
                                 <p className="rounded-lg border border-[#FDE6A9] bg-[#FFF8E7] px-3 py-2 text-[11px] leading-4 text-[#7c5a00]">
-                                    Company name, Arabic name, logo, TRN, address and bank details come from
-                                    Company Settings and the invoice's branch. VAT rows hide automatically on
-                                    invoices that carry no tax.
+                                    Company name, Arabic name, TRN and address come from Company Settings and
+                                    the invoice's branch. Upload a template-specific logo or stamp under
+                                    Branding. VAT rows hide automatically on invoices that carry no tax.
                                 </p>
                             </>
                         )}
@@ -748,6 +809,77 @@ export function StyledInvoiceDesigner({ layoutStyle, templateName, initialSettin
                                     {visibleGroups.length === 0 && (
                                         <p className="py-6 text-center text-xs text-gray-400">No section matches “{sectionQuery}”.</p>
                                     )}
+                                </div>
+                            </>
+                        )}
+
+                        {activePanel === "branding" && (
+                            <>
+                                <ImageField
+                                    label="Company Logo"
+                                    hint="Leave empty to use the logo from the invoice's branch or Company Settings."
+                                    enabled={isOn(settings, "showLogo")}
+                                    onToggle={(value) => update({ showLogo: value })}
+                                    value={settings.logoUrl || ""}
+                                    onChange={(value) => update({ logoUrl: value })}
+                                />
+                                <ImageField
+                                    label="Company Stamp"
+                                    hint="Leave empty to use the stamp from the invoice's branch or Company Settings."
+                                    enabled={isOn(settings, "showCompanyStamp")}
+                                    onToggle={(value) => update({ showCompanyStamp: value })}
+                                    value={settings.stampUrl || ""}
+                                    onChange={(value) => update({ stampUrl: value })}
+                                    round
+                                />
+                                <div className="rounded-lg border border-gray-200 p-3">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs font-bold text-gray-700">Watermark</span>
+                                        <Switch
+                                            label="Show Watermark"
+                                            value={settings.showWatermark === true}
+                                            onChange={(value) => update({ showWatermark: value })}
+                                        />
+                                    </div>
+                                    {settings.showWatermark === true && (
+                                        <input
+                                            value={settings.watermarkText || ""}
+                                            onChange={(e) => update({ watermarkText: e.target.value })}
+                                            maxLength={40}
+                                            placeholder="e.g. ORIGINAL, COPY, PAID"
+                                            aria-label="Watermark text"
+                                            className="mt-2 h-8 w-full rounded-lg border border-gray-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#F5C742]"
+                                        />
+                                    )}
+                                    <p className="mt-2 text-[11px] leading-4 text-gray-400">Printed and PDF copies only; emails skip it.</p>
+                                </div>
+                                <div className="rounded-lg border border-gray-200 p-3">
+                                    <div className="mb-2 flex items-center justify-between">
+                                        <span className="text-xs font-bold text-gray-700">
+                                            {layoutStyle === "elegant" ? "Payment Details" : "Bank Details"}
+                                        </span>
+                                        <Switch
+                                            label="Show Bank Details"
+                                            value={isOn(settings, "showBankDetails")}
+                                            onChange={(value) => update({ showBankDetails: value })}
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        {BANK_FIELDS.map(([key, label]) => (
+                                            <div key={key}>
+                                                <p className="mb-0.5 text-[10px] text-gray-400">{label}</p>
+                                                <input
+                                                    value={settings[key] || ""}
+                                                    onChange={(e) => update({ [key]: e.target.value })}
+                                                    aria-label={label}
+                                                    className="h-8 w-full rounded-lg border border-gray-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#F5C742]"
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="mt-2 text-[11px] leading-4 text-gray-400">
+                                        Bank details saved on the branch or in Company Settings take priority; these fill in when none are set.
+                                    </p>
                                 </div>
                             </>
                         )}

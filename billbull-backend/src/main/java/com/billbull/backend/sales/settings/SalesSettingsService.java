@@ -31,6 +31,12 @@ public class SalesSettingsService {
      * Returns the singleton settings row. If it doesn't exist yet,
      * creates a default one (stockCheckRequired = false, policy = NO_IMPACT).
      */
+    /** The stored settings without the document-numbering preview (cheap; for frequent reads). */
+    @Transactional(readOnly = true)
+    public SalesSettings getStoredSettings() {
+        return loadOrDefault();
+    }
+
     @Transactional
     public SalesSettings getSettings() {
         SalesSettings settings = loadOrDefault();

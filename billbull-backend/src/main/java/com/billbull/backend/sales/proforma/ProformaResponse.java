@@ -52,6 +52,7 @@ public class ProformaResponse {
 
     private String paymentMethod;
     private String paymentNotes;
+    private String termsConditions;
 
     private ProformaStatus status;
     private Integer revisionNo;
@@ -237,6 +238,9 @@ public class ProformaResponse {
 	public void setPaymentNotes(String paymentNotes) {
 		this.paymentNotes = paymentNotes;
 	}
+
+	public String getTermsConditions() { return termsConditions; }
+	public void setTermsConditions(String termsConditions) { this.termsConditions = termsConditions; }
 
 	public void setStatus(ProformaStatus status) {
 		this.status = status;

@@ -126,6 +126,7 @@ import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 import TableSkeleton from '../../components/common/TableSkeleton';
 import DeliveryNotePreviewSplitView from './components/DeliveryNotePreviewSplitView';
+import DocumentTermsCard from '../../components/common/DocumentTermsCard';
 
 const DeliveryNote = () => {
     const location = useLocation();
@@ -362,6 +363,10 @@ const DeliveryNote = () => {
     const [vehicleNo, setVehicleNo] = useState('');
     const [trackingNo, setTrackingNo] = useState('');
     const [shippingAddress, setShippingAddress] = useState('');
+    // This delivery note's own Terms & Conditions. null = not set yet: DocumentTermsCard pre-fills
+    // it from the default Delivery Note template (notes saved before terms existed print the
+    // template's terms). Saved with the note and printed instead of the template's text.
+    const [termsConditions, setTermsConditions] = useState(null);
 
     // Items
     const [items, setItems] = useState([]);
@@ -974,6 +979,7 @@ const DeliveryNote = () => {
                 vehicleNo: dn.vehicleNo,
                 trackingNo: dn.trackingNo,
                 shippingAddress: dn.shippingAddress,
+                termsConditions: typeof dn.termsConditions === 'string' ? dn.termsConditions : null,
                 items: dn.items?.map((item, index) =>
                     normalizeDeliveryItem({ ...item, stock: 0 }, item.id || Date.now() + index + Math.random())
                 )
@@ -1155,6 +1161,7 @@ const DeliveryNote = () => {
         setVehicleNo('');
         setTrackingNo('');
         setShippingAddress('');
+        setTermsConditions(null);
 
         setActiveTab('create');
     };
@@ -1175,6 +1182,7 @@ const DeliveryNote = () => {
         setVehicleNo(dn.vehicleNo || '');
         setTrackingNo(dn.trackingNo || '');
         setShippingAddress(dn.shippingAddress || '');
+        setTermsConditions(typeof dn.termsConditions === 'string' ? dn.termsConditions : null);
         setLinkedSO(dn.soNo || '');
         setLinkedPI(dn.piNo && dn.piNo !== '-' ? dn.piNo : '');
         setLinkedSI(dn.siNo || '');
@@ -1680,6 +1688,7 @@ const DeliveryNote = () => {
             vehicleNo,
             trackingNo,
             shippingAddress,
+            termsConditions,
             items: validItems.map(i => ({
                 itemCode: i.code,
                 barcode: i.barcode || '',
@@ -1824,7 +1833,9 @@ const DeliveryNote = () => {
                 warehouse: warehouse || '',
                 deliveryTerms: '',
                 salesPerson: '',
-                notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
+                notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`,
+                // The note's own terms replace the template's (undefined → template terms).
+                terms: termsConditions ?? undefined
             }
         };
     };
@@ -3036,6 +3047,17 @@ const DeliveryNote = () => {
                                             </div>
                                         );
                                     })()}
+
+                                    {/* TERMS & CONDITIONS — this delivery note's own terms, pre-filled from
+                                        the default Delivery Note print template; printed instead of it. */}
+                                    <DocumentTermsCard
+                                        category="Delivery Note (DO/DN)"
+                                        branchId={loadedDnBranchId ?? activeBranch?.id}
+                                        value={termsConditions}
+                                        onChange={setTermsConditions}
+                                        readOnly={isLockedForEdit}
+                                        documentLabel="delivery note"
+                                    />
                                 </div> {/* End Main Column */}
 
                                 {/* --- RIGHT COLUMN: SUMMARY & STOCK ---

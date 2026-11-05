@@ -53,6 +53,27 @@ public class AuthController {
     @Transactional
     @PostMapping("/login")
     public LoginResponse login(@RequestBody LoginRequest request, HttpServletRequest httpRequest) {
+        User user = authenticate(request, httpRequest);
+        return LoginResponses.of(user, jwtUtil.generateToken(user));
+    }
+
+    /**
+     * Till sign-in with username and password. Same checks as {@link #login}, plus the linked
+     * employee's POS access switch: staff whose HR record says "no POS" can't open the till.
+     * Users with no employee record (e.g. the owner's admin login) are not affected.
+     */
+    @Transactional
+    @PostMapping("/pos/login")
+    public LoginResponse posLogin(@RequestBody LoginRequest request, HttpServletRequest httpRequest) {
+        User user = authenticate(request, httpRequest);
+        if (user.getLinkedEmployee() != null && !user.getLinkedEmployee().isPosAccessAllowed()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "POS access is turned off for this employee. Ask HR to enable it.");
+        }
+        return LoginResponses.of(user, jwtUtil.generateToken(user));
+    }
+
+    private User authenticate(LoginRequest request, HttpServletRequest httpRequest) {
 
         String clientIp = clientIpResolver.resolve(httpRequest);
         String submittedUsername = request.getUsername();
@@ -93,34 +114,7 @@ public class AuthController {
         } else {
             loginRateLimiter.recordSuccess(clientIp);
         }
-        String token = jwtUtil.generateToken(user);
-
-        // Primary role is the canonical role for sidebar fallback and login redirect.
-        // If no primary role is set, pick the first role from the set as default.
-        String primaryRole = user.getPrimaryRole() != null
-                ? user.getPrimaryRole().getName()
-                : user.getRoles().stream()
-                        .map(com.billbull.backend.role.Role::getName)
-                        .findFirst()
-                        .orElse("USER");
-
-        System.out.println("Login - User: " + user.getUsername() + " Primary: " + primaryRole);
-
-        return new LoginResponse(
-                token,
-                user.getUsername(),
-                user.getResolvedDisplayName(),
-                primaryRole,  // `role` field now always equals primaryRole
-                primaryRole,
-                user.getBranch() != null ? user.getBranch().getId() : null,
-                user.getBranch() != null ? user.getBranch().getName() : null,
-                user.getBranch() != null ? user.getBranch().getCode() : null,
-                user.getBranch() != null && user.getBranch().getDefaultWarehouse() != null
-                        ? user.getBranch().getDefaultWarehouse().getId()
-                        : null,
-                user.getBranch() != null && user.getBranch().getDefaultWarehouse() != null
-                        ? user.getBranch().getDefaultWarehouse().getName()
-                        : null);
+        return user;
     }
 
     @Transactional(readOnly = true)

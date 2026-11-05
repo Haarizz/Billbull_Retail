@@ -22,6 +22,8 @@ public class ProformaRequest {
     public BigDecimal advancePaid;
     public String paymentReference;
     public String paymentNotes;
+    /** This proforma's own Terms & Conditions; null leaves the stored terms unchanged. */
+    public String termsConditions;
     /** Footer discount percentage (used when billDiscountType is "percent" or absent). */
     public BigDecimal billDiscount;
     /** "percent" (default) or "amount". */

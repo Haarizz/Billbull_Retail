@@ -355,7 +355,7 @@ const cashShown = () => screen.getByText('Cash Received').nextElementSibling.tex
 /** A cart row (not the product tile of the same name), for a click that selects it. */
 const cartRow = (t, product) => {
   if (t === 'compact') return within(screen.getByRole('region', { name: 'Shopping Cart' })).getByText(product.name);
-  const row = t === 'focus' ? 'div.grid.grid-cols-12.border-b' : 'div.grid.group';
+  const row = 'div[data-cart-line-id]';
   return screen.getAllByText(product.name).map((n) => n.closest(row)).find(Boolean);
 };
 const qtyOf = (api, id) => api.items().find((i) => i.id === id)?.quantity;

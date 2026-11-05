@@ -18,9 +18,11 @@ export const TradeHeader = React.memo(({
 
   return (
     <div className="flex flex-col w-full">
-      {/* Top Tier (White) */}
-      <div className="bg-white flex flex-col gap-1.5 px-3 sm:px-4 py-2.5 border-b border-gray-200 shrink-0">
-        <div className="flex items-start justify-between gap-2">
+      {/* Top Tier (White) — one row: back, session, then Configure + Functions. Trade POS has no
+          permanent action column, so the Functions button is the only way into the shared POS
+          functions from this template. */}
+      <div className="bg-white flex items-center justify-between gap-2 sm:gap-3 px-3 sm:px-4 py-2 short:py-1.5 border-b border-gray-200 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button
             onClick={() => setCurrentView && setCurrentView('dashboard')}
             className="flex items-center gap-2 text-amber-500 hover:text-amber-600 transition-colors py-1.5 px-3 border border-amber-200 hover:bg-amber-50 rounded-lg text-xs sm:text-sm font-bold shrink-0"
@@ -28,34 +30,9 @@ export const TradeHeader = React.memo(({
             <ArrowLeft className="w-4 h-4" />
             <span className="hidden sm:inline">Dashboard</span>
           </button>
-
-          {/* Settings / Configure, with the Functions launcher stacked under it. Trade POS
-              has no permanent action column, so this button is the only way into the shared
-              POS functions from this template. */}
-          <div className="flex flex-col items-end gap-1.5 shrink-0">
-            <button
-              onClick={() => setShowPOSConfig && setShowPOSConfig(true)}
-              className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors py-1.5 px-3 border border-gray-200 hover:bg-gray-50 rounded-full text-xs sm:text-sm font-semibold shadow-sm"
-            >
-              <Settings className="w-4 h-4" />
-              <span className="hidden sm:inline">Configure</span>
-            </button>
-
-            <button
-              onClick={() => onOpenFunctions && onOpenFunctions()}
-              aria-label="Open POS functions"
-              className="flex items-center gap-2 text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors py-1.5 px-3 border border-amber-200 rounded-full text-xs sm:text-sm font-bold shadow-sm"
-            >
-              <LayoutGrid className="w-4 h-4" />
-              <span>Functions</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 min-w-0">
           <div className="text-slate-500 font-medium text-xs sm:text-sm leading-snug min-w-0 truncate">
             <span>Session: <span className="font-semibold text-slate-600">{currentSession?.id || 'NO SESSION'}</span></span>
-            <span className="hidden sm:inline">
+            <span className="hidden xl:inline">
               {' '}&bull;{' '}
               {time.toLocaleDateString()} {time.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}
             </span>
@@ -63,10 +40,29 @@ export const TradeHeader = React.memo(({
           {/* Business Day status — same compact chip as the standard template. */}
           <BusinessDayStatusChip />
         </div>
+
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <button
+            onClick={() => setShowPOSConfig && setShowPOSConfig(true)}
+            className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors py-1.5 px-3 border border-gray-200 hover:bg-gray-50 rounded-full text-xs sm:text-sm font-semibold shadow-sm"
+          >
+            <Settings className="w-4 h-4" />
+            <span className="hidden sm:inline">Configure</span>
+          </button>
+
+          <button
+            onClick={() => onOpenFunctions && onOpenFunctions()}
+            aria-label="Open POS functions"
+            className="flex items-center gap-2 text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors py-1.5 px-3 border border-amber-200 rounded-full text-xs sm:text-sm font-bold shadow-sm"
+          >
+            <LayoutGrid className="w-4 h-4" />
+            <span>Functions</span>
+          </button>
+        </div>
       </div>
 
       {/* Second Tier (Brand Amber) */}
-      <div className="bg-primary text-white min-h-12 flex flex-wrap items-center justify-between gap-2 px-3 sm:px-4 py-2 shrink-0 shadow-sm">
+      <div className="bg-primary text-white min-h-12 short:hidden flex flex-wrap items-center justify-between gap-2 px-3 sm:px-4 py-2 shrink-0 shadow-sm">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <div className="bg-white p-1.5 rounded-full text-primary shrink-0">
             <ShoppingCart className="w-4 h-4" />

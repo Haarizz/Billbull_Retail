@@ -1,6 +1,7 @@
 package com.billbull.backend.sales.settings;
 
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -118,6 +119,23 @@ public class SalesSettings {
     @Column(nullable = false, columnDefinition = "boolean default false")
     private boolean customerRequiredOnSalesInvoice = false;
 
+    /**
+     * Pricing rules (Price Levels workspace, V135). A selling price whose gross margin is below
+     * {@code pricingMinMarginPercent} is flagged as a margin alert; with
+     * {@code pricingBlockBelowCost} a price-level or negotiated price below cost is refused;
+     * {@code pricingRoundTo} is the default rounding step for bulk price changes.
+     */
+    @Column(name = "pricing_min_margin_percent", nullable = false, precision = 7, scale = 2,
+            columnDefinition = "numeric(7,2) default 15")
+    private BigDecimal pricingMinMarginPercent = new BigDecimal("15");
+
+    @Column(name = "pricing_block_below_cost", nullable = false, columnDefinition = "boolean default false")
+    private boolean pricingBlockBelowCost = false;
+
+    @Column(name = "pricing_round_to", nullable = false, precision = 10, scale = 2,
+            columnDefinition = "numeric(10,2) default 0.01")
+    private BigDecimal pricingRoundTo = new BigDecimal("0.01");
+
     @Transient
     private List<SalesDocumentNumberSetting> documentNumbering = new ArrayList<>();
 
@@ -227,5 +245,29 @@ public class SalesSettings {
 
     public void setDocumentNumbering(List<SalesDocumentNumberSetting> documentNumbering) {
         this.documentNumbering = documentNumbering;
+    }
+
+    public BigDecimal getPricingMinMarginPercent() {
+        return pricingMinMarginPercent;
+    }
+
+    public void setPricingMinMarginPercent(BigDecimal pricingMinMarginPercent) {
+        this.pricingMinMarginPercent = pricingMinMarginPercent != null ? pricingMinMarginPercent : new BigDecimal("15");
+    }
+
+    public boolean isPricingBlockBelowCost() {
+        return pricingBlockBelowCost;
+    }
+
+    public void setPricingBlockBelowCost(boolean pricingBlockBelowCost) {
+        this.pricingBlockBelowCost = pricingBlockBelowCost;
+    }
+
+    public BigDecimal getPricingRoundTo() {
+        return pricingRoundTo;
+    }
+
+    public void setPricingRoundTo(BigDecimal pricingRoundTo) {
+        this.pricingRoundTo = pricingRoundTo != null ? pricingRoundTo : new BigDecimal("0.01");
     }
 }

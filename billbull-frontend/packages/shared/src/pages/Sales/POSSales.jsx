@@ -4313,8 +4313,8 @@ export default function POSSales() {
   // Body of one home-screen action tile. `enabled` only drives the look (lock icon, muted
   // chip); each tile's own onClick stays the gate for what actually happens.
   const renderPosTile = ({ icon: Icon, title, desc, hint, enabled = true }) => (
-    <div className="flex h-full items-start gap-4 p-5">
-      <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl transition-colors ${enabled ? 'bg-[#FFF4D1] text-[#9A7206] group-hover:bg-[#F5C742] group-hover:text-[#1C2838]' : 'bg-gray-100 text-gray-400'}`}>
+    <div className="flex h-full items-start gap-4 p-4 xl:p-5 short:p-3.5">
+      <div className={`flex h-12 w-12 short:h-10 short:w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${enabled ? 'bg-[#FFF4D1] text-[#9A7206] group-hover:bg-[#F5C742] group-hover:text-[#1C2838]' : 'bg-gray-100 text-gray-400'}`}>
         <Icon className="h-6 w-6" />
       </div>
       <div className="min-w-0 flex-1">
@@ -4325,7 +4325,7 @@ export default function POSSales() {
             : <Lock className="h-4 w-4 shrink-0 text-gray-400" />}
         </div>
         <p className="mt-0.5 text-sm text-[#66737F]">{desc}</p>
-        {hint && <p className="mt-2 text-xs text-gray-400">{hint}</p>}
+        {hint && <p className="mt-2 short:mt-1 text-xs text-gray-400">{hint}</p>}
       </div>
     </div>
   );
@@ -4376,23 +4376,23 @@ export default function POSSales() {
       : isSessionActive ? 'Continue Selling' : 'Start Session';
 
     return (
-    <div className="flex min-h-full w-full flex-col p-4 sm:p-6 lg:p-8 2xl:px-12">
+    <div className="flex min-h-full w-full flex-col p-4 sm:p-6 lg:p-8 short:py-4 2xl:px-12">
       {/* Hero — session status and the one main action */}
-      <section className="relative mb-8 overflow-hidden rounded-3xl border border-[#FDE6A9] bg-gradient-to-br from-[#FFF8E7] via-white to-white p-7 text-[#1E1E1E] shadow-sm lg:p-9">
+      <section className="relative mb-6 xl:mb-8 short:mb-4 overflow-hidden rounded-3xl border border-[#FDE6A9] bg-gradient-to-br from-[#FFF8E7] via-white to-white p-6 text-[#1E1E1E] shadow-sm xl:p-9 short:p-5 short:xl:p-6">
         <div aria-hidden className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-[#F5C742] to-[#E5B732]" />
         <div aria-hidden className="pointer-events-none absolute inset-0 opacity-60"
           style={{ backgroundImage: 'radial-gradient(#FDE6A9 1px, transparent 1px)', backgroundSize: '18px 18px', maskImage: 'linear-gradient(to left, black, transparent 60%)' }} />
         <div aria-hidden className="pointer-events-none absolute -right-20 -top-28 h-96 w-96 rounded-full bg-[#F5C742]/20 blur-3xl" />
 
-        <div className="relative flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+        <div className="relative flex flex-col gap-6 xl:gap-8 short:gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#B45309]">
               {now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
             </p>
-            <h1 className="mt-2 text-3xl font-bold tracking-tight lg:text-4xl">
+            <h1 className="mt-2 text-3xl font-bold tracking-tight xl:text-4xl short:xl:text-3xl">
               {greeting}{cashierDisplayName ? `, ${cashierDisplayName}` : ''}
             </h1>
-            <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+            <div className="mt-4 short:mt-2 flex flex-wrap items-center gap-2 text-sm">
               <span className="inline-flex items-center gap-2 rounded-full border border-[#E2E8F0] bg-white px-3 py-1 font-medium text-[#334155]">
                 <span className={`h-2 w-2 rounded-full ${status.dot}`} />{status.label}
               </span>
@@ -4407,10 +4407,10 @@ export default function POSSales() {
                 </span>
               )}
             </div>
-            <p className="mt-4 max-w-xl text-[#64748B]">{status.text}</p>
+            <p className="mt-4 short:mt-2 max-w-xl text-[#64748B]">{status.text}</p>
 
             {isSessionActive && (
-              <div className="mt-5 flex flex-wrap gap-x-8 gap-y-2 text-sm">
+              <div className="mt-5 short:mt-3 flex flex-wrap gap-x-8 gap-y-2 text-sm">
                 <div>
                   <p className="text-xs uppercase tracking-wide text-[#94A3B8]">Opening float</p>
                   <p className="font-semibold">{formatCurrency(currentSession.openingCash)}</p>
@@ -4509,11 +4509,11 @@ export default function POSSales() {
         ];
 
         return (
-          <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:gap-6">
+          <div className="mb-6 xl:mb-8 short:mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 2xl:gap-6">
             {statCards.map((card, i) => (
-              <div key={i} className="relative overflow-hidden rounded-2xl border border-[#ECEAE4] bg-white p-5 shadow-sm">
+              <div key={i} className="relative overflow-hidden rounded-2xl border border-[#ECEAE4] bg-white p-4 xl:p-5 short:p-3 shadow-sm">
                 <div aria-hidden className="absolute inset-y-0 left-0 w-1" style={{ background: card.accent }} />
-                <div className="mb-3 flex items-center justify-between">
+                <div className="mb-3 short:mb-1 flex items-center justify-between">
                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{card.label}</p>
                   <div className="rounded-xl p-2" style={{ background: card.accent + '1A', color: card.accent }}>
                     {card.icon}
@@ -4537,7 +4537,7 @@ export default function POSSales() {
           <p className="text-xs text-gray-400">Session tools unlock once a session is open</p>
         )}
       </div>
-      <div className="grid flex-1 auto-rows-fr grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:gap-6">
+      <div className="grid flex-1 auto-rows-fr grid-cols-1 gap-4 short:gap-3 md:grid-cols-2 lg:grid-cols-3 2xl:gap-6">
         {/* X-Report Tile — generate the shift X-Report without closing the session.
             Running this clears the terminal for the end-of-day Z-Report. */}
         <Card

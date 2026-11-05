@@ -81,7 +81,6 @@ import FinancialsPrintEmailTemplates from "./pages/Financials/FinancialsPrintEma
 import PrintEmailTemplates from "./pages/Sales/PrintEmailTemplates";
 import SalesSettings from "./pages/Sales/SalesSettings";
 import PriceLevels from "./pages/Sales/PriceLevels";
-import CustomerPrices from "./pages/Sales/CustomerPrices";
 import POSSales from "@billbull/shared/pages/Sales/POSSales";
 import CashMovements from "./pages/Sales/CashMovements";
 import PurchasePrintEmailTemplates from "./pages/Purchase/PurchasePrintEmailTemplates";
@@ -636,20 +635,14 @@ function App() {
                     <Route
                       path="/sales/price-levels"
                       element={
-                        <ResourceGuard module="sales.settings">
+                        <ResourceGuard module="sales.settings" anyOf={["sales.settings", "sales.customer", "inventory.product"]}>
                           <PriceLevels />
                         </ResourceGuard>
                       }
                     />
 
-                    <Route
-                      path="/sales/customer-prices"
-                      element={
-                        <ResourceGuard module="sales.customer">
-                          <CustomerPrices />
-                        </ResourceGuard>
-                      }
-                    />
+                    {/* Customer Prices is now the Price Levels page's second tab; old links land there. */}
+                    <Route path="/sales/customer-prices" element={<Navigate to="/sales/price-levels?tab=customers" replace />} />
 
                     <Route
                       path="/sales/settings"

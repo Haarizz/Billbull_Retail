@@ -100,6 +100,14 @@ public class ProformaInvoice  implements com.billbull.backend.common.ownership.O
     private String paymentReference;
     private String paymentNotes;
 
+    /**
+     * Terms & Conditions printed on this proforma invoice (V132). Pre-filled from the default print template
+     * of its category and editable per document. Null (proforma invoices saved before V132) prints the
+     * template's own terms; an empty string prints none.
+     */
+    @Column(name = "terms_conditions", columnDefinition = "TEXT")
+    private String termsConditions;
+
     // ---- Audit ----
     private LocalDateTime createdAt;
     private LocalDateTime issuedAt;
@@ -332,6 +340,9 @@ public class ProformaInvoice  implements com.billbull.backend.common.ownership.O
 	public void setPaymentNotes(String paymentNotes) {
 		this.paymentNotes = paymentNotes;
 	}
+
+	public String getTermsConditions() { return termsConditions; }
+	public void setTermsConditions(String termsConditions) { this.termsConditions = termsConditions; }
 
 	public void setCreatedAt(LocalDateTime createdAt) {
 		this.createdAt = createdAt;

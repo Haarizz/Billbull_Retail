@@ -59,6 +59,9 @@ describe("StyledInvoiceDesigner", () => {
         renderDesigner();
         await waitFor(() => expect(generatePrintHtmlAsync).toHaveBeenCalled());
 
+        // Stamp and QR start off, so the group switch first turns everything on.
+        await user.click(screen.getByRole("switch", { name: "Show all in Footer" }));
+        expect(screen.getByText("5/5")).toBeInTheDocument();
         await user.click(screen.getByRole("switch", { name: "Hide all in Footer" }));
 
         await waitFor(() => {
@@ -67,7 +70,7 @@ describe("StyledInvoiceDesigner", () => {
             expect(settings.showThankYou).toBe(false);
             expect(settings.showContactLine).toBe(false);
         });
-        expect(screen.getByText("0/3")).toBeInTheDocument();
+        expect(screen.getByText("0/5")).toBeInTheDocument();
     });
 
     it("filters sections by name", async () => {
@@ -99,6 +102,31 @@ describe("StyledInvoiceDesigner", () => {
         renderDesigner();
         await user.click(screen.getByRole("button", { name: /Test print/ }));
         await waitFor(() => expect(printHtml).toHaveBeenCalledWith("<html><body>preview</body></html>"));
+    });
+
+    it("uploads a template logo and stamp and turns the stamp on from the Branding panel", async () => {
+        const user = userEvent.setup();
+        const { onSave } = renderDesigner();
+        await user.click(screen.getByRole("button", { name: /Branding/ }));
+
+        const png = (name) => new File([new Uint8Array([137, 80, 78, 71])], name, { type: "image/png" });
+        await user.upload(screen.getByLabelText("Upload Company Logo"), png("logo.png"));
+        await user.upload(screen.getByLabelText("Upload Company Stamp"), png("stamp.png"));
+        await user.click(screen.getByRole("switch", { name: "Show Company Stamp" }));
+        await user.click(screen.getByRole("switch", { name: "Show Watermark" }));
+        await user.clear(screen.getByLabelText("Watermark text"));
+        await user.type(screen.getByLabelText("Watermark text"), "COPY");
+
+        await waitFor(() => {
+            const settings = lastSettings();
+            expect(settings.logoUrl).toMatch(/^data:image\/png;base64,/);
+            expect(settings.stampUrl).toMatch(/^data:image\/png;base64,/);
+            expect(settings.showCompanyStamp).toBe(true);
+            expect(settings.watermarkText).toBe("COPY");
+        });
+
+        await user.click(screen.getByRole("button", { name: /Save Template/ }));
+        expect(onSave.mock.calls[0][0]).toMatchObject({ showCompanyStamp: true, showWatermark: true, watermarkText: "COPY" });
     });
 
     it("saves the edited settings with the layout style", async () => {

@@ -9,7 +9,7 @@ import {
 } from "react-icons/fa";
 import {
   HelpCircle, Phone, MessageSquare, Building2, Layers,
-  Tag, Handshake, Scale, Package, Warehouse, ClipboardList,
+  Tag, Scale, Package, Warehouse, ClipboardList,
   ArrowRightLeft, Barcode, BookUser, FileText, ShoppingCart,
   File, FileSpreadsheet, Truck, Undo2, CreditCard,
   Printer, Settings, FilePlus, Inbox, BookOpen,
@@ -181,8 +181,7 @@ const Sidebar = ({ children }) => {
         { path: "/sales/payment",       label: "Payments",              module: "sales.payment",  icon: <CreditCard size={14} /> },
         { path: "/sales/templates",     label: "Print & Email Templates",module: "sales.templates",icon: <Printer size={14} /> },
         { path: "/sales/reports",        label: "Reports",              module: "sales.reports",  icon: <PieChart size={14} /> },
-        { path: "/sales/price-levels",  label: "Price Levels",          module: "sales.settings", icon: <Tag size={14} /> },
-        { path: "/sales/customer-prices", label: "Customer Prices",     module: "sales.customer", icon: <Handshake size={14} /> },
+        { path: "/sales/price-levels",  label: "Price Levels",          module: "sales.settings", anyModules: ["sales.settings", "sales.customer", "inventory.product"], icon: <Tag size={14} /> },
         { path: "/sales/settings",      label: "Configure & customize", module: "sales.settings", icon: <Settings size={14} /> },
       ],
     },
@@ -818,7 +817,7 @@ const Sidebar = ({ children }) => {
               // individually-permitted child; the per-child `canView(sub.module)` check below
               // still governs exactly which items render inside it.
               if (item.isDropdown && Array.isArray(item.subItems)) {
-                return canView(item.module) || item.subItems.some(sub => !sub.module || canView(sub.module));
+                return canView(item.module) || item.subItems.some(sub => !sub.module || (sub.anyModules ? sub.anyModules.some(canView) : canView(sub.module)));
               }
               return canView(item.module);
             })
@@ -848,7 +847,7 @@ const Sidebar = ({ children }) => {
                         <div className="submenu-inner">
                           <div className="sub-menu">
                             {item.subItems
-                              .filter(sub => !sub.module || canView(sub.module))
+                              .filter(sub => !sub.module || (sub.anyModules ? sub.anyModules.some(canView) : canView(sub.module)))
                               .map((sub, i) => (
                                 <NavLink
                                   key={i}

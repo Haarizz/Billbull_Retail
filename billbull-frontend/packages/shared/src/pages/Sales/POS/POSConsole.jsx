@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, Layers, MoreHorizontal } from 'lucide-react';
+import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, Layers, MoreHorizontal, Usb, Network, Bluetooth, Cable, ScanBarcode, Tag, Inbox, Receipt, Check } from 'lucide-react';
 import { UAParser } from 'ua-parser-js';
 import { usePermissions } from '../../../context/PermissionContext';
 import { formatDistanceToNow, parseISO } from 'date-fns';
@@ -240,18 +240,17 @@ const POSConsole = React.memo((props) => {
     // Add New Device modal option set (mockup). Printer sub-types map to the
     // existing PosPrinter flow; scanner/cash-drawer hit their own endpoints.
     const addDeviceTypeOptions = [
-      { value: 'RECEIPT_PRINTER', label: 'Receipt Printer', kind: 'printer' },
-      { value: 'KITCHEN_PRINTER', label: 'Kitchen Printer', kind: 'printer' },
-      { value: 'LABEL_PRINTER',   label: 'Label Printer',   kind: 'printer' },
-      { value: 'SCANNER',         label: 'Barcode Scanner', kind: 'scanner' },
-      { value: 'CASH_DRAWER',     label: 'Cash Drawer',     kind: 'drawer' },
+      { value: 'RECEIPT_PRINTER', label: 'Receipt Printer', short: 'Receipt', kind: 'printer', icon: Receipt },
+      { value: 'LABEL_PRINTER',   label: 'Label Printer',   short: 'Label',   kind: 'printer', icon: Tag },
+      { value: 'SCANNER',         label: 'Barcode Scanner', short: 'Scanner', kind: 'scanner', icon: ScanBarcode },
+      { value: 'CASH_DRAWER',     label: 'Cash Drawer',     short: 'Drawer',  kind: 'drawer',  icon: Inbox },
     ];
     const addDeviceConnectionOptions = [
-      { value: 'USB', label: 'USB' },
-      { value: 'COM_PORT', label: 'COM Port' },
-      { value: 'NETWORK_IP', label: 'Network / IP' },
-      { value: 'BLUETOOTH', label: 'Bluetooth' },
-      { value: 'SERIAL', label: 'Serial' },
+      { value: 'USB', label: 'USB', icon: Usb },
+      { value: 'NETWORK_IP', label: 'Network / IP', icon: Network },
+      { value: 'BLUETOOTH', label: 'Bluetooth', icon: Bluetooth },
+      { value: 'COM_PORT', label: 'COM Port', icon: Cable },
+      { value: 'SERIAL', label: 'Serial', icon: Cable },
     ];
     const addDeviceKind = addDeviceTypeOptions.find((t) => t.value === addDeviceForm.deviceType)?.kind || 'printer';
 
@@ -1242,76 +1241,205 @@ const POSConsole = React.memo((props) => {
 
               {/* ── Add New Device (minimal modal → full edit for printers) ── */}
               {addDeviceOpen && (
-                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40" onMouseDown={()=>setAddDeviceOpen(false)}>
-                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onMouseDown={(e)=>e.stopPropagation()}>
-                    <div className="flex items-center justify-between mb-5">
-                      <h3 className="text-base font-bold text-[#1E293B]">Add New Device</h3>
-                      <button onClick={()=>setAddDeviceOpen(false)}><X className="h-5 w-5 text-gray-400" /></button>
+                (() => {
+                  const fieldLabel = 'block text-[11px] font-semibold text-gray-500 mb-1.5';
+                  const inputCls = 'w-full h-11 border border-gray-200 rounded-xl px-3.5 text-sm text-[#1E293B] placeholder:text-gray-300 focus:outline-none focus:border-[#F5C742] focus:ring-4 focus:ring-[#F5C742]/15 transition';
+                  const typeMeta = addDeviceTypeOptions.find(t => t.value === addDeviceForm.deviceType) || addDeviceTypeOptions[0];
+                  const connOptions = addDeviceKind === 'scanner'
+                    ? addDeviceConnectionOptions.filter(o => o.value === 'USB' || o.value === 'BLUETOOTH')
+                    : addDeviceConnectionOptions;
+                  const isNetworkPrinter = addDeviceKind === 'printer' && addDeviceForm.connectionType === 'NETWORK_IP' && addDeviceForm.deviceType !== 'LABEL_PRINTER';
+                  const needsSystemName = addDeviceKind === 'printer' && !isNetworkPrinter;
+                  const configuredNames = new Set((Array.isArray(printerConfigs) ? printerConfigs : []).map(p => (p.systemPrinterName || '').toLowerCase()).filter(Boolean));
+                  const drawerPrinters = (Array.isArray(printerConfigs) ? printerConfigs : []).filter(p => p.status === 'ACTIVE');
+                  const where = [currentTerminal?.terminalName || currentTerminal?.terminalId, currentTerminal?.counterName].filter(Boolean).join(' · ');
+                  const close = () => setAddDeviceOpen(false);
+                  return (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/50 backdrop-blur-[2px] p-4" onMouseDown={close}
+                  onKeyDown={(e) => { if (e.key === 'Escape') close(); }}>
+                  <div role="dialog" aria-modal="true" aria-labelledby="bb-add-device-title"
+                    className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden" onMouseDown={(e)=>e.stopPropagation()}>
+                    {/* Header */}
+                    <div className="flex items-start gap-3 px-6 pt-5 pb-4 border-b border-gray-100">
+                      <div className="h-10 w-10 shrink-0 rounded-xl bg-[#FFF8E7] border border-[#FDE6A9] flex items-center justify-center">
+                        <typeMeta.icon className="h-5 w-5 text-[#8a6d0a]" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 id="bb-add-device-title" className="text-base font-bold text-[#1E293B] leading-tight">Add New Device</h3>
+                        <p className="text-xs text-gray-400 mt-0.5 truncate">{where ? <>Registers on <span className="font-semibold text-gray-500">{where}</span></> : 'Registers on this branch'}</p>
+                      </div>
+                      <button type="button" onClick={close} aria-label="Close" className="h-8 w-8 -mr-1.5 rounded-lg flex items-center justify-center text-gray-400 hover:bg-gray-100 hover:text-gray-600"><X className="h-4 w-4" /></button>
                     </div>
-                    <div className="space-y-4">
+
+                    {/* Body */}
+                    <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
                       <div>
-                        <label className="text-[10px] font-bold text-gray-400 uppercase">Device Type</label>
-                        <select value={addDeviceForm.deviceType} onChange={e=>setAddDeviceForm(f => ({ ...f, deviceType: e.target.value, attachedPrinterId: '' }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
-                          {addDeviceTypeOptions.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
-                        </select>
+                        <span className={fieldLabel}>What are you adding?</span>
+                        <div className="grid grid-cols-4 gap-2" role="radiogroup">
+                          {addDeviceTypeOptions.map(t => {
+                            const active = t.value === addDeviceForm.deviceType;
+                            const Icon = t.icon;
+                            return (
+                              <button key={t.value} type="button" role="radio" aria-checked={active} title={t.label}
+                                onClick={() => setAddDeviceForm(f => ({
+                                  ...f, deviceType: t.value, attachedPrinterId: '',
+                                  connectionType: t.kind === 'scanner' && !['USB', 'BLUETOOTH'].includes(f.connectionType) ? 'USB' : f.connectionType,
+                                }))}
+                                className={`flex flex-col items-center gap-1.5 rounded-xl border px-1 py-3 transition ${active
+                                  ? 'border-[#F5C742] bg-[#FFF8E7] text-[#1E293B] ring-2 ring-[#F5C742]/30'
+                                  : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50'}`}>
+                                <Icon className={`h-5 w-5 ${active ? 'text-[#8a6d0a]' : 'text-gray-400'}`} />
+                                <span className="text-[11px] font-semibold leading-none">{t.short}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
+
                       <div>
-                        <label className="text-[10px] font-bold text-gray-400 uppercase">Device Name / Model</label>
-                        <input value={addDeviceForm.deviceName} onChange={e=>setAddDeviceForm(f => ({ ...f, deviceName: e.target.value }))} placeholder="e.g. Epson TM-T82III" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]" />
+                        <label htmlFor="bb-add-device-name" className={fieldLabel}>Name / model</label>
+                        <input id="bb-add-device-name" autoFocus value={addDeviceForm.deviceName} onChange={e=>setAddDeviceForm(f => ({ ...f, deviceName: e.target.value }))}
+                          placeholder={addDeviceKind === 'scanner' ? 'e.g. Honeywell Voyager 1250g' : addDeviceKind === 'drawer' ? 'e.g. Front counter drawer' : 'e.g. Epson TM-T82III'} className={inputCls} />
                       </div>
+
                       {addDeviceKind === 'drawer' ? (
                         <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Attached Printer</label>
-                          <select value={addDeviceForm.attachedPrinterId} onChange={e=>setAddDeviceForm(f => ({ ...f, attachedPrinterId: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
-                            <option value="">Select receipt printer…</option>
-                            {(Array.isArray(printerConfigs) ? printerConfigs : []).filter(p=>p.status==='ACTIVE').map(p=>(
-                              <option key={p.id} value={p.id}>{p.deviceName}</option>
-                            ))}
-                          </select>
-                          <p className="text-[11px] text-gray-400 mt-1">The drawer kick rides the printer's cable, so it must be linked to a printer.</p>
+                          <span className={fieldLabel}>Wired to printer</span>
+                          {drawerPrinters.length === 0 ? (
+                            <div className="rounded-xl border border-dashed border-gray-200 px-4 py-5 text-center text-xs text-gray-400">Add a receipt printer first — the drawer opens through it.</div>
+                          ) : (
+                            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                              {drawerPrinters.map(p => {
+                                const active = String(addDeviceForm.attachedPrinterId) === String(p.id);
+                                return (
+                                  <button key={p.id} type="button" onClick={() => setAddDeviceForm(f => ({ ...f, attachedPrinterId: String(p.id) }))}
+                                    className={`w-full flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition ${active ? 'border-[#F5C742] bg-[#FFF8E7]' : 'border-gray-200 hover:bg-gray-50'}`}>
+                                    <Printer className={`h-4 w-4 shrink-0 ${active ? 'text-[#8a6d0a]' : 'text-gray-400'}`} />
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block text-sm font-semibold text-[#1E293B] truncate">{p.deviceName}</span>
+                                      <span className="block text-[11px] text-gray-400 truncate">{connectionLabel(p.connectionType)}{p.systemPrinterName ? ` · ${p.systemPrinterName}` : p.ipAddress ? ` · ${p.ipAddress}` : ''}</span>
+                                    </span>
+                                    {active && <Check className="h-4 w-4 text-[#8a6d0a] shrink-0" />}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                          <p className="text-[11px] text-gray-400 mt-1.5">The drawer kick rides the printer's cable, so it must be linked to a printer.</p>
                         </div>
                       ) : (
                         <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Connection</label>
-                          <select value={addDeviceForm.connectionType} onChange={e=>setAddDeviceForm(f => ({ ...f, connectionType: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
-                            {(addDeviceKind === 'scanner'
-                              ? addDeviceConnectionOptions.filter(o => o.value === 'USB' || o.value === 'BLUETOOTH')
-                              : addDeviceConnectionOptions
-                            ).map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
-                          </select>
+                          <span className={fieldLabel}>Connection</span>
+                          <div className="flex flex-wrap gap-1.5" role="radiogroup">
+                            {connOptions.map(o => {
+                              const active = o.value === addDeviceForm.connectionType;
+                              const Icon = o.icon;
+                              return (
+                                <button key={o.value} type="button" role="radio" aria-checked={active}
+                                  onClick={() => setAddDeviceForm(f => ({ ...f, connectionType: o.value }))}
+                                  className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-xs font-semibold transition ${active
+                                    ? 'border-[#F5C742] bg-[#FFF8E7] text-[#1E293B]'
+                                    : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                                  <Icon className={`h-3.5 w-3.5 ${active ? 'text-[#8a6d0a]' : 'text-gray-400'}`} />{o.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {addDeviceKind === 'scanner' && (
+                            <p className="text-[11px] text-gray-400 mt-1.5">Scanners type into the till like a keyboard — no driver or agent needed.</p>
+                          )}
                         </div>
                       )}
-                      {addDeviceKind === 'printer' && addDeviceForm.connectionType === 'NETWORK_IP' && addDeviceForm.deviceType !== 'LABEL_PRINTER' ? (
-                        <div className="grid grid-cols-3 gap-3">
-                          <div className="col-span-2">
-                            <label className="text-[10px] font-bold text-gray-400 uppercase">IP Address</label>
-                            <input value={addDeviceForm.ipAddress} onChange={e=>setAddDeviceForm(f => ({ ...f, ipAddress: e.target.value }))} placeholder="192.168.1.50" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]" />
-                          </div>
-                          <div>
-                            <label className="text-[10px] font-bold text-gray-400 uppercase">Port</label>
-                            <input value={addDeviceForm.portNumber} onChange={e=>setAddDeviceForm(f => ({ ...f, portNumber: e.target.value.replace(/[^0-9]/g, '') }))} placeholder="9100" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]" />
-                          </div>
-                        </div>
-                      ) : addDeviceKind === 'printer' ? (
+
+                      {isNetworkPrinter && (
                         <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">System Printer Name</label>
-                          <input value={addDeviceForm.systemPrinterName} onChange={e=>setAddDeviceForm(f => ({ ...f, systemPrinterName: e.target.value }))} placeholder="Installed Windows printer name" list="bb-add-device-printers" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]" />
-                          <datalist id="bb-add-device-printers">
-                            {agentPrinters.map((p) => <option key={p.name} value={p.name} />)}
-                          </datalist>
-                          <p className="text-[11px] text-gray-400 mt-1">Pick a detected printer above, then finish paper size in the next step. {agentPrinters.length === 0 && 'Click "Load Workstation Printers" to detect installed printers.'}</p>
+                          <div className="grid grid-cols-3 gap-3">
+                            <div className="col-span-2">
+                              <label htmlFor="bb-add-device-ip" className={fieldLabel}>IP address</label>
+                              <input id="bb-add-device-ip" value={addDeviceForm.ipAddress} onChange={e=>setAddDeviceForm(f => ({ ...f, ipAddress: e.target.value }))} placeholder="192.168.1.50" className={`${inputCls} font-mono`} />
+                            </div>
+                            <div>
+                              <label htmlFor="bb-add-device-port" className={fieldLabel}>Port</label>
+                              <input id="bb-add-device-port" inputMode="numeric" value={addDeviceForm.portNumber} onChange={e=>setAddDeviceForm(f => ({ ...f, portNumber: e.target.value.replace(/[^0-9]/g, '') }))} placeholder="9100" className={`${inputCls} font-mono`} />
+                            </div>
+                          </div>
+                          <p className="flex items-start gap-1.5 text-[11px] text-gray-400 mt-1.5"><Info className="h-3.5 w-3.5 shrink-0 mt-px" />Network printers print through the server, so they work from any device without the print agent.</p>
                         </div>
-                      ) : null}
-                      {addDeviceError && <p className="text-xs text-red-500">{addDeviceError}</p>}
+                      )}
+
+                      {needsSystemName && (
+                        <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[11px] font-semibold text-gray-500">Printer on this PC</span>
+                            <button type="button" onClick={refreshAgentPrinters} disabled={agentLoading}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-gray-500 hover:text-[#1E293B] disabled:opacity-60">
+                              <RefreshCw className={`h-3 w-3 ${agentLoading ? 'animate-spin' : ''}`} />{agentLoading ? 'Scanning…' : 'Rescan'}
+                            </button>
+                          </div>
+                          {agentPrinters.length > 0 ? (
+                            <div className="space-y-1.5 max-h-52 overflow-y-auto pr-0.5">
+                              {agentPrinters.map(p => {
+                                const name = p.name || '';
+                                const active = name && addDeviceForm.systemPrinterName.trim().toLowerCase() === name.toLowerCase();
+                                const added = configuredNames.has(name.toLowerCase());
+                                const proto = p.agentProtocol;
+                                const tag = proto === 'escpos' ? { t: 'ESC/POS', c: 'bg-gray-100 text-gray-600' }
+                                  : proto === 'zpl' ? { t: 'ZPL', c: 'bg-gray-100 text-gray-600' }
+                                  : proto === 'conflict' ? { t: 'Conflict', c: 'bg-red-50 text-red-600' }
+                                  : proto === null ? { t: 'Not set up', c: 'bg-amber-50 text-amber-700' }
+                                  : null;
+                                return (
+                                  <button key={`${name}-${p.portName || ''}`} type="button"
+                                    onClick={() => setAddDeviceForm(f => ({ ...f, systemPrinterName: name, deviceName: f.deviceName.trim() ? f.deviceName : name }))}
+                                    className={`w-full flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition ${active ? 'border-[#F5C742] bg-[#FFF8E7]' : 'border-gray-200 hover:bg-gray-50'}`}>
+                                    <span className={`h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center ${active ? 'border-[#F5C742] bg-[#F5C742]' : 'border-gray-300'}`}>
+                                      {active && <Check className="h-2.5 w-2.5 text-[#1E293B]" strokeWidth={4} />}
+                                    </span>
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block text-sm font-semibold text-[#1E293B] truncate" title={name}>{name || 'Unknown printer'}</span>
+                                      <span className="block text-[11px] text-gray-400 truncate">{p.driverName || 'Driver unknown'}{p.portName ? ` · ${p.portName}` : ''}</span>
+                                    </span>
+                                    <span className="flex flex-col items-end gap-1 shrink-0">
+                                      {tag && <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${tag.c}`}>{tag.t}</span>}
+                                      {added && <span className="text-[9px] font-bold uppercase tracking-wider text-green-700">Already added</span>}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="rounded-xl border border-dashed border-gray-200 px-4 py-4 text-center text-xs text-gray-400">
+                              {agentLoading ? 'Looking for printers…' : 'No printers detected. Make sure the print agent is running and paired, or type the name below.'}
+                            </div>
+                          )}
+                          <input value={addDeviceForm.systemPrinterName} onChange={e=>setAddDeviceForm(f => ({ ...f, systemPrinterName: e.target.value }))}
+                            placeholder="…or type the installed Windows printer name" aria-label="System printer name"
+                            className={`${inputCls} mt-2 h-10 text-xs`} />
+                        </div>
+                      )}
+
+                      {addDeviceError && (
+                        <div className="flex items-start gap-2 rounded-xl bg-red-50 border border-red-100 px-3 py-2.5 text-xs text-red-600">
+                          <AlertTriangle className="h-4 w-4 shrink-0" /><span>{addDeviceError}</span>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center justify-end gap-3 mt-6">
-                      <button type="button" onClick={()=>setAddDeviceOpen(false)} className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50">Cancel</button>
-                      <button type="button" onClick={submitAddDevice} disabled={addDeviceSaving} className="flex items-center gap-2 bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold text-sm px-4 py-2.5 rounded-xl transition-colors disabled:opacity-60">
-                        <Plus className="h-4 w-4" />{addDeviceSaving ? 'Adding…' : 'Add Device'}
+
+                    {/* Footer */}
+                    <div className="flex items-center gap-3 px-6 py-4 border-t border-gray-100 bg-gray-50/60">
+                      <p className="flex-1 min-w-0 text-[11px] text-gray-400 leading-snug">
+                        {addDeviceKind === 'printer' ? 'Paper size and template come next.' : ''}
+                      </p>
+                      <button type="button" onClick={close} className="h-10 px-4 rounded-xl border border-gray-200 bg-white text-gray-600 text-sm font-semibold hover:bg-gray-50">Cancel</button>
+                      <button type="button" onClick={submitAddDevice} disabled={addDeviceSaving} className="h-10 flex items-center gap-2 bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold text-sm px-4 rounded-xl shadow-sm transition-colors disabled:opacity-60">
+                        {addDeviceSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                        {addDeviceSaving ? 'Adding…' : addDeviceKind === 'printer' ? 'Continue' : `Add ${typeMeta.short.toLowerCase()}`}
                       </button>
                     </div>
                   </div>
                 </div>
+                  );
+                })()
               )}
 
               {printerDialogOpen && (

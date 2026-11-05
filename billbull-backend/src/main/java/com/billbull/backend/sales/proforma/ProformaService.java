@@ -314,6 +314,9 @@ public class ProformaService {
         pi.setAdvancePaid(req.advancePaid != null ? req.advancePaid : BigDecimal.ZERO);
         pi.setPaymentReference(req.paymentReference);
         pi.setPaymentNotes(req.paymentNotes);
+        if (req.termsConditions != null) {
+            pi.setTermsConditions(req.termsConditions);
+        }
 
         boolean taxInclusive = Boolean.TRUE.equals(req.taxInclusive);
         pi.setTaxInclusive(taxInclusive);
@@ -446,6 +449,7 @@ public class ProformaService {
 
         res.setPaymentMethod(pi.getPaymentMethod());
         res.setPaymentNotes(pi.getPaymentNotes());
+        res.setTermsConditions(pi.getTermsConditions());
 
         res.setStatus(pi.getStatus());
         res.setRevisionNo(pi.getRevisionNo());

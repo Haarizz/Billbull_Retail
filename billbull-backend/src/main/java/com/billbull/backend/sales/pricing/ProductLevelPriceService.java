@@ -55,6 +55,14 @@ public class ProductLevelPriceService {
         this.priceChangeRepository = priceChangeRepository;
     }
 
+    /** Pricing rules (below-cost guard); setter-injected so hand-built tests keep compiling. */
+    private PricingRulesService rules;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRules(PricingRulesService rules) {
+        this.rules = rules;
+    }
+
     /** One cell: a product's price under a level for a branch (null = all branches). Null price = remove. */
     public static class PriceRow {
         private Long productId;
@@ -192,6 +200,8 @@ public class ProductLevelPriceService {
             if (before == null || before.compareTo(price) != 0) audit.add(change(r, level, before, price));
         }
 
+        assertNotBelowCost(toSave, levels, products);
+
         if (!toDelete.isEmpty()) {
             repository.deleteAll(toDelete);
             repository.flush();
@@ -200,6 +210,29 @@ public class ProductLevelPriceService {
         if (!audit.isEmpty()) priceChangeRepository.saveAll(audit);
 
         return listForProducts(productIds);
+    }
+
+    /** With "block below cost" on, refuses any saved price below the product's branch-effective cost. */
+    private void assertNotBelowCost(List<ProductLevelPrice> toSave, Map<Long, PriceLevel> levels, Map<Long, Product> products) {
+        if (rules == null || toSave.isEmpty() || !rules.get().blockBelowCost()) return;
+        Map<Long, List<ProductLevelPrice>> byBranch = new HashMap<>();
+        for (ProductLevelPrice row : toSave) {
+            byBranch.computeIfAbsent(row.getBranchId() == null ? -1L : row.getBranchId(), b -> new ArrayList<>()).add(row);
+        }
+        for (Map.Entry<Long, List<ProductLevelPrice>> e : byBranch.entrySet()) {
+            Long branchId = e.getKey() == -1L ? null : e.getKey();
+            Map<Long, PricingRulesService.Costs> costs = rules.costs(
+                    e.getValue().stream().map(ProductLevelPrice::getProductId).toList(), branchId);
+            for (ProductLevelPrice row : e.getValue()) {
+                PricingRulesService.Costs c = costs.get(row.getProductId());
+                if (c != null && c.hasCost() && row.getPrice().compareTo(c.cost()) < 0) {
+                    PriceLevel level = levels.get(row.getPriceLevelId());
+                    Product product = products.get(row.getProductId());
+                    throw PricingRulesService.belowCost("The " + (level != null ? level.getName() : "level") + " price",
+                            product != null ? product.getCode() : "product " + row.getProductId());
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------------
