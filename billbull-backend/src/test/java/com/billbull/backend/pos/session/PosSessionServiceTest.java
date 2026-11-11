@@ -1354,6 +1354,39 @@ class PosSessionServiceTest {
     }
 
     @Test
+    void openSessionReleasesLockLeftByClosedSessionAndRetries() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        com.billbull.backend.pos.terminal.PosTerminal terminal = terminal(99L, 5L, "Counter 1");
+        when(terminalRepository.findByTerminalId("T1")).thenReturn(Optional.of(terminal));
+        when(terminalRepository.setOpenSession(eq(99L), any())).thenReturn(0, 1);
+        when(terminalRepository.clearStaleOpenSession(99L)).thenReturn(1);
+        when(sessionTerminalHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        verify(terminalRepository, org.mockito.Mockito.times(2)).setOpenSession(eq(99L), any());
+        verify(repo, org.mockito.Mockito.never()).delete(any(PosSession.class));
+    }
+
+    @Test
+    void openSessionStillRefusesTerminalHeldByLiveSession() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        com.billbull.backend.pos.terminal.PosTerminal terminal = terminal(99L, 5L, "Counter 1");
+        when(terminalRepository.findByTerminalId("T1")).thenReturn(Optional.of(terminal));
+        when(terminalRepository.setOpenSession(eq(99L), any())).thenReturn(0);
+        when(terminalRepository.clearStaleOpenSession(99L)).thenReturn(0);
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        assertTrue(ex.getReason().contains("already occupied"));
+        verify(terminalRepository, org.mockito.Mockito.times(1)).setOpenSession(eq(99L), any());
+    }
+
+    @Test
     void openSessionStampsOwnerUserId() {
         LocalDate businessDate = LocalDate.of(2026, 1, 1);
         stubOpenSessionPreconditions(1L, businessDate, "T1");
