@@ -557,6 +557,13 @@ public class PosSessionService {
         // Atomically acquire terminal lock (DB partial unique index is the concurrency safety net)
         if (terminal != null) {
             int acquired = terminalRepository.setOpenSession(terminal.getId(), saved.getId());
+            // A lock left behind by a session that is already closed blocks nothing real —
+            // release it and retry once instead of refusing the till.
+            if (acquired == 0 && terminalRepository.clearStaleOpenSession(terminal.getId()) > 0) {
+                log.warn("[PosSession] Terminal {} was locked to a closed/missing session; released it",
+                        terminal.getTerminalId());
+                acquired = terminalRepository.setOpenSession(terminal.getId(), saved.getId());
+            }
             if (acquired == 0) {
                 repo.delete(saved);
                 throw new ResponseStatusException(HttpStatus.CONFLICT,

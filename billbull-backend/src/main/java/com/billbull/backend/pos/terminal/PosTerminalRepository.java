@@ -53,6 +53,16 @@ public interface PosTerminalRepository extends JpaRepository<PosTerminal, Long> 
            nativeQuery = true)
     int clearOpenSession(@Param("terminalId") Long terminalId, @Param("sessionId") Long sessionId);
 
+    /** Releases a lock held by a session that is no longer OPEN/SUSPENDED (or no longer
+     *  exists). Returns 1 if a stale lock was cleared; a live session's lock is never touched. */
+    @Modifying
+    @Query(value = "UPDATE pos_terminals t SET current_open_session_id = NULL " +
+                   "WHERE t.id = :terminalId AND t.current_open_session_id IS NOT NULL " +
+                   "AND NOT EXISTS (SELECT 1 FROM pos_sessions s WHERE s.id = t.current_open_session_id " +
+                   "AND s.status IN ('OPEN', 'SUSPENDED'))",
+           nativeQuery = true)
+    int clearStaleOpenSession(@Param("terminalId") Long terminalId);
+
     // Pending-registration terminals for a branch (awaiting supervisor approval)
     List<PosTerminal> findByBranchIdAndRegistrationStatus(Long branchId, String registrationStatus);
 

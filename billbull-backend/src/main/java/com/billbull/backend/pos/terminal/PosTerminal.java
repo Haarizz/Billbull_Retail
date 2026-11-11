@@ -76,8 +76,11 @@ public class PosTerminal extends BaseEntity {
     private String registrationStatus = "APPROVED";
 
     // Holds the session ID of the currently OPEN session — null when terminal is free.
-    // Updated atomically in PosTerminalRepository.setOpenSession / clearOpenSession.
-    @Column(name = "current_open_session_id")
+    // Updated atomically in PosTerminalRepository.setOpenSession / clearOpenSession only.
+    // Read-only to JPA: a terminal loaded before a session close and saved after it
+    // (heartbeat, rename, schedulers) used to write the old session id back, leaving the
+    // terminal locked to a CLOSED session ("Terminal is already occupied").
+    @Column(name = "current_open_session_id", insertable = false, updatable = false)
     private Long currentOpenSessionId;
 
     // Soft-archive fields (ARCHIVED status) — temporary, reversible via restore().
