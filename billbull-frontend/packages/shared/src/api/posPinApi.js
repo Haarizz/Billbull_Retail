@@ -9,9 +9,16 @@ export const posPasswordLogin = async (username, password) => {
   return res.data;
 };
 
-/** { deviceId, branchId, branchName, label, staff: [{ employeeId, name, initials, role, avatarUrl }] } */
-export const fetchPinStaff = async (deviceToken) => {
-  const res = await api.post("/api/auth/pos/pin/staff", { deviceToken });
+/**
+ * { deviceId, branchId, branchName, label,
+ *   staff: [{ employeeId, employeeCode, name, initials, role, avatarUrl, pinLength }],
+ *   openSession: { employeeId, openedAt, counterName } | null }
+ * terminalId (optional) is this PC's registered terminal; the server only uses it when the till
+ * was enrolled without one, and only within the till's branch.
+ */
+export const fetchPinStaff = async (deviceToken, terminalId) => {
+  const body = terminalId ? { deviceToken, terminalId } : { deviceToken };
+  const res = await api.post("/api/auth/pos/pin/staff", body);
   return res.data;
 };
 

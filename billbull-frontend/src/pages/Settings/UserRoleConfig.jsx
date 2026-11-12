@@ -70,6 +70,7 @@ const MODULES = [
     color: 'text-orange-500',
     resources: [
       { key: 'purchases.vendor',    label: 'Vendor Ledger & Registry' },
+      { key: 'purchases.rfq',      label: 'Vendor Price Shares (RFQs)' },
       { key: 'purchases.lpo',      label: 'LPOs & Approvals' },
       { key: 'purchases.grn',      label: 'GRN / Goods Receipt' },
       { key: 'purchases.invoice',  label: 'Purchase Invoices' },

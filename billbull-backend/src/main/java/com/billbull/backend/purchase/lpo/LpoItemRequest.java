@@ -29,6 +29,21 @@ public class LpoItemRequest {
     private Integer focQty;
     private String focUnit;
 
+    /**
+     * Optional VAT % for this line. When null on an update, a rate already stored on the line
+     * for the same product is kept (the LPO screen does not send it); when there is none, the
+     * product's purchase tax applies.
+     */
+    private BigDecimal purchaseTax;
+
+    public BigDecimal getPurchaseTax() {
+        return purchaseTax;
+    }
+
+    public void setPurchaseTax(BigDecimal purchaseTax) {
+        this.purchaseTax = purchaseTax;
+    }
+
     public Long getId() {
         return id;
     }

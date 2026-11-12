@@ -47,6 +47,9 @@ public class SecurityConfig {
                         // Meta's WhatsApp webhook carries no JWT; WhatsAppController authenticates it with
                         // the verify token (GET) and the X-Hub-Signature-256 HMAC (POST).
                         .requestMatchers("/api/whatsapp/webhook").permitAll()
+                        // RFQ vendor portal: no JWT; RfqPortalService checks the per-vendor link
+                        // secret + emailed one-time code, then an X-Vendor-Session token.
+                        .requestMatchers("/api/vendor-portal/**").permitAll()
                         .anyRequest().authenticated())
                 // Without an explicit entry point Spring falls back to Http403ForbiddenEntryPoint,
                 // so a missing/expired JWT came back as 403 — indistinguishable from a real

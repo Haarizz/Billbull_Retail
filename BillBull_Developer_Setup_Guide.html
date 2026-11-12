@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BillBull Developer Setup</title>
+<meta name="description" content="How to clone BillBull Retail from GitHub, check and install the prerequisites, and run the backend, frontend and POS print agent locally.">
+<style>
+:root {
+  --bg: #ffffff;
+  --surface: #f7f7f5;
+  --surface-2: #FFF8E7;
+  --border: #e4e4e0;
+  --accent-border: #FDE6A9;
+  --text: #1c1c1a;
+  --muted: #5d5d58;
+  --accent: #b7860b;
+  --brand: #F5C742;
+  --code-bg: #f1f1ee;
+  --ok: #1f7a3d;
+  --warn: #9a5b00;
+  --bad: #b3261e;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161614;
+    --surface: #1f1f1c;
+    --surface-2: #2a2416;
+    --border: #34342f;
+    --accent-border: #5c4a1c;
+    --text: #ecebe6;
+    --muted: #a8a79f;
+    --accent: #F5C742;
+    --code-bg: #24241f;
+    --ok: #6fcf8e;
+    --warn: #f0b354;
+    --bad: #f28b82;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161614;
+  --surface: #1f1f1c;
+  --surface-2: #2a2416;
+  --border: #34342f;
+  --accent-border: #5c4a1c;
+  --text: #ecebe6;
+  --muted: #a8a79f;
+  --accent: #F5C742;
+  --code-bg: #24241f;
+  --ok: #6fcf8e;
+  --warn: #f0b354;
+  --bad: #f28b82;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); max-width: 1180px; margin: 0 auto; }
+nav.toc {
+  position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+  padding: 32px 16px 32px 24px; border-right: 1px solid var(--border); font-size: 14px;
+}
+nav.toc .brand { font-weight: 700; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+nav.toc .brand span { width: 12px; height: 12px; border-radius: 3px; background: var(--brand); display: inline-block; }
+nav.toc ol { list-style: none; padding: 0; margin: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 8px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; }
+nav.toc a:hover { background: var(--surface); color: var(--text); }
+main { padding: 40px 48px 80px; min-width: 0; }
+h1 { font-size: 32px; line-height: 1.2; margin: 0 0 8px; }
+.byline { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+.lead { font-size: 18px; margin: 0 0 8px; }
+h2 { font-size: 23px; margin: 56px 0 12px; padding-top: 8px; border-top: 1px solid var(--border); scroll-margin-top: 16px; }
+h3 { font-size: 17px; margin: 28px 0 8px; }
+a { color: var(--accent); }
+p { margin: 0 0 14px; }
+ol.steps { padding-left: 22px; }
+ol.steps > li { margin-bottom: 14px; }
+code { font: 13.5px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+pre {
+  position: relative; background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px 14px; overflow-x: auto; margin: 8px 0 14px;
+}
+pre code { background: none; padding: 0; white-space: pre; overflow-wrap: normal; }
+.copy {
+  position: absolute; top: 6px; right: 6px; font: 12px system-ui, sans-serif; padding: 3px 9px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--muted); cursor: pointer;
+}
+.copy:hover { color: var(--text); }
+.table-wrap { overflow-x: auto; margin: 8px 0 18px; border: 1px solid var(--border); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { background: var(--surface); font-weight: 600; white-space: nowrap; }
+tr:last-child td { border-bottom: none; }
+.note, .warn {
+  border-radius: 8px; padding: 12px 14px; margin: 12px 0 18px; font-size: 15px;
+}
+.note { background: var(--surface-2); border: 1px solid var(--accent-border); }
+.warn { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--bad); }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 12px 0 0; }
+.tabs button {
+  font: 14px system-ui, sans-serif; padding: 6px 14px; border: 1px solid var(--border); border-bottom: none;
+  border-radius: 8px 8px 0 0; background: var(--surface); color: var(--muted); cursor: pointer;
+}
+.tabs button[aria-selected="true"] { background: var(--bg); color: var(--text); font-weight: 600; }
+.tabpanel { border: 1px solid var(--border); border-radius: 0 8px 8px 8px; padding: 14px 16px 4px; margin-bottom: 18px; }
+.tabpanel[hidden] { display: none; }
+.ok { color: var(--ok); font-weight: 600; }
+.bad { color: var(--bad); font-weight: 600; }
+.wn { color: var(--warn); font-weight: 600; }
+.theme-toggle {
+  position: fixed; top: 12px; right: 16px; font: 13px system-ui, sans-serif; padding: 5px 10px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--muted); cursor: pointer; z-index: 5;
+}
+@media (max-width: 860px) {
+  .layout { display: block; }
+  nav.toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); padding: 20px 16px; }
+  main { padding: 24px 16px 64px; }
+  h1 { font-size: 26px; }
+}
+@media print {
+  nav.toc, .copy, .theme-toggle, .tabs { display: none; }
+  .layout { display: block; }
+  .tabpanel[hidden] { display: block; }
+  .tabpanel { border-radius: 8px; }
+}
+</style>
+</head>
+<body>
+<button class="theme-toggle" type="button" id="themeToggle">Theme</button>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand"><span></span>BillBull Setup</div>
+  <ol>
+    <li><a href="#overview">Overview</a></li>
+    <li><a href="#requirements">Requirements</a></li>
+    <li><a href="#check">Check your machine</a></li>
+    <li><a href="#install">Install what's missing</a></li>
+    <li><a href="#clone">Clone the repository</a></li>
+    <li><a href="#database">Database setup</a></li>
+    <li><a href="#backend">Run the backend</a></li>
+    <li><a href="#frontend">Run the frontend</a></li>
+    <li><a href="#agent">POS print agent (optional)</a></li>
+    <li><a href="#build">Tests, builds, packaging</a></li>
+    <li><a href="#trouble">Troubleshooting</a></li>
+  </ol>
+</nav>
+
+<main>
+<h1>BillBull Retail — Developer Setup Guide</h1>
+<div class="byline">Updated 19 Oct 2026 · Repository: <a href="https://github.com/Haarizz/Billbull_Retail">github.com/Haarizz/Billbull_Retail</a></div>
+<p class="lead">Install JDK 17, Maven 3.9, Node.js 22, PostgreSQL 17 and Git, clone the repo, then start the backend on port 8080 and the web app on port 5173.</p>
+
+<!-- 1 -->
+<h2 id="overview">Overview</h2>
+<p>When you finish this guide you'll have three things running against a local PostgreSQL database: the backend on <code>http://localhost:8080</code>, the Retail web app on <code>http://localhost:5173</code> and, if you want it, the standalone POS till on <code>http://localhost:5174/pos/</code>. Work branches off <code>main</code>.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Folder</th><th>What it is</th><th>Stack</th><th>Needed to run?</th></tr></thead>
+<tbody>
+<tr><td><code>billbull-backend/</code></td><td>REST API, business logic, DB schema</td><td>Spring Boot 3.5.9, Java 17, Maven, PostgreSQL, Flyway</td><td>Yes</td></tr>
+<tr><td><code>billbull-frontend/</code></td><td>npm workspace: Retail app (<code>src/</code>), standalone POS (<code>apps/pos/</code>), shared code (<code>packages/shared/</code>)</td><td>React 19, Vite 7, Tailwind v4</td><td>Yes</td></tr>
+<tr><td><code>tools/pos-print-agent/</code></td><td>Windows tray app that drives USB / Bluetooth / Windows-queue thermal printers</td><td>Node.js, packaged with <code>pkg</code></td><td>Only for local receipt printing</td></tr>
+<tr><td><code>tools/pos-parity/</code></td><td>Headless-Chrome harness that compares the embedded and standalone POS</td><td>Node.js</td><td>No (QA only)</td></tr>
+<tr><td><code>k8s/</code>, <code>docs/</code>, root <code>.md</code>/<code>.html</code></td><td>Deployment manifests and architecture notes</td><td>—</td><td>No</td></tr>
+</tbody></table></div>
+<p>The browser calls the backend under <code>/api</code>, and the backend keeps all data in PostgreSQL. The print agent runs as its own local process, and the browser reaches it on <code>127.0.0.1:19777</code>.</p>
+
+<!-- 2 -->
+<h2 id="requirements">Requirements</h2>
+<p>The project is built against the versions below. Use the version listed as known good when you can.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Software</th><th>Required version</th><th>Known good</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>Git</td><td>2.40+</td><td>—</td><td>Clone and pull the repo</td></tr>
+<tr><td>JDK</td><td><strong>17</strong></td><td>17.0.12</td><td><code>pom.xml</code> sets <code>java.version</code> to 17. Newer JDKs aren't tested.</td></tr>
+<tr><td>Apache Maven</td><td>3.9.x</td><td>3.9.11</td><td>Builds the backend. The repo has <strong>no</strong> <code>mvnw</code> wrapper, so you need Maven installed on the system.</td></tr>
+<tr><td>Node.js</td><td>22 LTS (minimum 20.19)</td><td>22.20.0</td><td>Vite 7 won't run on older Node.</td></tr>
+<tr><td>npm</td><td>10+</td><td>11.6.2</td><td>Installs the frontend workspaces</td></tr>
+<tr><td>PostgreSQL</td><td>17 (15+ should work)</td><td>17.6</td><td>The only supported database. Restoring the sample dump needs <code>psql</code> 17.6 or newer.</td></tr>
+<tr><td>pgAdmin or <code>psql</code></td><td>any</td><td>—</td><td>Create and inspect the database</td></tr>
+<tr><td>Chromium (Playwright 1.49)</td><td>downloads on first PDF export</td><td>—</td><td>Server-side HTML→PDF</td></tr>
+<tr><td>IDE (optional)</td><td>VS Code / IntelliJ IDEA</td><td>—</td><td>Editing and debugging</td></tr>
+</tbody></table></div>
+<p><strong>Hardware:</strong> 8 GB RAM at minimum, 16 GB recommended, because the backend, Vite and Postgres together use 3–4 GB. You also need about 5 GB of free disk space for <code>node_modules</code>, the Maven cache and the Playwright browser.</p>
+<p><strong>OS:</strong> the project is developed on Windows 10/11, and macOS and Linux work with the same commands. The POS print agent runs on Windows only.</p>
+
+<!-- 3 -->
+<h2 id="check">Check your machine</h2>
+<p>Run the checks below before installing anything. If a check shows "not recognized" or the wrong version, install or fix that tool using <a href="#install">Install what's missing</a>.</p>
+
+<h3>One-shot check script</h3>
+<p>The scripts print every version on one screen and mark each line OK, OLD or MISSING. Copy the one for your OS and paste it into a terminal.</p>
+
+<div class="tabs" role="tablist" data-group="script">
+  <button role="tab" aria-selected="true" data-panel="script-win">Windows (PowerShell)</button>
+  <button role="tab" aria-selected="false" data-panel="script-nix">macOS / Linux (bash)</button>
+</div>
+<div class="tabpanel" id="script-win" role="tabpanel">
+<pre><code>function Check($name, $cmd, $pattern, $min) {
+  try {
+    $out = (&amp; $cmd[0] $cmd[1..($cmd.Length-1)] 2&gt;&amp;1 | Out-String).Trim()
+    if ($out -match $pattern) {
+      $v = [version]($Matches[1])
+      $status = if ($v -ge [version]$min) { "OK     " } else { "OLD    " }
+      "{0} {1,-11} {2}  (need {3}+)" -f $status, $name, $v, $min
+    } else { "?       {0,-11} {1}" -f $name, ($out -split "`n")[0] }
+  } catch { "MISSING {0,-11} not found on PATH" -f $name }
+}
+Check "Git"        @("git","--version")      'version (\d+\.\d+)'        "2.40"
+Check "Java"       @("java","-version")      'version "(\d+\.\d+\.\d+)'  "17.0"
+Check "javac"      @("javac","-version")     'javac (\d+\.\d+\.\d+)'     "17.0"
+Check "Maven"      @("mvn","-v")             'Maven (\d+\.\d+\.\d+)'     "3.9"
+Check "Node"       @("node","-v")            'v(\d+\.\d+\.\d+)'          "20.19"
+Check "npm"        @("npm","-v")             '(\d+\.\d+\.\d+)'           "10.0"
+Check "psql"       @("psql","--version")     '(\d+\.\d+)'                "15.0"
+""
+"JAVA_HOME = $env:JAVA_HOME"
+"Postgres service:"; Get-Service postgresql* -ErrorAction SilentlyContinue | Format-Table Name, Status -AutoSize
+"Port check (5432 = Postgres, should be True):"
+(Test-NetConnection localhost -Port 5432 -WarningAction SilentlyContinue).TcpTestSucceeded</code></pre>
+<p>If PowerShell blocks the script, run it inside a fresh <code>powershell</code> window by pasting it in directly. Pasting doesn't need an execution-policy change.</p>
+</div>
+<div class="tabpanel" id="script-nix" role="tabpanel" hidden>
+<pre><code>for c in "git --version" "java -version" "javac -version" "mvn -v" "node -v" "npm -v" "psql --version"; do
+  set -- $c
+  if command -v "$1" &gt;/dev/null 2&gt;&amp;1; then
+    printf '%-8s %s\n' "$1" "$($c 2&gt;&amp;1 | head -n1)"
+  else
+    printf '%-8s MISSING\n' "$1"
+  fi
+done
+echo "JAVA_HOME=$JAVA_HOME"
+pg_isready -h localhost -p 5432 || echo "Postgres is not accepting connections on 5432"</code></pre>
+<p>Compare each version against the <a href="#requirements">Requirements</a> table.</p>
+</div>
+
+<h3>Check each tool individually</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Tool</th><th>Command</th><th class="ok">Good output looks like</th><th class="bad">Problem if you see</th></tr></thead>
+<tbody>
+<tr><td>Git</td><td><code>git --version</code></td><td><code>git version 2.4x…</code></td><td>"not recognized"</td></tr>
+<tr><td>Java runtime</td><td><code>java -version</code></td><td><code>java version "17.0.12"</code> or <code>openjdk version "17…"</code></td><td>1.8, 11, 21+, or "not recognized"</td></tr>
+<tr><td>Java compiler</td><td><code>javac -version</code></td><td><code>javac 17.0.x</code></td><td>"not recognized": only a JRE is installed, so install the full JDK</td></tr>
+<tr><td>JAVA_HOME</td><td>PowerShell: <code>$env:JAVA_HOME</code><br>bash: <code>echo $JAVA_HOME</code></td><td>A JDK 17 folder, e.g. <code>C:\Program Files\Java\jdk-17</code></td><td>Empty, or a folder for a different JDK</td></tr>
+<tr><td>Maven</td><td><code>mvn -v</code></td><td><code>Apache Maven 3.9.x</code> followed by <code>Java version: 17…</code></td><td>"Java version: 11/21": Maven is on the wrong JDK, so fix <code>JAVA_HOME</code></td></tr>
+<tr><td>Node.js</td><td><code>node -v</code></td><td><code>v22.x.x</code> (or ≥ <code>v20.19</code>)</td><td><code>v18</code> or older</td></tr>
+<tr><td>npm</td><td><code>npm -v</code></td><td><code>10.x</code> or <code>11.x</code></td><td>Older than 10</td></tr>
+<tr><td>PostgreSQL client</td><td><code>psql --version</code></td><td><code>psql (PostgreSQL) 17.x</code></td><td>"not recognized": add <code>C:\Program Files\PostgreSQL\17\bin</code> to PATH</td></tr>
+<tr><td>PostgreSQL server</td><td>Windows: <code>Get-Service postgresql*</code><br>macOS/Linux: <code>pg_isready</code></td><td><code>Running</code> / <code>accepting connections</code></td><td><code>Stopped</code> or <code>no response</code></td></tr>
+<tr><td>DB login</td><td><code>psql -U postgres -h localhost -c "select version();"</code></td><td>One row with the PostgreSQL version</td><td><code>password authentication failed</code></td></tr>
+<tr><td>Ports free</td><td>Windows: <code>netstat -ano | findstr ":8080 :5173"</code><br>macOS/Linux: <code>lsof -i :8080 -i :5173</code></td><td>No output</td><td>Lines in <code>LISTENING</code>: something already uses the port</td></tr>
+</tbody></table></div>
+
+<h3>Check the project after cloning</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Check</th><th>Command (from repo root)</th><th>Expected</th></tr></thead>
+<tbody>
+<tr><td>Maven can resolve and compile the backend</td><td><code>cd billbull-backend; mvn compile</code></td><td><code>BUILD SUCCESS</code></td></tr>
+<tr><td>Frontend dependencies installed</td><td><code>cd billbull-frontend; npm ls --depth=0</code></td><td>A dependency list with no <code>missing</code> / <code>UNMET</code> lines</td></tr>
+<tr><td>Frontend builds</td><td><code>cd billbull-frontend; npm run build</code></td><td><code>✓ built in …</code></td></tr>
+<tr><td>Database exists</td><td><code>psql -U postgres -lqt | findstr testdb</code> (bash: <code>| grep testdb</code>)</td><td>A line containing <code>testdb</code></td></tr>
+</tbody></table></div>
+
+<!-- 4 -->
+<h2 id="install">Install what's missing</h2>
+<p>On Windows, <code>winget</code> is the quickest way to install these tools and comes with Windows 10/11. Close and reopen the terminal after each install so the new <code>PATH</code> takes effect.</p>
+
+<div class="tabs" role="tablist" data-group="install">
+  <button role="tab" aria-selected="true" data-panel="inst-win">Windows</button>
+  <button role="tab" aria-selected="false" data-panel="inst-mac">macOS</button>
+  <button role="tab" aria-selected="false" data-panel="inst-linux">Ubuntu / Debian</button>
+</div>
+<div class="tabpanel" id="inst-win" role="tabpanel">
+<div class="table-wrap"><table>
+<thead><tr><th>Tool</th><th>Install with winget</th><th>Manual download</th></tr></thead>
+<tbody>
+<tr><td>Git</td><td><code>winget install --id Git.Git -e</code></td><td><a href="https://git-scm.com/download/win">git-scm.com</a></td></tr>
+<tr><td>JDK 17</td><td><code>winget install --id EclipseAdoptium.Temurin.17.JDK -e</code></td><td><a href="https://adoptium.net/temurin/releases/?version=17">adoptium.net (Temurin 17)</a>. In the MSI, tick "Set JAVA_HOME" and "Add to PATH".</td></tr>
+<tr><td>Node.js 22 LTS</td><td><code>winget install --id OpenJS.NodeJS.LTS -e</code></td><td><a href="https://nodejs.org/en/download">nodejs.org</a> (LTS .msi). This includes npm.</td></tr>
+<tr><td>PostgreSQL 17</td><td><code>winget install --id PostgreSQL.PostgreSQL.17 -e</code></td><td><a href="https://www.postgresql.org/download/windows/">postgresql.org (EDB installer)</a>, which includes pgAdmin. Set the superuser password to <code>admin</code> to match the dev defaults. Keep port 5432.</td></tr>
+<tr><td>Maven 3.9</td><td><code>choco install maven</code> or <code>scoop install maven</code> (if you use those)</td><td>Use the manual steps below</td></tr>
+</tbody></table></div>
+
+<h3>Maven manual install (Windows)</h3>
+<ol class="steps">
+<li>Download <strong>apache-maven-3.9.x-bin.zip</strong> from <a href="https://maven.apache.org/download.cgi">maven.apache.org/download.cgi</a>.</li>
+<li>Extract it to <code>C:\Program Files\Apache\maven</code>, so that <code>C:\Program Files\Apache\maven\bin\mvn.cmd</code> exists.</li>
+<li>Add it to your user PATH (PowerShell):
+<pre><code>[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path","User") + ";C:\Program Files\Apache\maven\bin", "User")</code></pre></li>
+<li>Open a new terminal and run <code>mvn -v</code>.</li>
+</ol>
+
+<h3>Set JAVA_HOME and PATH (Windows)</h3>
+<p>Skip this step if the JDK installer already set them. Change the folder to match where your JDK 17 is installed:</p>
+<pre><code>[Environment]::SetEnvironmentVariable("JAVA_HOME", "C:\Program Files\Eclipse Adoptium\jdk-17.0.12.7-hotspot", "User")
+[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path","User") + ";%JAVA_HOME%\bin", "User")</code></pre>
+<p>Put <code>psql</code> on PATH as well, so you can run it from any terminal:</p>
+<pre><code>[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path","User") + ";C:\Program Files\PostgreSQL\17\bin", "User")</code></pre>
+<p>As a GUI alternative: Start → "Edit the system environment variables" → Environment Variables → edit <em>Path</em> under User variables.</p>
+</div>
+
+<div class="tabpanel" id="inst-mac" role="tabpanel" hidden>
+<p>Install <a href="https://brew.sh">Homebrew</a> first, then run:</p>
+<pre><code>brew install git openjdk@17 maven node@22 postgresql@17
+sudo ln -sfn "$(brew --prefix)/opt/openjdk@17/libexec/openjdk.jdk" /Library/Java/JavaVirtualMachines/openjdk-17.jdk
+echo 'export JAVA_HOME=$(/usr/libexec/java_home -v 17)' &gt;&gt; ~/.zshrc
+echo 'export PATH="$(brew --prefix)/opt/node@22/bin:$(brew --prefix)/opt/postgresql@17/bin:$PATH"' &gt;&gt; ~/.zshrc
+source ~/.zshrc
+brew services start postgresql@17
+psql postgres -c "ALTER USER $(whoami) WITH SUPERUSER;"   # Homebrew creates a role named after you
+createuser -s postgres 2&gt;/dev/null; psql postgres -c "ALTER USER postgres PASSWORD 'admin';"</code></pre>
+</div>
+
+<div class="tabpanel" id="inst-linux" role="tabpanel" hidden>
+<pre><code># Git, JDK 17, Maven
+sudo apt update
+sudo apt install -y git openjdk-17-jdk maven curl ca-certificates
+
+# Node.js 22 (NodeSource)
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# PostgreSQL 17 (official PGDG repo)
+sudo install -d /usr/share/postgresql-common/pgdg
+sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+sudo apt update &amp;&amp; sudo apt install -y postgresql-17
+sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'admin';"
+
+# If Maven picks the wrong JDK
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64</code></pre>
+</div>
+
+<div class="note">Several JDKs can coexist on one machine. Maven uses whichever one <code>JAVA_HOME</code> points to, and the <code>java</code> command uses the first one on PATH. Point both at JDK 17.</div>
+
+<!-- 5 -->
+<h2 id="clone">Clone the repository</h2>
+<p>Clone <code>main</code> over HTTPS into a short path such as <code>C:\dev</code>. The repo is public, so cloning needs no credentials. Pushing does.</p>
+<ol class="steps">
+<li>On Windows only, enable long paths once, because some <code>node_modules</code> paths are longer than 260 characters:
+<pre><code>git config --global core.longpaths true</code></pre></li>
+<li>Clone the repo and enter it:
+<pre><code>git clone https://github.com/Haarizz/Billbull_Retail.git
+cd Billbull_Retail</code></pre>
+If your GitHub account has an SSH key, use <code>git@github.com:Haarizz/Billbull_Retail.git</code> instead.</li>
+<li>Set your identity for commits:
+<pre><code>git config user.name "Your Name"
+git config user.email "you@example.com"</code></pre></li>
+<li>To work on a feature, branch from <code>main</code>. The repo has 180+ branches, which <code>git branch -r</code> lists.
+<pre><code>git checkout -b feature/my-change</code></pre></li>
+</ol>
+<p>GitHub's "Code → Download ZIP" also works for a read-only copy, but without Git you can't use <code>git pull</code> or branches.</p>
+
+<!-- 6 -->
+<h2 id="database">Database setup</h2>
+<p>Create an empty PostgreSQL database named <code>testdb</code>, owned by user <code>postgres</code> with password <code>admin</code>. Those are the dev defaults in <code>application.properties</code>, so the backend connects without any config changes.</p>
+<ol class="steps">
+<li>Create the database:
+<pre><code>psql -U postgres -h localhost -c "CREATE DATABASE testdb;"</code></pre>
+To use pgAdmin instead, go to Databases → Create → Database and enter the name <code>testdb</code>.</li>
+<li>Choose how to fill it:</li>
+</ol>
+<div class="table-wrap"><table>
+<thead><tr><th>Option</th><th>When to use</th><th>How</th></tr></thead>
+<tbody>
+<tr><td><strong>A. Empty database</strong> (recommended for a first run)</td><td>You want a clean start with no client data</td><td>Do nothing. The backend builds the schema on its first boot.</td></tr>
+<tr><td><strong>B. Restore the sample dump</strong></td><td>You want realistic products, sales and ledgers</td><td><code>psql -U postgres -h localhost -d testdb -f testdbbillbull.sql</code><br>The dump is 11 MB and was taken from PG 17.6. Restoring it needs <code>psql</code> 17.6+ because of its <code>\restrict</code> line.</td></tr>
+</tbody></table></div>
+<p><strong>What happens on first boot:</strong> Flyway runs first, applying the scripts from <code>V1__baseline.sql</code> up to <code>V120__…</code> in <code>billbull-backend/src/main/resources/db/migration</code>. Its guarded scripts skip tables that don't exist yet. Hibernate (<code>ddl-auto=update</code>) then creates every table. Last, the startup seeders insert roles, permissions, the chart of accounts, a "Main Branch" and the <code>admin</code> user.</p>
+<div class="warn">This database is for you alone. Never point a dev backend at a client's production database. The <code>@SpringBootTest</code> tests also write to whatever database is configured.</div>
+
+<!-- 7 -->
+<h2 id="backend">Run the backend</h2>
+<p>From <code>billbull-backend/</code>, set an admin password and run <code>mvn spring-boot:run</code>. The API is up on port 8080 once the log prints <code>Started BillbullBackendApplication</code>.</p>
+<ol class="steps">
+<li>Set the first admin password. The backend reads it only when no admin user exists yet.
+<pre><code># PowerShell
+$env:ADMIN_INITIAL_PASSWORD = "ChangeMe123!"
+
+# Git Bash / macOS / Linux
+export ADMIN_INITIAL_PASSWORD='ChangeMe123!'</code></pre>
+If you skip this step, the console prints a random 16-character password once, after <code>INITIAL PASSWORD:</code>. Copy it.</li>
+<li>Start the app:
+<pre><code>cd billbull-backend
+mvn spring-boot:run</code></pre>
+The first run downloads dependencies into <code>~/.m2</code> and takes several minutes. On later runs you can add <code>-o</code> to work offline.</li>
+<li>Confirm the log shows <code>Started BillbullBackendApplication</code> and <code>Created default ADMIN user (username: admin)</code>.</li>
+</ol>
+<p><strong>Other DB credentials:</strong> pass them on the command line. <code>application.properties</code> is committed, so don't put local credentials in it.</p>
+<pre><code>mvn spring-boot:run "-Dspring-boot.run.arguments=--spring.datasource.url=jdbc:postgresql://localhost:5432/mydb --spring.datasource.username=postgres --spring.datasource.password=secret"</code></pre>
+<div class="table-wrap"><table>
+<thead><tr><th>Environment variable</th><th>Default</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>ADMIN_INITIAL_PASSWORD</code></td><td>random, printed once</td><td>Password for the seeded <code>admin</code> user</td></tr>
+<tr><td><code>JWT_SECRET</code></td><td>dev placeholder</td><td>Signs login tokens. Set a long random value anywhere other than dev.</td></tr>
+<tr><td><code>JWT_EXPIRATION</code></td><td><code>86400000</code> (24 h, ms)</td><td>How long a login token lasts</td></tr>
+<tr><td><code>PLAYWRIGHT_BROWSERS_PATH</code></td><td>Playwright per-user cache</td><td>Where the PDF renderer's Chromium is stored</td></tr>
+</tbody></table></div>
+<p><strong>Client profiles:</strong> files such as <code>application-demo.properties</code>, <code>-geebu</code> and <code>-hilite</code> each point at one client's own database and port. Use one only when you have a matching local database. For example, <code>mvn spring-boot:run -Dspring-boot.run.profiles=demo</code> uses port 8083 and the database <code>billbull_demo</code>.</p>
+<p><strong>PDF generation:</strong> the first PDF export downloads Playwright's Chromium automatically (about 150 MB). On a machine without internet access, pre-install it:</p>
+<pre><code>mvn exec:java -e -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args="install chromium"</code></pre>
+
+<!-- 8 -->
+<h2 id="frontend">Run the frontend</h2>
+<p>In a second terminal, go to <code>billbull-frontend/</code> and run <code>npm install</code>, then <code>npm run dev</code>. Open <a href="http://localhost:5173">localhost:5173</a> and sign in as <code>admin</code>.</p>
+<ol class="steps">
+<li>Install dependencies once. Because the folder is an npm workspace, this one command installs the Retail app, <code>apps/pos</code> and <code>packages/shared</code>.
+<pre><code>cd billbull-frontend
+npm install</code></pre>
+To install exactly the versions <code>package-lock.json</code> pins, use <code>npm ci</code> instead.</li>
+<li>Start the Retail app:
+<pre><code>npm run dev</code></pre></li>
+<li>Open <code>http://localhost:5173</code> and sign in as <code>admin</code>. Then change the password under My Profile.</li>
+<li>The POS till inside the Retail app is at <code>/sales/pos</code>. To open it you need a POS terminal and an open session, both created from the app's POS settings.</li>
+</ol>
+<div class="note">The dev API address is set in <code>billbull-frontend/.env.development</code> (<code>VITE_API_BASE_URL=http://localhost:8080</code>). Keep the Retail dev server on port <strong>5173</strong>, because it's the only localhost origin in the backend's CORS list (<code>config/CorsConfig.java</code>).</div>
+<p><strong>Standalone POS (optional):</strong> <code>npm run dev:pos</code> serves the till at <code>http://localhost:5174/pos/</code> and proxies <code>/api</code> and <code>/uploads</code> to the backend. Read <code>docs/standalone-pos/ARCHITECTURE.md</code> first.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Command (in <code>billbull-frontend/</code>)</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>npm run dev</code></td><td>Starts the Retail app dev server on port 5173</td></tr>
+<tr><td><code>npm run dev:pos</code></td><td>Starts the standalone POS dev server on port 5174</td></tr>
+<tr><td><code>npm run lint</code></td><td>Runs ESLint, including the workspace-boundary rule</td></tr>
+<tr><td><code>npm test</code></td><td>Runs the Vitest unit tests</td></tr>
+<tr><td><code>npm run check:boundaries</code></td><td>Checks that no import crosses between Retail, POS and shared code</td></tr>
+<tr><td><code>npm run shared:exports</code></td><td>Regenerates the <code>@billbull/shared</code> export map after you add a shared import</td></tr>
+</tbody></table></div>
+
+<!-- 9 -->
+<h2 id="agent">POS print agent (optional)</h2>
+<p>You only need the agent to print receipts on a USB, Bluetooth or Windows-queue printer. The backend drives network (IP) printers directly.</p>
+<ol class="steps">
+<li>Install and run the agent from source (Windows):
+<pre><code>cd tools/pos-print-agent
+npm install
+node tray.js</code></pre>
+To run it without the tray icon, use <code>node server.js</code>. Either way it listens on <code>http://127.0.0.1:19777</code>.</li>
+<li>Bind each printer to a protocol. Agent 0.7.0 refuses any printer that hasn't been set up locally.
+<pre><code>node server.js --set-printer "&lt;Windows printer queue name&gt;" escpos</code></pre>
+For Zebra label printers, use <code>zpl</code> instead of <code>escpos</code>. The tray menu can do the same thing.</li>
+<li>Pair the browser under POS → Devices. The pairing token is stored in that browser's <code>localStorage</code>, so pair once in each browser.</li>
+<li>To run the agent's tests, use <code>npm test</code> in the same folder.</li>
+</ol>
+<div class="warn">Don't run <code>--stop</code>, <code>npm run build</code> or <code>npm run build:installer</code> on a machine that's using an installed <code>BillBullPrintAgent.exe</code>. <code>--stop</code> ends every running agent in the session, and the builds overwrite <code>dist/</code> and <code>installer/output/</code>. For security and pairing details, see <code>docs/standalone-pos/PRINT_AGENT_SECURITY.md</code> and <code>tools/pos-print-agent/SECURITY.md</code>.</div>
+
+<!-- 10 -->
+<h2 id="build">Tests, builds and packaging</h2>
+<p>Run the backend and frontend tests before every push. A production release is one backend jar plus two static frontend bundles.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Task</th><th>Command</th><th>Folder</th><th>Output / notes</th></tr></thead>
+<tbody>
+<tr><td>Compile backend</td><td><code>mvn -o compile</code></td><td><code>billbull-backend</code></td><td>Quick check after edits</td></tr>
+<tr><td>Backend tests</td><td><code>mvn -o test</code></td><td><code>billbull-backend</code></td><td>The Mockito unit tests pass without a database. Seven <code>@SpringBootTest</code> classes are expected to fail when no database is reachable.</td></tr>
+<tr><td>One test class / method</td><td><code>mvn -o test -Dtest=StockTakeServiceTest</code> (add <code>#method</code> for one method)</td><td><code>billbull-backend</code></td><td>—</td></tr>
+<tr><td>Backend jar</td><td><code>mvn package -DskipTests</code></td><td><code>billbull-backend</code></td><td><code>target/*.jar</code>. Run it with <code>java -jar target/&lt;name&gt;.jar --spring.profiles.active=&lt;client&gt;</code>.</td></tr>
+<tr><td>Frontend tests</td><td><code>npm test</code></td><td><code>billbull-frontend</code></td><td>Vitest, including the workspace-boundary test</td></tr>
+<tr><td>Lint</td><td><code>npm run lint</code></td><td><code>billbull-frontend</code></td><td>—</td></tr>
+<tr><td>Retail production build</td><td><code>npm run build</code></td><td><code>billbull-frontend</code></td><td><code>dist/</code></td></tr>
+<tr><td>Standalone POS build</td><td><code>npm run build:pos</code></td><td><code>billbull-frontend</code></td><td><code>apps/pos/dist/</code>, served under <code>/pos/</code></td></tr>
+<tr><td>Print agent exe</td><td><code>npm run build</code></td><td><code>tools/pos-print-agent</code></td><td><code>dist/BillBullPrintAgent.exe</code>. Read the warning above first.</td></tr>
+</tbody></table></div>
+<p>Name a database-backed test <code>*Test</code>, not <code>*IT</code>. The build has no failsafe plugin, so <code>*IT</code> classes never run. Both apps have Dockerfiles (<code>billbull-backend/Dockerfile</code>, <code>billbull-frontend/Dockerfile</code>). For server rollout, see <code>DEPLOYMENT_GUIDE.md</code> and <code>DEPLOYMENT_8_CLIENTS.md</code>.</p>
+
+<!-- 11 -->
+<h2 id="trouble">Troubleshooting</h2>
+<p>Most first-run failures come from one of three things: the wrong Java or Node version, a database the backend can't reach, or the frontend running on a port the backend doesn't allow.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+<tbody>
+<tr><td><code>mvn</code> / <code>node</code> / <code>psql</code> "is not recognized"</td><td>The tool isn't installed or isn't on PATH</td><td>See <a href="#install">Install what's missing</a>, then open a new terminal</td></tr>
+<tr><td><code>invalid target release: 17</code></td><td>Maven is using an older JDK</td><td>Point <code>JAVA_HOME</code> at JDK 17. <code>mvn -v</code> must show Java 17.</td></tr>
+<tr><td><code>Connection to localhost:5432 refused</code></td><td>The PostgreSQL service is stopped</td><td>Start it. On Windows: <code>Start-Service postgresql-x64-17</code> (admin PowerShell).</td></tr>
+<tr><td><code>password authentication failed for user "postgres"</code></td><td>Your Postgres password isn't <code>admin</code></td><td>Pass <code>--spring.datasource.password=…</code> as shown in <a href="#backend">Run the backend</a></td></tr>
+<tr><td><code>database "testdb" does not exist</code></td><td>The database hasn't been created</td><td><code>CREATE DATABASE testdb;</code></td></tr>
+<tr><td><code>Port 8080 was already in use</code></td><td>Another app is using 8080</td><td>Stop that app, or start the backend with <code>--server.port=8081</code> and point <code>VITE_API_BASE_URL</code> at 8081</td></tr>
+<tr><td>Can't log in and no admin password is known</td><td>The admin user was created on an earlier run, or you restored the dump</td><td>If you restored the dump, ask the team for its credentials. On a fresh DB, drop and recreate <code>testdb</code>, then restart with <code>ADMIN_INITIAL_PASSWORD</code> set.</td></tr>
+<tr><td>CORS error in the browser console</td><td>Port 5173 was busy, so Vite moved to 5174 or higher</td><td>Free port 5173 and restart <code>npm run dev</code></td></tr>
+<tr><td>Standalone POS (5174) says "Invalid username or password"</td><td>The backend returns 403 because the 5174 origin isn't on its allow-list</td><td>For now, use the embedded till at <code>/sales/pos</code> on port 5173</td></tr>
+<tr><td><code>Vite requires Node.js version 20.19+</code></td><td>Node is too old</td><td>Install Node 22 LTS</td></tr>
+<tr><td><code>Filename too long</code> (Windows)</td><td>Windows' 260-character path limit</td><td>Run <code>git config --global core.longpaths true</code> and clone into a short path such as <code>C:\dev</code></td></tr>
+<tr><td>javac <code>bad class file</code> during <code>mvn test</code></td><td>The IDE's Java tooling wrote a corrupt <code>.class</code> file into <code>target/classes</code></td><td>Delete that one <code>.class</code> file and rerun the tests</td></tr>
+<tr><td>PDF export hangs or fails the first time</td><td>Chromium is still downloading, or the machine is offline</td><td>Wait for the download to finish, or pre-install Chromium (see <a href="#backend">Run the backend</a>)</td></tr>
+<tr><td><code>unrecognized command \restrict</code> while restoring</td><td><code>psql</code> is older than 17.6</td><td>Upgrade the PostgreSQL client tools to 17.6+</td></tr>
+</tbody></table></div>
+</main>
+</div>
+
+<script>
+// Copy buttons on every code block
+document.querySelectorAll('pre').forEach(function (pre) {
+  var btn = document.createElement('button');
+  btn.className = 'copy'; btn.type = 'button'; btn.textContent = 'Copy';
+  btn.addEventListener('click', function () {
+    var text = pre.querySelector('code').innerText;
+    var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1500); };
+    if (navigator.clipboard) { navigator.clipboard.writeText(text).then(done, function () {}); }
+  });
+  pre.appendChild(btn);
+});
+
+// OS tabs
+document.querySelectorAll('.tabs').forEach(function (group) {
+  var buttons = group.querySelectorAll('button');
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () {
+      buttons.forEach(function (o) {
+        o.setAttribute('aria-selected', o === b ? 'true' : 'false');
+        document.getElementById(o.dataset.panel).hidden = o !== b;
+      });
+    });
+  });
+});
+
+// Pre-select the visitor's OS
+(function () {
+  var p = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+  var mac = /mac/i.test(p), linux = /linux/i.test(p) && !/android/i.test(p);
+  if (mac || linux) {
+    var pick = function (group, id) {
+      var b = document.querySelector('.tabs[data-group="' + group + '"] button[data-panel="' + id + '"]');
+      if (b) b.click();
+    };
+    pick('script', 'script-nix');
+    pick('install', mac ? 'inst-mac' : 'inst-linux');
+  }
+})();
+
+// Theme toggle
+(function () {
+  var root = document.documentElement, btn = document.getElementById('themeToggle');
+  try { var saved = localStorage.getItem('bb-setup-theme'); if (saved) root.dataset.theme = saved; } catch (e) {}
+  btn.addEventListener('click', function () {
+    var dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    try { localStorage.setItem('bb-setup-theme', root.dataset.theme); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>

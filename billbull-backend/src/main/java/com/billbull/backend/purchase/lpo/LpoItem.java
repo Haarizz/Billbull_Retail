@@ -34,9 +34,24 @@ public class LpoItem extends BaseEntity {
 
 	private String remarks;
 
+	/**
+	 * Optional per-line VAT % (e.g. the rate a vendor quoted on an RFQ). NULL means "use the
+	 * product's purchase tax", resolved at read time — the behaviour every LPO had before V137.
+	 */
+	@Column(name = "purchase_tax", precision = 7, scale = 2)
+	private BigDecimal purchaseTax;
+
 	@ManyToOne(fetch = FetchType.LAZY)
 	@JoinColumn(name = "product_id", nullable = false)
 	private Product product;
+
+	public BigDecimal getPurchaseTax() {
+		return purchaseTax;
+	}
+
+	public void setPurchaseTax(BigDecimal purchaseTax) {
+		this.purchaseTax = purchaseTax;
+	}
 
 	public Integer getQuantity() {
 		return quantity;

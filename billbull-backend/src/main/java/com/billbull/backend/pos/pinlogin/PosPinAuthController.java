@@ -23,7 +23,7 @@ public class PosPinAuthController {
     /** Staff who can sign in on this till, for the name picker. 401 when the till isn't enabled. */
     @PostMapping("/staff")
     public PosPinLoginService.TillStaff staff(@RequestBody DeviceRequest request) {
-        return service.staffFor(request.deviceToken());
+        return service.staffFor(request.deviceToken(), request.terminalId());
     }
 
     @PostMapping("/login")
@@ -33,7 +33,8 @@ public class PosPinAuthController {
         return new PinLoginResponse(result.login(), result.tillBranchId());
     }
 
-    public record DeviceRequest(String deviceToken) {
+    /** terminalId is optional: the till's registered terminal, used only when enrolment didn't record one. */
+    public record DeviceRequest(String deviceToken, String terminalId) {
     }
 
     public record PinLoginRequest(String deviceToken, Long employeeId, String pin) {

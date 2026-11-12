@@ -45,6 +45,8 @@ import Vendor from "./pages/Purchase/Vendor/Vendor";
 import Customer from "./pages/Customer/Customer";
 import SalePriceInquiry from "./pages/Customer/SalePriceInquiry";
 import LPOList from "./pages/Purchase/LPO/lpo";
+import VendorPriceShares from "./pages/Purchase/RFQ/VendorPriceShares";
+import VendorPortal from "./pages/Purchase/RFQ/portal/VendorPortal";
 import PurchaseInvoices from "./pages/Purchase/Invoice/PurchaseInvoices";
 import GRN from "./pages/Purchase/GRN/GRN";
 import PaymentVoucher from "./pages/Purchase/Payment/PaymentVoucher";
@@ -189,6 +191,8 @@ function App() {
         <Routes>
           {/* 🔓 Public Route */}
           <Route path="/login" element={<Login />} />
+          {/* 🔓 RFQ vendor portal — vendors sign in with an emailed one-time code, not a staff login */}
+          <Route path="/vendor-portal/:token" element={<VendorPortal />} />
 
           {/* 🔐 Protected App */}
           <Route
@@ -325,6 +329,15 @@ function App() {
                       element={
                         <ResourceGuard module="customer.inquiry">
                           <Customer />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/purchases/price-shares"
+                      element={
+                        <ResourceGuard module="purchases.rfq">
+                          <VendorPriceShares />
                         </ResourceGuard>
                       }
                     />

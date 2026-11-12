@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Offline POS Readiness Audit</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: single reading column (~72ch) with wide tables allowed to scroll; sticky contents rail on desktop. */
+:root{
+  --bg:#FBFAF6; --surface:#FFFFFF; --ink:#1F2430; --muted:#5E6573; --line:#E6E1D3;
+  --accent:#B8860B; --accent-soft:#FFF4D6; --accent-line:#F1D98A;
+  --ok:#1E7A4C; --ok-bg:#E5F4EC; --part:#8A5A00; --part-bg:#FFF0D1; --miss:#B4232A; --miss-bg:#FBE6E6;
+  --prop:#2952A3; --prop-bg:#E7EEFB; --dec:#6B3FA0; --dec-bg:#F1E9FA;
+  --code-bg:#F3F0E7;
+  --f-display:'Fraunces', Georgia, 'Times New Roman', serif;
+  --f-body:'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+  --f-mono:'IBM Plex Mono', ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#15171C; --surface:#1C1F26; --ink:#E7E4DC; --muted:#A3A8B3; --line:#2E323B;
+  --accent:#F5C742; --accent-soft:#2A2513; --accent-line:#5A4A1A;
+  --ok:#6BD39B; --ok-bg:#16301F; --part:#F2C46B; --part-bg:#33280F; --miss:#F08A8F; --miss-bg:#3A1A1C;
+  --prop:#93B4F5; --prop-bg:#1A2540; --dec:#C7A6EE; --dec-bg:#2A1D3B; --code-bg:#23262E; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#15171C; --surface:#1C1F26; --ink:#E7E4DC; --muted:#A3A8B3; --line:#2E323B;
+  --accent:#F5C742; --accent-soft:#2A2513; --accent-line:#5A4A1A;
+  --ok:#6BD39B; --ok-bg:#16301F; --part:#F2C46B; --part-bg:#33280F; --miss:#F08A8F; --miss-bg:#3A1A1C;
+  --prop:#93B4F5; --prop-bg:#1A2540; --dec:#C7A6EE; --dec-bg:#2A1D3B; --code-bg:#23262E; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:15px/1.6 var(--f-body);margin:0}
+.wrap{max-width:1180px;margin:0 auto;padding-block:32px 80px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;grid-template-columns:220px minmax(0,1fr);gap:48px}
+@media (max-width:900px){.wrap{grid-template-columns:minmax(0,1fr);gap:24px}nav.toc{position:static!important;max-height:none!important}}
+nav.toc{position:sticky;top:calc(16px + env(safe-area-inset-top,0px));align-self:start;max-height:calc(100vh - 32px);overflow:auto;font-size:13px;border-left:2px solid var(--accent-line);padding-left:14px}
+nav.toc b{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+nav.toc a{display:block;color:var(--muted);text-decoration:none;padding:3px 0}
+nav.toc a:hover,nav.toc a:focus-visible{color:var(--ink)}
+main{min-width:0}
+header.doc{border-bottom:1px solid var(--line);padding-bottom:24px;margin-bottom:8px}
+.eyebrow{font:500 12px/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{font:600 clamp(28px,4vw,40px)/1.15 var(--f-display);margin:10px 0 12px;text-wrap:balance}
+h2{font:600 24px/1.25 var(--f-display);margin:56px 0 12px;text-wrap:balance;scroll-margin-top:16px}
+h2 .n{font:500 13px var(--f-mono);color:var(--accent);display:block;margin-bottom:4px;letter-spacing:.06em}
+h3{font-size:16px;font-weight:600;margin:28px 0 8px}
+p,li{max-width:72ch}
+.meta{color:var(--muted);font-size:13px;display:flex;flex-wrap:wrap;gap:6px 18px}
+code,.mono{font-family:var(--f-mono);font-size:12.5px;background:var(--code-bg);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre{font:12.5px/1.55 var(--f-mono);background:var(--code-bg);padding:14px 16px;border-radius:8px;overflow-x:auto}
+pre.mermaid{background:var(--surface);border:1px solid var(--line)}
+.tag{display:inline-block;font:600 10.5px/1 var(--f-mono);letter-spacing:.05em;padding:4px 6px;border-radius:4px;white-space:nowrap;vertical-align:1px}
+.c{color:var(--ok);background:var(--ok-bg)} .p{color:var(--part);background:var(--part-bg)} .m{color:var(--miss);background:var(--miss-bg)}
+.f{color:var(--prop);background:var(--prop-bg)} .d{color:var(--dec);background:var(--dec-bg)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 14px;font-size:13px;color:var(--muted);margin:14px 0 0}
+.tl{overflow-x:auto;margin:12px 0 4px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
+th{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;background:var(--bg)}
+tr:last-child td{border-bottom:0}
+td code{font-size:11.5px}
+.wide table{min-width:880px}
+.summary{display:grid;gap:12px;margin-top:20px}
+.finding{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:start;padding:14px 16px;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+.finding p{margin:0}
+.finding .k{font:600 13px var(--f-mono);color:var(--accent);padding-top:2px}
+.callout{border:1px solid var(--accent-line);background:var(--accent-soft);border-radius:8px;padding:14px 18px;margin:16px 0}
+.callout p{margin:6px 0}
+.flow{counter-reset:s;list-style:none;padding:0;margin:12px 0}
+.flow li{counter-increment:s;position:relative;padding:6px 0 6px 40px;border-left:1px dashed var(--line);margin-left:12px}
+.flow li::before{content:counter(s);position:absolute;left:-13px;top:6px;width:24px;height:24px;border-radius:50%;background:var(--surface);border:1px solid var(--accent-line);font:600 11px/22px var(--f-mono);text-align:center;color:var(--accent)}
+.flow li .tx{font:500 11px var(--f-mono);color:var(--miss)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.card h4{margin:0 0 6px;font-size:14px}
+.card p,.card ul{margin:4px 0;font-size:13.5px}
+.card ul{padding-left:18px}
+.rec{border:2px solid var(--accent);border-radius:10px;padding:18px 20px;background:var(--surface)}
+a{color:var(--prop)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <b>Contents</b>
+  <a href="#summary">Summary</a>
+  <a href="#s1">1 Current architecture</a>
+  <a href="#s2">2 Deployment model</a>
+  <a href="#s3">3 Reusable modules</a>
+  <a href="#s4">4 Transaction workflows</a>
+  <a href="#s5">5 Offline readiness &amp; gaps</a>
+  <a href="#s6">6 Architecture options</a>
+  <a href="#s7">7 Store Node</a>
+  <a href="#s8">8 Local storage</a>
+  <a href="#s9">9 Synchronization</a>
+  <a href="#s10">10 Security</a>
+  <a href="#s11">11 Inventory &amp; financial rules</a>
+  <a href="#s12">12 Failure &amp; recovery</a>
+  <a href="#s13">13 API changes</a>
+  <a href="#s14">14 Database changes</a>
+  <a href="#s15">15 Frontend changes</a>
+  <a href="#s16">16 Testing</a>
+  <a href="#s17">17 Roadmap</a>
+  <a href="#rec">Recommendation &amp; Phase 0</a>
+</nav>
+
+<main>
+<header class="doc">
+  <div class="eyebrow">BillBull ERP · Standalone POS · Architecture audit</div>
+  <h1>Offline POS Readiness Audit</h1>
+  <p>How the current standalone till works, what stops it working without Internet, and the safest way to add offline selling without a second copy of POS business logic. Read-only audit: no files, migrations, configuration or services were changed.</p>
+  <div class="meta"><span>Audited 6 Nov 2026</span><span>Branch <code>feat/email-pdf-attachments</code> (HEAD <code>9cf3b861</code> + uncommitted PIN sign-in work)</span><span>Sources: code first; docs in <code>docs/standalone-pos/</code> checked against it</span></div>
+  <div class="legend">
+    <span><span class="tag c">CONFIRMED</span> exists in code today</span>
+    <span><span class="tag p">PARTIAL</span> exists but not enough</span>
+    <span><span class="tag m">MISSING</span> not present</span>
+    <span><span class="tag f">PROPOSED</span> future enhancement</span>
+    <span><span class="tag d">DECISION</span> needs a business/architecture call</span>
+  </div>
+</header>
+
+<section id="summary">
+<h2><span class="n">SUMMARY</span>What we found</h2>
+<div class="summary">
+  <div class="finding"><span class="k">01</span><p><span class="tag c">CONFIRMED</span> The standalone POS is a thin shell (<code>apps/pos</code>, ~1,950 lines) around the same shared workspace as <code>/sales/pos</code> (<code>POSSales.jsx</code>, 11,037 lines, in <code>@billbull/shared</code>). It is a browser SPA served at <code>/pos/</code> on each tenant's existing HTTPS origin, talking same-origin to the tenant's Spring Boot backend. The Electron app <code>tools/pos-desktop</code> loads that same remote page. Nothing is installed locally except the print agent.</p></div>
+  <div class="finding"><span class="k">02</span><p><span class="tag m">MISSING</span> There is no offline capability at all today. No service worker, no web manifest, no IndexedDB, no online/offline detection. Every boot needs the server (login, permissions, terminal register, session, settings). Every new scan calls <code>GET /api/pos/resolve</code>. Settlement is refused unless <code>GET /api/pos/checkout/capabilities</code> answers. The JWT lives in <code>sessionStorage</code>, so a closed tab cannot be reopened offline. When the server is unreachable, Electron replaces the till with an offline page.</p></div>
+  <div class="finding"><span class="k">03</span><p><span class="tag p">PARTIAL</span> Checkout already has an idempotency key (<code>checkoutKey</code>, unique partial index <code>uq_si_pos_checkout_key</code> from V13), and the client treats timeouts as "unconfirmed". This is the best foundation for sync. But the key lives only in a React ref, so a refresh loses it. And the checkout is <b>not atomic</b> despite its Javadoc: invoice save, status/stock/GL posting, and each payment leg commit in separate transactions, with a compensating delete. If a payment leg fails after posting, a retry with the same key gets back the posted invoice as if it were a success. This must be fixed before any offline replay depends on the key.</p></div>
+  <div class="finding"><span class="k">04</span><p><span class="tag d">DECISION</span> Invoice numbers come from one tenant-wide counter per document type, locked <code>FOR UPDATE</code> at save time (<code>SalesDocumentNumberingService</code>). There is no per-branch or per-terminal series. An offline receipt therefore cannot carry its final tax invoice number unless number blocks are leased per terminal. This needs a tax/compliance decision.</p></div>
+  <div class="finding"><span class="k">05</span><p><span class="tag c">CONFIRMED</span> Stock is checked at posting time under row locks, governed by the global <code>SalesSettings.stockCheckRequired</code>. When it is on, a shortfall refuses the sale. When it is off, the movement goes negative with <code>negativeOverride</code> set. An offline sale has already taken the customer's money, so at sync it must never be refused for stock. It must post with the override and be flagged for review.</p></div>
+  <div class="finding"><span class="k">06</span><p><span class="tag f">PROPOSED</span> Recommendation: <b>browser POS + terminal-local durable outbox (IndexedDB) + cloud</b>, with offline sales replayed through the <b>same</b> checkout pipeline via a new batch-ingest endpoint. Offline selling is restricted: cash (and optionally card on an external terminal), untracked or auto-FEFO products, inside a session that was already open, under a server-issued offline lease. A Store Node is deferred to an optional later phase, as a relay and cache only, never as a second ledger. The first phase (Phase 0) changes no offline behaviour. It fixes checkout atomicity detection and persists the in-flight checkout key.</p></div>
+</div>
+</section>
+
+<section id="s1">
+<h2><span class="n">PART 1 · REPORT §1</span>Current standalone POS architecture</h2>
+
+<h3>Components, by the 17 areas asked about</h3>
+<div class="tl wide"><table>
+<thead><tr><th>Area</th><th>Status</th><th>Where it lives (verified)</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>1 Entry point</td><td><span class="tag c">CONFIRMED</span></td><td><code>apps/pos/index.html</code> → <code>src/main.jsx</code> → <code>PosApp.jsx</code></td><td><code>main.jsx</code> installs global client logging and <code>installTillKeyGuard()</code> before React renders.</td></tr>
+<tr><td>2 URL &amp; routing</td><td><span class="tag c">CONFIRMED</span></td><td><code>apps/pos/vite.config.js</code> (<code>base: '/pos/'</code>), <code>shell/posPaths.js</code></td><td><code>BrowserRouter basename=/pos</code>; routes <code>/login</code>, <code>/</code>, <code>*</code> → <code>/</code>. Dev port 5174 with an origin-stripping proxy.</td></tr>
+<tr><td>3 Standalone vs embedded</td><td><span class="tag c">CONFIRMED</span></td><td><code>workspace/TillWorkspace.jsx</code>, <code>pages/Sales/POS/posHost.js</code></td><td>Standalone: slim 64px rail and <code>STANDALONE_POS_HOST</code>. It has no Retail sidebar, notification centre, global search or back-office routes. Both mount the same <code>POSSales</code>.</td></tr>
+<tr><td>4 Shared code</td><td><span class="tag c">CONFIRMED</span></td><td><code>packages/shared/src/**</code>, export map in <code>packages/shared/package.json</code></td><td>Boundaries enforced by <code>scripts/workspaceBoundaries.mjs</code>, its test and an ESLint rule.</td></tr>
+<tr><td>5 Auth &amp; login</td><td><span class="tag c">CONFIRMED</span></td><td><code>shell/PosLogin.jsx</code>, <code>shell/PinSignIn.jsx</code> (uncommitted changes), <code>api/auth.js</code>, <code>shell/RequireAuth.jsx</code>, <code>shell/SessionLock.jsx</code></td><td>Password login via <code>/api/auth/login</code>, or PIN via <code>/api/auth/pos/pin/login</code> on an admin-enabled PIN device. JWT (24h default, <code>jwt.expiration</code>) in <code>sessionStorage</code>. On a 401 the lock re-authenticates in place and keeps the cart.</td></tr>
+<tr><td>6 Branch selection</td><td><span class="tag c">CONFIRMED</span></td><td><code>shell/PosBootGate.jsx</code>, <code>shell/posAccess.js</code>, <code>context/BranchContext.jsx</code></td><td>Exactly one branch, never "All". Mirrored to <code>sessionStorage.activeBranchId</code> and sent as <code>X-Branch-Id</code>.</td></tr>
+<tr><td>7 Terminal identity</td><td><span class="tag p">PARTIAL</span></td><td><code>features/session/usePosSession.js</code> → <code>POST /api/pos/terminals/register</code> (<code>PosTerminalController</code>/<code>PosTerminalService.registerOrRefresh</code>)</td><td>Client-generated fingerprint (<code>localStorage billbull:pos:device_fingerprint</code>) and terminal id per branch (<code>billbull:pos:terminal_id:{branchId}</code>). Any authenticated user may register. There is <b>no device secret</b>: identity is a claim, not a credential.</td></tr>
+<tr><td>8 Counters</td><td><span class="tag c">CONFIRMED</span></td><td><code>pos/counter/*</code>, <code>POSCounters.jsx</code> (Console)</td><td>Terminal ↔ counter via <code>/terminals/{id}/assign-counter</code>.</td></tr>
+<tr><td>9 Session lifecycle</td><td><span class="tag c">CONFIRMED</span></td><td><code>usePosSession.js</code>, <code>useSessionClosure.js</code>; <code>PosSessionController</code> (30+ endpoints), <code>PosSessionService</code></td><td>Open → (suspend/resume/transfer/takeover) → begin-closure → X-Report → close; branch Day Close. 5s sync poll <code>GET /sessions/{id}/sync</code>, 60s heartbeat.</td></tr>
+<tr><td>10 Product search &amp; scan</td><td><span class="tag c">CONFIRMED</span></td><td><code>features/products/useProductEntry.js</code>, <code>useProductCatalog.js</code>; <code>GET /api/pos/resolve</code>, <code>/api/pos/batch-check</code> (<code>pos/search/*</code>)</td><td>Resolve returns PRODUCT (with pinned batch/serial/expiry), VOUCHER, CUSTOMER or BLOCKED. An in-memory <code>productCacheRef</code> short-circuits repeat scans. It does not persist.</td></tr>
+<tr><td>11 Cart</td><td><span class="tag c">CONFIRMED</span></td><td><code>features/cart/useCart.js</code>, <code>lineUnits.js</code>, <code>utils/vatMath.js</code>, <code>salesPricing.js</code></td><td>Cart lives in React state only. A refresh loses an unsettled cart.</td></tr>
+<tr><td>12 Checkout &amp; allocation</td><td><span class="tag c">CONFIRMED</span></td><td><code>features/checkout/useCheckout.js</code>, <code>payments/*</code>; <code>PosCheckoutController</code>, <code>PosPaymentAllocationResolver</code></td><td>Progressive <code>paymentAllocations</code> (cash, card legs, online, credit, advance, voucher). Traced in detail below.</td></tr>
+<tr><td>13 Receipt printing</td><td><span class="tag c">CONFIRMED</span></td><td><code>device/printing/*</code>, <code>utils/escPosReceipt.js</code>, <code>utils/localPrintAgent.js</code>, <code>pos/printjob/*</code></td><td>Printing runs after the success screen, fire-and-forget. Print-job bookkeeping is best effort.</td></tr>
+<tr><td>14 X / Z reports</td><td><span class="tag c">CONFIRMED</span></td><td><code>/sessions/{id}/x-report(/generate)</code>, <code>/sessions/z-report</code>, <code>PosReportNumberService</code> (<code>pos_report_sequences</code>, locked)</td><td>Server-generated and numbered. Generating an X-Report starts the close workflow and blocks further sales on that session.</td></tr>
+<tr><td>15 Settings &amp; terminal config</td><td><span class="tag c">CONFIRMED</span></td><td><code>pos/settings/*</code> (<code>pos_settings</code> per branch), <code>usePosBehaviourSettings.js</code>, hardware profiles in <code>pos/devicemanager</code></td><td>Loaded at boot by POSSales. Not cached across reloads.</td></tr>
+<tr><td>16 Print agent</td><td><span class="tag c">CONFIRMED</span></td><td><code>utils/localPrintAgent.js</code> ↔ <code>tools/pos-print-agent</code> on <code>127.0.0.1:19777</code></td><td>Pairing token in <code>localStorage</code>. Works with no Internet, because it is local. Network/IP printers go <b>through the backend</b> (<code>printPosPrinterEscPos</code>), so they fail offline.</td></tr>
+<tr><td>17 API config</td><td><span class="tag c">CONFIRMED</span></td><td><code>packages/shared/src/api/axiosConfig.js</code></td><td>Base URL from <code>VITE_API_BASE_URL</code> or <code>window.location.origin</code>. Adds <code>Authorization</code>, <code>X-Branch-Id</code>, <code>X-Request-Id</code>. Handles 429 (one GET retry), 401 (host handler), 403 toast. Network errors get no special handling.</td></tr>
+</tbody></table></div>
+
+<h3>Request lifecycle: opening the till to a completed sale</h3>
+<ol class="flow">
+<li><b>Load.</b> nginx serves <code>/pos/index.html</code> (<code>no-store</code>) and hashed <code>/pos/assets/*</code> (immutable). The Inter font comes from Google Fonts without blocking render.</li>
+<li><b>Sign in.</b> <code>PosLogin</code> calls <code>POST /api/auth/login</code>, or the PIN path with the device token from <code>localStorage billbull:pos:pin_device</code>. <code>persistLoginSession</code> writes token, user and role to <code>sessionStorage</code>.</li>
+<li><b>Gates.</b> <code>RequireAuth</code> (once), then <code>PermissionProvider</code> fetches permissions, then <code>SessionLock</code>, then <code>RequirePosAccess</code> (<code>sales.pos</code> + <code>sales.invoice</code>), then <code>PosBootGate</code> (one branch via <code>switchBranch</code>).</li>
+<li><b>Terminal.</b> <code>usePosSession</code> reads or creates the fingerprint and calls <code>POST /api/pos/terminals/register</code>. A 403 means archived, blocked or at the limit, and shows <code>TerminalUnavailableOverlay</code>. Heartbeat runs every <code>heartbeatIntervalSeconds</code>.</li>
+<li><b>Session &amp; day.</b> <code>GET /api/pos/sessions/active?terminalId</code> and <code>/day-status</code>. If no session is open, the cashier runs Start Session (<code>POST /sessions/open</code>, with the opening count defaulting to the last close). Overlays handle a previous business day still open, closure required, and so on.</li>
+<li><b>Settings.</b> POS settings, tax config, layout (Classic, Compact or Cart Focus) and print templates load into POSSales state.</li>
+<li><b>Scan.</b> The in-memory cache is checked first, then <code>GET /api/pos/resolve?q=</code>. The line is added client-side; totals use <code>vatMath</code>. Price levels and customer prices are re-resolved via the pricing hooks.</li>
+<li><b>Pay.</b> <code>GET /checkout/capabilities</code> must say "supported", or Settle is disabled. Payment lines are reconciled client-side. When the template shows a credit block, <code>GET /api/pos/credit-balance</code> runs first.</li>
+<li><b>Settle.</b> <code>POST /api/pos/checkout</code> with a <code>checkoutKey</code> tied to a fingerprint of the payload. The server steps are listed below.</li>
+<li><b>Done.</b> The success screen shows and the cart clears. In the background: drawer pulses, receipt (agent ESC/POS, backend socket for network printers, or browser print), layaway conversion, <code>PosPrintJob</code> bookkeeping.</li>
+</ol>
+
+<h3>What <code>POST /api/pos/checkout</code> does on the server</h3>
+<p>From <code>PosCheckoutController.checkout</code> (lines 228–549). Each <span class="tx mono">TX</span> marks a separately committed transaction. The controller itself is not <code>@Transactional</code>.</p>
+<ol class="flow">
+<li>Till permission, then <b>idempotent replay</b>: <code>findByPosCheckoutKey</code>. If found, the existing invoice is returned, even after the business day has closed.</li>
+<li>Session gates: previous-business-day continuation, then close-workflow gate. Then the business-day checkout gate (423, unless a supervisor authorizes this one sale).</li>
+<li>Validate before writing: allocation structure, price level, salesperson/target readiness, mandatory customer, Sales Order take-up.</li>
+<li><code>buildInvoice</code>: invoice date = <b>session business date</b>, terminal/session/counter stamped, minimum-price gate (with supervisor PIN, negotiated-price allowance and bill-discount share).</li>
+<li><code>invoiceService.save</code>: number from the locked tenant-wide counter, pricing record (client-charged prices are kept), warehouse defaulting. <span class="tx">TX 1</span></li>
+<li>Resolve the payment plan. On failure the controller calls <code>deleteQuietly</code>.</li>
+<li><code>updateStatus(PAID | PARTIALLY_PAID | CONFIRMED)</code>: FEFO/batch reservation, auto Delivery Note, stock movements, GL invoice journal, credit-limit policy. <span class="tx">TX 2</span>. On failure: <code>deleteQuietly</code>.</li>
+<li>For each allocation: voucher redeem (row lock) and <code>recordPayment</code>, giving a Payment row, a Receipt Voucher and GL. <span class="tx">TX 3…n</span>. <b>No compensation if one of these fails.</b></li>
+<li><code>recordInvoiceOnSession</code> (session tender counters, authoritative close-workflow re-check). <span class="tx">TX</span></li>
+<li>Best effort: Sales Order conversion, serials marked sold, ZATCA QR archived, sale stats, audit, terminal activity.</li>
+</ol>
+<div class="callout">
+<p><b>Why this matters for offline.</b> A sync engine retries. With the current shape, a retry after a failure in step 8 or 9 returns HTTP 200 with an invoice whose payments are missing or partial. The sync would record that as "acknowledged". Phase 0 must make an incomplete checkout detectable before replays rely on <code>checkoutKey</code>.</p>
+</div>
+</section>
+
+<section id="s2">
+<h2><span class="n">PART 2 · REPORT §2</span>Current deployment model</h2>
+<div class="tl"><table>
+<thead><tr><th>Topic</th><th>Status</th><th>Finding</th></tr></thead>
+<tbody>
+<tr><td>Static hosting</td><td><span class="tag c">CONFIRMED</span></td><td>Bundle in <code>/var/www/billbull-pos/pos/</code>, outside Retail's <code>rm -rf</code> path. Four nginx locations (<code>docs/standalone-pos/nginx-pos-locations.conf</code>). Deployed to both production VPSes on 2026-11-04 via <code>/etc/nginx/snippets/billbull-pos.conf</code> (from project memory; the live servers were not inspected for this audit).</td></tr>
+<tr><td>URL</td><td><span class="tag c">CONFIRMED</span></td><td><code>https://&lt;tenant-host&gt;/pos/</code>. <code>/pos</code> redirects with 301. Deep links fall back to <code>/pos/index.html</code>. API stays at <code>/api/**</code>, never <code>/pos/api</code>.</td></tr>
+<tr><td>Build</td><td><span class="tag c">CONFIRMED</span></td><td><code>npm run build:pos</code> → <code>apps/pos/dist</code>. Manual vendor chunks. The bundle contains no tenant host, so one build serves every tenant.</td></tr>
+<tr><td>API URL</td><td><span class="tag c">CONFIRMED</span></td><td>Same origin (<code>window.location.origin</code>). No CORS in production. CORS allow-list only matters for dev.</td></tr>
+<tr><td>HTTPS</td><td><span class="tag c">CONFIRMED</span></td><td>Let's Encrypt via certbot (<code>DEPLOYMENT_GUIDE.md</code>). This meets the secure-context requirement for service workers, Web Crypto and persistent storage.</td></tr>
+<tr><td>Token storage</td><td><span class="tag c">CONFIRMED</span></td><td>JWT in <code>sessionStorage</code>, 24h. Closing the tab or browser signs out. No refresh token.</td></tr>
+<tr><td>Terminal persistence</td><td><span class="tag c">CONFIRMED</span></td><td><code>localStorage</code> keys survive restarts and are shared with <code>/sales/pos</code> on the same origin. Clearing browser data creates a new terminal.</td></tr>
+<tr><td>Kiosk / full screen</td><td><span class="tag p">PARTIAL</span></td><td>Electron shell: locked window, F11 full screen, crash reload, unsaved-sale guard. A browser can use Chrome <code>--kiosk</code>, which is not documented. The Electron <b>offline page replaces the till</b> and retries every 15 s.</td></tr>
+<tr><td>Print agent</td><td><span class="tag c">CONFIRMED</span></td><td>Local HTTP with an origin allow-list and pairing token (agent 0.7.0, unreleased). Independent of Internet.</td></tr>
+<tr><td>PWA installability</td><td><span class="tag m">MISSING</span></td><td>No <code>manifest.webmanifest</code>, icons or service worker. The deployment <b>can</b> support one: HTTPS, a dedicated <code>/pos/</code> scope, and <code>^~ /pos/</code> serving files by <code>try_files $uri</code>. It needs a <code>/pos/sw.js</code> with <code>Cache-Control: no-cache</code> and a manifest location. Hashed assets are already immutable, which suits precaching.</td></tr>
+</tbody></table></div>
+<h3>Limitations caused by the deployment</h3>
+<ul>
+<li>The UI is always fetched from the server. Neither the browser nor Electron can start the till without the origin, because nothing is cached.</li>
+<li>A tenant is identified by its hostname. An offline-capable till is bound to one tenant origin, which is fine. A Store Node on the LAN would need its own origin, and that changes the service worker, storage and token scope (see §7).</li>
+<li>Network printers depend on the cloud backend opening a socket to the printer's <b>LAN</b> IP from the VPS. Treat this path as unavailable offline. Only agent-driven printers keep working.</li>
+<li>Google Fonts is external. The fallback font is acceptable offline. The font could also be precached or self-hosted.</li>
+</ul>
+</section>
+
+<section id="s3">
+<h2><span class="n">REPORT §3</span>Existing modules to reuse</h2>
+<div class="grid2">
+<div class="card"><h4>Frontend (keep, extend through hooks)</h4><ul>
+<li><code>useCheckout.js</code>: payload builder, <code>checkoutKey</code> fingerprinting, "unconfirmed" handling</li>
+<li><code>buildPosCheckoutItems</code>, <code>paymentPresentation</code> (<code>buildPaymentBlock</code>, <code>reconcilePaymentBlock</code>)</li>
+<li><code>vatMath</code>, <code>salesPricing</code>, <code>lineUnits</code></li>
+<li><code>buildThermalReceiptArtifacts</code>, <code>escPosReceipt</code>, <code>localPrintAgent</code></li>
+<li><code>useProductEntry</code> resolve flow and <code>mapPosProductAggregateItem</code></li>
+<li><code>SessionLock</code>, <code>PosBootGate</code>, <code>pinDevice.js</code></li>
+<li><code>tools/pos-parity</code> harness; <code>tools/pos-desktop</code> shell</li>
+</ul></div>
+<div class="card"><h4>Backend (single source of business logic)</h4><ul>
+<li><code>PosCheckoutController.checkout</code>: to be extracted into a service and reused for replay</li>
+<li><code>SalesInvoiceService.save/updateStatus/recordPayment</code>, <code>PostingEngineService</code></li>
+<li><code>DeliveryNoteService</code> FEFO and <code>negativeOverride</code> on <code>StockMovement</code></li>
+<li><code>PosSessionService.recordInvoiceOnSession</code>, Day Close blockers</li>
+<li><code>BusinessDayWindowService</code>, <code>PosBusinessDateService</code></li>
+<li><code>PosPinDevice</code> hashed device token pattern (uncommitted)</li>
+<li><code>PosAuditLog</code> / <code>PosAuditService</code>; <code>PosTerminalService</code> status model (BLOCKED, ARCHIVED, …)</li>
+</ul></div>
+</div>
+</section>
+
+<section id="s4">
+<h2><span class="n">PART 3</span>Transaction workflows and their offline potential</h2>
+<p>"Offline verdict" is the recommendation for an offline phase, not current behaviour. Today <b>every</b> row needs the server.</p>
+<div class="tl wide"><table>
+<thead><tr><th>Workflow</th><th>Frontend</th><th>Endpoint → backend</th><th>Tables</th><th>Tx / idempotency</th><th>Offline verdict</th></tr></thead>
+<tbody>
+<tr><td>Product lookup / scan</td><td><code>useProductEntry</code>, <code>useProductCatalog</code></td><td><code>GET /api/pos/resolve</code>, products list → <code>PosLookupService</code>/<code>PosSearchService</code></td><td>products, barcodes, pricing, <code>serial_master</code>, batches</td><td>Read only</td><td><span class="tag f">ALLOW</span> from local catalog. Pinned batch and serial units are blocked.</td></tr>
+<tr><td>Price resolution / price levels</td><td><code>usePosPriceLevel</code></td><td>pricing endpoints → <code>PricingResolutionService</code></td><td>price levels, customer prices, tiers</td><td>Read only. Server keeps client-charged prices.</td><td><span class="tag f">ALLOW</span> default and level prices from the snapshot. Negotiated prices only for cached customers.</td></tr>
+<tr><td>Discounts / min price</td><td>cart, <code>useSupervisorApproval</code></td><td>checkout gate (supervisor PIN verified server-side)</td><td>—</td><td>In checkout</td><td><span class="tag d">DECISION</span> Default: block below-minimum offline, because the PIN cannot be verified.</td></tr>
+<tr><td>VAT</td><td><code>vatMath</code></td><td>recomputed in <code>save()</code></td><td>tax config</td><td>Server is authoritative</td><td><span class="tag f">ALLOW</span> with cached tax config. The server recomputes and any difference is flagged.</td></tr>
+<tr><td>Customer selection</td><td><code>CustomerPicker</code>, resolve CUSTOMER</td><td>customers API</td><td>customers</td><td>Read only</td><td><span class="tag f">ALLOW</span> cached subset, for attribution only.</td></tr>
+<tr><td>Checkout (cash)</td><td><code>useCheckout</code></td><td><code>POST /api/pos/checkout</code></td><td><code>sales_invoices</code>, items, <code>delivery_notes</code>, <code>stock_movements</code>, <code>journal_entries</code>, <code>sales_payments</code>, <code>sales_receipt_vouchers</code>, <code>pos_sessions</code></td><td>Multi-TX, <code>checkoutKey</code> unique</td><td><span class="tag f">ALLOW</span> through the outbox and replay</td></tr>
+<tr><td>Card payment</td><td>payments/*</td><td>same, card legs</td><td>same</td><td>same</td><td><span class="tag d">DECISION</span> Allow only for an external bank terminal, with its reference recorded.</td></tr>
+<tr><td>Split payment</td><td><code>PaymentAllocationPanel</code></td><td>same, allocations</td><td>same</td><td>split group id</td><td><span class="tag f">ALLOW</span> if every leg is an allowed type</td></tr>
+<tr><td>Online / bank transfer</td><td>payments/*</td><td>same</td><td>same</td><td>same</td><td><span class="tag m">BLOCK</span> (cannot be verified)</td></tr>
+<tr><td>Customer credit (A/R)</td><td><code>CreditBalance</code></td><td>same + <code>enforceCreditLimit</code></td><td>ledger</td><td>Credit limit checked at posting</td><td><span class="tag m">BLOCK</span> (limit unverifiable across terminals)</td></tr>
+<tr><td>Customer advance</td><td>payments/*</td><td>advance application</td><td>receipt vouchers</td><td>In TX</td><td><span class="tag m">BLOCK</span></td></tr>
+<tr><td>Credit voucher redemption</td><td><code>voucherRedemption.js</code></td><td><code>CreditVoucherService.redeem</code> (row lock)</td><td><code>credit_vouchers</code></td><td>Lock prevents double spend</td><td><span class="tag m">BLOCK</span> (double spend)</td></tr>
+<tr><td>Invoice numbering</td><td>—</td><td><code>SalesDocumentNumberingService</code> (locked)</td><td><code>sales_document_number_settings</code></td><td>Tenant-wide serial counter</td><td><span class="tag d">DECISION</span> See §11</td></tr>
+<tr><td>Stock deduction</td><td>—</td><td><code>updateStatus</code> → auto-DN → <code>DeliveryNoteService</code> FEFO</td><td><code>stock_movements</code>, batch allocations, bins</td><td>Row locks; <code>negativeOverride</code></td><td><span class="tag f">ALLOW</span> at sync, override flagged</td></tr>
+<tr><td>Receipt</td><td><code>buildThermalReceiptArtifacts</code></td><td>agent / backend socket / browser</td><td><code>pos_print_jobs</code></td><td>Best effort</td><td><span class="tag f">ALLOW</span> agent printers. Provisional receipt.</td></tr>
+<tr><td>Held sales</td><td><code>useHeldSales</code> (calls the <b>layaway</b> API)</td><td><code>/api/pos/layaways</code> (<code>pos_held_sales</code> also exists)</td><td><code>pos_layaways</code></td><td>No client key</td><td><span class="tag f">LOCAL</span> park on this terminal only</td></tr>
+<tr><td>Layaways</td><td><code>useLayaway</code>, <code>LayawaysList</code></td><td><code>PosLayawayController</code></td><td><code>pos_layaways</code>, items, payments</td><td>Reserves stock; no client key</td><td><span class="tag m">BLOCK</span></td></tr>
+<tr><td>Returns</td><td><code>SalesReturn/**</code></td><td><code>/api/sales/returns</code>, cash refund service</td><td><code>sales_returns</code>, credit applications</td><td>Return row locked</td><td><span class="tag m">BLOCK</span> (needs the original invoice and refund controls)</td></tr>
+<tr><td>Cash movements</td><td><code>CashDropDialog</code></td><td><code>/api/pos/cash-movements</code>, <code>/sessions/{id}/cash-movement</code></td><td><code>pos_cash_movements</code></td><td>No client key</td><td><span class="tag d">PHASE 3</span> after adding an idempotency key</td></tr>
+<tr><td>Session open / close, X, Z, Day Close</td><td><code>usePosSession</code>, <code>useSessionClosure</code></td><td><code>PosSessionController</code></td><td><code>pos_sessions</code>, <code>pos_report_sequences</code>, <code>pos_day_closes</code>, <code>pos_business_dates</code></td><td>Server-numbered, locked</td><td><span class="tag m">BLOCK</span> Online only, and close only after the outbox is drained.</td></tr>
+<tr><td>Delivery orders / SO take-up / service</td><td><code>NewDeliveryOrder</code>, <code>usePosSalesOrders</code>, <code>ServiceRepair</code></td><td>checkout variants, <code>/deliveries/*</code></td><td>invoices, SOs</td><td>Various</td><td><span class="tag m">BLOCK</span></td></tr>
+</tbody></table></div>
+</section>
+
+<section id="s5">
+<h2><span class="n">PART 4 · REPORT §4–5</span>Offline readiness and gaps</h2>
+<p>Each step of the experience you described, compared with what exists today.</p>
+<div class="tl wide"><table>
+<thead><tr><th>Desired behaviour</th><th>Today</th><th>Gap to close</th></tr></thead>
+<tbody>
+<tr><td>Cashier can open the POS offline</td><td><span class="tag m">MISSING</span> No app-shell cache. Electron shows an offline page. Login, permissions, terminal and session calls are all required.</td><td>Service worker app shell; cached boot context (permissions, branch, terminal, open session, settings); an offline unlock path for a tab that was closed.</td></tr>
+<tr><td>Previously synced products available</td><td><span class="tag p">PARTIAL</span> Only an in-memory cache of products already scanned in this tab.</td><td>Branch catalog snapshot in IndexedDB with delta sync and a version token.</td></tr>
+<tr><td>Scanning continues</td><td><span class="tag m">MISSING</span> An unseen barcode fails ("Lookup failed").</td><td>Local barcode index and a resolve fallback when the network fails.</td></tr>
+<tr><td>Cart continues</td><td><span class="tag c">CONFIRMED</span> The cart is client-side, but a refresh loses it.</td><td>Persist the working cart per terminal (draft).</td></tr>
+<tr><td>Permitted payments continue</td><td><span class="tag m">MISSING</span> <code>canSettle</code> is false when capabilities are unreachable, which is the safe behaviour today.</td><td>Offline policy module deciding the allowed tenders; a separate offline settle path.</td></tr>
+<tr><td>Sale saved locally</td><td><span class="tag m">MISSING</span></td><td>Durable outbox written <b>before</b> the receipt prints.</td></tr>
+<tr><td>Clear offline status</td><td><span class="tag m">MISSING</span> Errors surface as toasts or "unconfirmed".</td><td>Connectivity state machine and a rail badge.</td></tr>
+<tr><td>Auto reconnect &amp; sync</td><td><span class="tag m">MISSING</span> The session poll and heartbeat ignore failures.</td><td>Sync worker with backoff, one per origin (Web Locks).</td></tr>
+<tr><td>No duplicates</td><td><span class="tag p">PARTIAL</span> <code>checkoutKey</code> plus unique index, but the key is held in memory and checkout is non-atomic.</td><td>Persist the key; completion marker; ingestion dedupe by <code>(terminal, localSeq)</code>.</td></tr>
+<tr><td>Acknowledgements recorded</td><td><span class="tag m">MISSING</span></td><td>Per-record server status, stored locally.</td></tr>
+<tr><td>Failures stay visible</td><td><span class="tag m">MISSING</span></td><td>Review queue on the till and in back office.</td></tr>
+</tbody></table></div>
+
+<h3>Other technical limitations found</h3>
+<ul>
+<li><b>Business date comes from the server.</b> <code>posBusinessDate(sessionId)</code> stamps the invoice with the session's business date. This helps: a replayed sale keeps the date of the session it was rung in. But the business-day <b>checkout gate</b> uses the server's clock <i>now</i>, so a sale replayed after the window closed would get a 423 today.</li>
+<li><b>Session sync poll.</b> Failures are swallowed, so offline does not lock the till. When the network returns, a session closed remotely by an admin in the meantime invalidates the till and resets the cart. Pending outbox records must survive that reset.</li>
+<li><b>POSSales.jsx is line-pinned.</b> Characterization tests pin source lines (for example the PromotionsDialog pins). Offline logic should live in new hooks and modules, with the smallest possible edits in <code>POSSales.jsx</code>.</li>
+<li><b>Two places for "held sale".</b> The till's Hold uses layaways, while <code>pos_held_sales</code> and <code>PosHeldSaleController</code> also exist. Offline parking should be local and separate from both.</li>
+</ul>
+</section>
+
+<section id="s6">
+<h2><span class="n">PART 5 · REPORT §6</span>Architecture options compared</h2>
+<div class="tl wide"><table>
+<thead><tr><th>Option</th><th>What it means here</th><th>For</th><th>Against</th><th>Verdict</th></tr></thead>
+<tbody>
+<tr><td><b>A.</b> Browser POS + Store Node + Cloud</td><td>Tills talk to a branch server. The node holds the catalog, outbox and possibly a local ledger.</td><td>Cross-terminal stock view offline; one sync point per branch.</td><td>If the node posts invoices, GL or stock, it is a <b>second BillBull</b> needing two-way Postgres replication of numbering, GL and stock. New hardware and operations for every client. The node becomes a single point of failure on the LAN. The till's origin changes, which breaks SW/token scope and print-agent allow-lists.</td><td>Reject as an authority. Keep as an optional relay later.</td></tr>
+<tr><td><b>B.</b> Browser POS + terminal-local DB + Cloud</td><td>Each till keeps an IndexedDB catalog and an outbox, and syncs straight to the cloud.</td><td>No new server. Works in browser and Electron. Reuses the origin, TLS, auth and agent setup. Every terminal is independent, so there is no LAN single point of failure.</td><td>No shared stock view between tills during an outage. Each till needs its own catalog download.</td><td><b>Recommended base</b></td></tr>
+<tr><td><b>C.</b> Store Node + terminal-local outbox + Cloud</td><td>B, plus an optional node that tills <i>also</i> forward to, to share stock hints and relay sync.</td><td>Survives node loss (the terminal outbox is still the source). Adds branch coordination where it pays.</td><td>Most moving parts. Its value only shows at branches with many terminals and long outages.</td><td>Later, optional Phase 4</td></tr>
+<tr><td><b>D.</b> Electron + embedded SQLite</td><td>B, but the outbox lives in SQLite in Electron's main process.</td><td>Stronger durability and encryption options. Can run when the page is closed.</td><td>Electron becomes mandatory. A second storage codepath. The bundle is loaded remotely, so local code would be needed anyway.</td><td><span class="tag d">DECISION</span> only if browser tills are dropped</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="s7">
+<h2><span class="n">REPORT §7</span>Store Node recommendation</h2>
+<p><b>Do not build a Store Node for the first offline release.</b> Revisit it after Phase 2 telemetry shows how often and for how long branches with three or more terminals are offline, and how often they oversell.</p>
+<p>If one is built later, its role should be kept narrow:</p>
+<ul>
+<li><b>It does:</b> mirror the branch catalog snapshot (fewer cloud downloads), receive copies of each till's signed offline records and forward them, keep per-SKU "sold offline" counters so tills can warn on likely oversell, and report device health.</li>
+<li><b>It does not:</b> number invoices, post GL, deduct stock, or accept a sale the till has not already stored in its own outbox. The terminal outbox stays the source of truth until the <b>cloud</b> acknowledges.</li>
+<li><b>Packaging:</b> the same tech as the print agent (Node, packaged as a Windows service), with SQLite. No Postgres at the store.</li>
+<li><b>Origin problem:</b> the till must keep loading from the tenant origin. The node would be a second, LAN-only API (for example <code>https://storenode.local:19800</code>) called by an explicit client, with its own pairing just like the print agent. It must not become the page origin.</li>
+<li><b>Authentication:</b> node enrolled by an admin, holding a device key; tills authenticate to it with their terminal key; mTLS or signed requests on the LAN.</li>
+</ul>
+</section>
+
+<section id="s8">
+<h2><span class="n">PART 6 · REPORT §8</span>Local storage strategy</h2>
+<p><b>IndexedDB through Dexie</b> (<span class="tag f">PROPOSED</span> new dependency) in the till origin. Request <code>navigator.storage.persist()</code> so the browser does not evict it. Use Web Locks so only one tab syncs. SQLite only if Electron becomes mandatory. No local PostgreSQL.</p>
+<div class="tl wide"><table>
+<thead><tr><th>Data</th><th>Where</th><th>Authority</th><th>Sync</th></tr></thead>
+<tbody>
+<tr><td>Product catalog, barcodes, units</td><td>IndexedDB <code>catalog</code>, <code>barcodes</code></td><td>Cloud (cache)</td><td>Snapshot plus delta by <code>updatedAt</code>/version; full refresh daily</td></tr>
+<tr><td>Selling prices, price levels</td><td>IndexedDB <code>prices</code> (branch-scoped)</td><td>Cloud (cache)</td><td>With the catalog; the version is stamped on each offline sale</td></tr>
+<tr><td>Tax configuration</td><td>IndexedDB <code>config</code></td><td>Cloud</td><td>At boot and on change</td></tr>
+<tr><td>Branch, warehouse, TRN, receipt template</td><td>IndexedDB <code>config</code></td><td>Cloud</td><td>At boot</td></tr>
+<tr><td>Customer subset</td><td>IndexedDB <code>customers</code> (code, name, phone, TRN; no balances)</td><td>Cloud</td><td>Recent and favourite customers for this branch, capped</td></tr>
+<tr><td>POS settings, terminal config, hardware profile</td><td>IndexedDB <code>config</code></td><td>Cloud</td><td>At boot; a version mismatch triggers a refetch</td></tr>
+<tr><td>Boot context (user, permissions, branch, terminal, open session, business-day window)</td><td>IndexedDB <code>context</code></td><td>Cloud</td><td>Refreshed on every online boot and heartbeat</td></tr>
+<tr><td>Offline lease and device key</td><td>IndexedDB (non-extractable <code>CryptoKey</code>)</td><td>Cloud issues</td><td>Renewed while online</td></tr>
+<tr><td>Working cart / parked carts</td><td>IndexedDB <code>drafts</code></td><td>Terminal</td><td>Never synced</td></tr>
+<tr><td>In-flight online checkout (key and payload)</td><td>IndexedDB <code>pending</code></td><td>Terminal until answered</td><td>Phase 0. Retried with the same key after a refresh.</td></tr>
+<tr><td>Completed offline sales and their payments</td><td>IndexedDB <code>outbox</code> (append-only, hash-chained)</td><td><b>Terminal until the cloud acknowledges</b>, then the cloud</td><td>Sync worker. Acknowledged records kept 30 days.</td></tr>
+<tr><td>Sync metadata (last seq, last ack, catalog version, server-time offset)</td><td>IndexedDB <code>meta</code></td><td>Terminal</td><td>Reported on heartbeat</td></tr>
+</tbody></table></div>
+<h3>Survival</h3>
+<ul>
+<li><b>Refresh / browser closed / PC restart:</b> IndexedDB survives. The service worker serves the shell. The outbox resumes. The working draft is restored.</li>
+<li><b>Cleared site data or a new browser profile:</b> pending records are lost. Mitigations: the Electron shell (its profile is not cleared by users), a "pending sales" warning before sign-out, and an optional backup copy (to the print agent or, later, a Store Node). The server detects the loss as a <b>sequence gap</b>.</li>
+<li><b>Store Node restart:</b> not applicable in the recommended phases. Later, the terminal outbox remains authoritative.</li>
+</ul>
+</section>
+
+<section id="s9">
+<h2><span class="n">PART 8 · REPORT §9</span>Synchronization architecture</h2>
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> CAPTURED: offline Settle (IndexedDB tx commits)
+  CAPTURED --> PENDING: receipt printed / drawer opened
+  PENDING --> SENDING: online + lease valid + worker holds lock
+  SENDING --> PENDING: network error (backoff)
+  SENDING --> ACCEPTED: server posted via checkout pipeline
+  SENDING --> DUPLICATE: key already posted (same payload hash)
+  SENDING --> REVIEW: posted with flags (negative stock, price drift)
+  SENDING --> REJECTED: not postable (bad signature, revoked, seq gap)
+  DUPLICATE --> SYNCED
+  ACCEPTED --> SYNCED
+  REVIEW --> SYNCED: manager resolves in back office
+  REJECTED --> REVIEW
+  SYNCED --> [*]
+</pre>
+<h3>The offline sale record</h3>
+<pre>{
+  offlineSaleId:   UUIDv7      // also sent as checkoutKey, so an earlier "unconfirmed" online attempt dedupes
+  terminalId, branchId, sessionId, businessDate,   // businessDate from the session open at capture
+  localSeq:        n           // per terminal, gap-free, from the IndexedDB counter in the same tx
+  capturedAt:      device time + serverOffset at last sync
+  cashierUserId, leaseId, catalogVersion,
+  request:         PosCheckoutRequest   // the exact body the online path sends; no new shape
+  prevHash, hash:  SHA-256 chain over (prevHash, canonical record)
+  signature:       HMAC-SHA256(terminalKey, hash)
+}</pre>
+<h3>How it fits the current checkout</h3>
+<ol>
+<li><b>One pipeline.</b> Move the body of <code>PosCheckoutController.checkout</code> into <code>PosCheckoutService.checkout(request, CheckoutContext)</code>. The online endpoint calls it with <code>CheckoutContext.ONLINE</code>, with no behaviour change. The new <code>PosOfflineSaleIngestService</code> calls it with <code>OFFLINE_REPLAY(record)</code>.</li>
+<li><b>What replay changes, explicitly.</b> The business-day checkout gate is evaluated against the <i>captured</i> session and business date, not the server's current time. Stock shortfall becomes a negative override with a review flag. A price below minimum is refused (the client should never send one). The voucher, credit, advance and online allocation types are refused.</li>
+<li><b>Dedupe, in layers.</b> (1) Unique <code>pos_offline_sales(offline_sale_id)</code>. (2) Unique <code>(terminal_id, local_seq)</code>. (3) The existing unique <code>sales_invoices.pos_checkout_key</code>. (4) The Phase 0 completion marker, so an incomplete earlier attempt is never reported as success.</li>
+<li><b>Ordering.</b> Send in <code>localSeq</code> order, batches of up to 20. The server processes them sequentially per terminal and records <code>highWaterSeq</code>. A gap stops acceptance past it and raises a review item.</li>
+<li><b>Retry.</b> Exponential backoff with jitter (2 s doubling up to 5 min). Retry immediately on an <code>online</code> event or a successful heartbeat. 4xx results are final per record, not retried; 5xx and network errors are retried.</li>
+<li><b>Acknowledgement.</b> Each record returns <code>ACCEPTED | DUPLICATE | REVIEW | REJECTED</code>, plus <code>invoiceId</code>, <code>invoiceNumber</code> and a reason code. The till stores it and can then offer reprint or email of the final tax invoice.</li>
+<li><b>Reconciliation.</b> Heartbeat carries <code>{pendingCount, highWaterSeq, oldestPendingAt}</code>. The server compares this with the ingested high-water mark and shows mismatches in POS Administration. Session close and Day Close use it as a gate.</li>
+</ol>
+</section>
+
+<section id="s10">
+<h2><span class="n">PART 9 · REPORT §10</span>Security and device management</h2>
+<div class="tl wide"><table>
+<thead><tr><th>Concern</th><th>Today</th><th>Proposed</th></tr></thead>
+<tbody>
+<tr><td>Terminal authentication</td><td><span class="tag p">PARTIAL</span> Terminal id and fingerprint are client claims. Registration is open to any authenticated user. Status gates (BLOCKED, ARCHIVED, …) do exist.</td><td><span class="tag f">PROPOSED</span> <b>Offline enrollment</b> by an admin, modelled on <code>PosPinDevice</code>: the server issues a random 256-bit key, stores only its hash, and the till keeps it as a non-extractable WebCrypto key. Offline sales are only accepted from enrolled terminals.</td></tr>
+<tr><td>Offline authority</td><td><span class="tag m">MISSING</span></td><td><span class="tag f">PROPOSED</span> <b>Offline lease</b>, issued while online for one open session: <code>validUntil</code> (the earlier of business-day end and a cap such as 12h), <code>maxSales</code>, <code>maxCashTotal</code>, <code>seqStart</code>, allowed tenders and product classes. Signed by the server. Without a valid lease, the till cannot sell offline.</td></tr>
+<tr><td>Revocation</td><td><span class="tag p">PARTIAL</span> Terminal status takes effect online only.</td><td>Revoking enrollment stops new leases. Records signed after <code>revokedAt</code> (judged by sequence, not device clock) go to review. Exposure is limited by the lease caps.</td></tr>
+<tr><td>Cashier authentication offline</td><td><span class="tag m">MISSING</span> JWT in <code>sessionStorage</code>.</td><td><span class="tag d">DECISION</span> Phase 2: only the cashier already signed in can continue (the idle lock unlocks against a locally cached PIN verifier for that session owner only). No new sign-ins offline. Cached verifier: PBKDF2 with a server salt, scoped to the lease, wiped when the lease ends.</td></tr>
+<tr><td>Branch authorization</td><td><span class="tag c">CONFIRMED</span> Server <code>BranchScope</code>.</td><td>The lease binds branch, terminal and session. Ingestion rejects any mismatch, whatever <code>X-Branch-Id</code> says.</td></tr>
+<tr><td>Transaction integrity</td><td><span class="tag m">MISSING</span></td><td>HMAC signature plus hash chain plus gap-free sequence. Tampering and deletions show up server-side.</td></tr>
+<tr><td>Encryption at rest</td><td><span class="tag m">MISSING</span></td><td>Keep the stored customer data minimal. Optionally AES-GCM-encrypt the outbox payload with a non-extractable key. Recommend BitLocker on tills (documented in <code>HARDWARE_CHECKLIST.md</code>). This does not stop someone with full access to the PC's browser profile, so the lease caps are the real control.</td></tr>
+<tr><td>Local API security</td><td><span class="tag c">CONFIRMED</span> Print agent: origin allow-list and pairing.</td><td>A future Store Node uses the same model plus device keys.</td></tr>
+<tr><td>Local backup</td><td><span class="tag m">MISSING</span></td><td>Optional: mirror the signed outbox to the print agent's data folder (it is already local and paired). Server dedupe makes double delivery harmless.</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="s11">
+<h2><span class="n">PART 7 · REPORT §11</span>Inventory and financial restrictions</h2>
+<h3>Multiple terminals selling the same stock while disconnected</h3>
+<p>Each till sees only its cached snapshot. Two tills can each sell the last unit. At sync, the first replay deducts normally and the second either fails (when <code>stockCheckRequired</code> is on) or goes negative (when it is off). Because the customer has already paid and left, <b>replay must never refuse for stock</b>. It posts with <code>StockMovement.negativeOverride</code> (an existing flag that bin reports already surface) and creates a review item. This is acceptable for untracked goods. It is not acceptable for unique units (serials, per-unit batch numbers), so those are blocked.</p>
+
+<div class="tl wide"><table>
+<thead><tr><th>Area</th><th>Offline rule</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>Untracked products</td><td><span class="tag f">ALLOW</span></td><td>Server deducts at sync; negative override plus a flag.</td></tr>
+<tr><td>Batch / expiry products, auto FEFO</td><td><span class="tag d">DECISION</span> default ALLOW</td><td>FEFO runs at sync on the batches available then. Risk: a batch that expired between sale and sync. Ingestion flags it but does not block.</td></tr>
+<tr><td>Pinned batch unit (per-unit <code>-N</code> numbers), serials</td><td><span class="tag m">BLOCK</span></td><td>Unique units; reservation and "already sold" state is server-side (<code>serial_master</code>, batch allocations).</td></tr>
+<tr><td>Bin-level stock</td><td><span class="tag f">ALLOW</span></td><td>Bins are picked at sync by the existing logic.</td></tr>
+<tr><td>Payment: cash</td><td><span class="tag f">ALLOW</span></td><td>Settles at the till.</td></tr>
+<tr><td>Payment: card (external terminal)</td><td><span class="tag d">DECISION</span></td><td>The bank terminal authorizes it, not BillBull. Require a reference. Per-branch toggle.</td></tr>
+<tr><td>Online, BNPL, credit (A/R), advance, vouchers</td><td><span class="tag m">BLOCK</span></td><td>Each needs a server-side balance or lock.</td></tr>
+<tr><td>Below-minimum price / supervisor overrides</td><td><span class="tag m">BLOCK</span> (Phase 2)</td><td>The PIN is verified server-side.</td></tr>
+<tr><td>Returns, refunds, layaways, deliveries, SO take-up</td><td><span class="tag m">BLOCK</span></td><td>They reference server documents and reservations.</td></tr>
+<tr><td>Invoice numbering</td><td><span class="tag d">DECISION</span></td><td>(a) <b>Provisional receipt</b> with a per-terminal sequential reference (<code>OFF-&lt;terminal&gt;-000123</code>). The tax invoice number is assigned at sync and the final invoice can be reprinted or emailed. Simple, but tax-compliance acceptability must be confirmed. (b) <b>Leased number blocks</b>: a per-terminal series reserved while online and used offline. The server accepts the number if it is inside the lease. This needs a new series model in <code>SalesDocumentNumberingService</code> and changes invoice-number ordering for everyone. Recommend (a) for the pilot, and (b) only if a tenant's auditor requires a final number on the paper.</td></tr>
+<tr><td>Business Day enforcement</td><td><span class="tag f">RULE</span></td><td>Offline selling stops at the cached window end (with extension). A clock running backwards, or a jump beyond the lease, stops selling.</td></tr>
+<tr><td>Session closure, X / Z, Day Close</td><td><span class="tag f">RULE</span></td><td>Online only, and only once this terminal's outbox is empty and the server high-water mark matches. Day Close already refuses while any session is <code>OPEN</code> (confirmed, <code>PosSessionService</code> ~2448), and offline sales always belong to an open session, so this protection comes for free unless an admin force-closes the session.</td></tr>
+<tr><td>GL posting</td><td><span class="tag c">UNCHANGED</span></td><td>Posted by the existing pipeline at replay, dated by the session's business date. Period locks (<code>PeriodLockTriggerInstaller</code>) can refuse a late record, which then goes to review.</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="s12">
+<h2><span class="n">PART 10 · REPORT §12</span>Failure and recovery</h2>
+<div class="tl wide"><table>
+<thead><tr><th>#</th><th>Scenario</th><th>Safe behaviour</th><th>Recovery</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Internet drops during checkout (before Settle)</td><td>Connectivity flips the badge. If the cart and tenders are offline-eligible and a lease is valid, Settle takes the offline path. Otherwise the cashier is told exactly which line or tender is not allowed offline.</td><td>Automatic.</td></tr>
+<tr><td>2</td><td>Drops right after Settle is pressed (request may have reached the server)</td><td>Today's "unconfirmed" message is correct. Proposed: the attempt is already in <code>pending</code> with its <code>checkoutKey</code>. Convert it to an offline record <b>with the same key</b> only if it is offline-eligible. Otherwise keep retrying the online request.</td><td>Replay dedupes against the invoice if the first attempt committed.</td></tr>
+<tr><td>3</td><td>Browser refresh during checkout</td><td>Today: cart and key are lost, and a re-ring risks a duplicate. Proposed: restore the draft and pending attempt from IndexedDB, then re-query by key before allowing a new Settle.</td><td>Phase 0 delivers this.</td></tr>
+<tr><td>4</td><td>POS PC restarts</td><td>The service worker serves the shell. Context, lease and outbox are restored. The cashier unlocks (session owner only).</td><td>Sync resumes.</td></tr>
+<tr><td>5 / 6</td><td>Store Node restarts / unavailable</td><td>Not in the base design. Later: tills sync directly to the cloud; the node is optional.</td><td>—</td></tr>
+<tr><td>7</td><td>One terminal off the LAN</td><td>That terminal works offline under its lease. The others are unaffected.</td><td>Its outbox drains on reconnect.</td></tr>
+<tr><td>8</td><td>Whole store LAN down</td><td>Same as 7 for every terminal. Agent printers still work (USB is local). Network printers do not.</td><td>Per-terminal drain.</td></tr>
+<tr><td>9</td><td>Several terminals sell the same product</td><td>Allowed for untracked goods. Unique units are blocked.</td><td>Negative stock review list; a stock adjustment or GRN fixes it.</td></tr>
+<tr><td>10</td><td>Cloud receives duplicates</td><td>Four-layer dedupe; returns <code>DUPLICATE</code> with the original invoice.</td><td>None needed.</td></tr>
+<tr><td>11</td><td>Cloud rejects a record</td><td>The record stays on the till as REJECTED or REVIEW and is visible on the rail. It is never silently dropped.</td><td>Back office review: post into the current day with an audit link, or void with a cash variance note.</td></tr>
+<tr><td>12</td><td>Sync stops halfway</td><td>Each record is its own server transaction (after Phase 0). Acknowledgement is per record.</td><td>Resume from the first unacknowledged <code>localSeq</code>.</td></tr>
+<tr><td>13</td><td>Business Day changes during an outage</td><td>Stop offline selling at the cached window end. Records keep their captured business date.</td><td>Replay against the captured session. A closed period goes to review.</td></tr>
+<tr><td>14</td><td>Day Close attempted with pending records</td><td>Blocked, because the session is still open. Proposed extra guard: Day Close also checks reported pending counts for the branch's terminals. An admin force-close shows the pending count and needs a reason.</td><td>Late records go to review, not silently into a closed day.</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="s13">
+<h2><span class="n">REPORT §13</span>API changes</h2>
+<div class="tl wide"><table>
+<thead><tr><th>Change</th><th>Existing to reuse</th><th>New</th><th>Risk</th><th>Rollback</th></tr></thead>
+<tbody>
+<tr><td>Checkout service extraction</td><td><code>POST /api/pos/checkout</code></td><td>— (internal <code>PosCheckoutService</code>)</td><td>Medium; behaviour must be byte-identical. Covered by existing checkout tests and the parity harness.</td><td>Revert the commit; the endpoint contract is unchanged.</td></tr>
+<tr><td>Completion check on replay</td><td>same</td><td>409 <code>CHECKOUT_INCOMPLETE</code> body</td><td>Low</td><td>Flag off</td></tr>
+<tr><td>Catalog snapshot</td><td><code>/api/pos/resolve</code> logic, product lists</td><td><code>GET /api/pos/offline/catalog?since=&amp;version=</code></td><td>Low (read only). Payload size per branch to be measured.</td><td>Remove the endpoint</td></tr>
+<tr><td>Customer subset</td><td>customers API</td><td><code>GET /api/pos/offline/customers?since=</code></td><td>Low; contains personal data</td><td>Remove</td></tr>
+<tr><td>Enrollment</td><td><code>/api/pos/pin-devices</code> pattern</td><td><code>POST/DELETE /api/pos/terminals/{id}/offline-enrollment</code></td><td>Low</td><td>Revoke all</td></tr>
+<tr><td>Lease</td><td>session endpoints</td><td><code>POST /api/pos/sessions/{id}/offline-lease</code></td><td>Low</td><td>Stop issuing</td></tr>
+<tr><td>Ingest</td><td>checkout pipeline</td><td><code>POST /api/pos/offline-sales:batch</code></td><td>High; the financial path</td><td>Flag off; records stay safe on the tills</td></tr>
+<tr><td>Status / review</td><td>—</td><td><code>GET /api/pos/offline-sales?terminalId&amp;status</code>, <code>POST /api/pos/offline-sales/{id}/resolve</code></td><td>Medium</td><td>Hide UI</td></tr>
+<tr><td>Heartbeat outbox report</td><td><code>POST /terminals/{id}/heartbeat</code></td><td>Optional body <code>{pendingCount, highWaterSeq}</code></td><td>Low; older clients send none</td><td>Ignore the field</td></tr>
+<tr><td>Capabilities</td><td><code>GET /checkout/capabilities</code></td><td>Add <code>offlineIngestVersion</code></td><td>Low</td><td>—</td></tr>
+<tr><td>Cash movement key (Phase 3)</td><td><code>/api/pos/cash-movements</code></td><td><code>clientRequestId</code> field</td><td>Low</td><td>Nullable</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="s14">
+<h2><span class="n">REPORT §14</span>Database changes</h2>
+<p>All additive, idempotent Flyway scripts guarded with <code>to_regclass</code>, numbered above the highest version at the time. V136 and V137 are untracked in the working tree today, so the next number depends on what is committed first. Never reuse a retired number.</p>
+<div class="tl wide"><table>
+<thead><tr><th>Phase</th><th>Change</th><th>Impact</th></tr></thead>
+<tbody>
+<tr><td>0</td><td><code>sales_invoices.pos_checkout_completed_at TIMESTAMP NULL</code>, set as the last step of checkout</td><td>Nullable. Historic rows stay null and are treated as "legacy complete".</td></tr>
+<tr><td>2</td><td><code>pos_offline_sales</code>: <code>id</code>, <code>offline_sale_id UUID UNIQUE</code>, <code>terminal_id</code>, <code>branch_id</code>, <code>session_id</code>, <code>business_date</code>, <code>local_seq</code>, <code>captured_at</code>, <code>received_at</code>, <code>payload JSONB</code>, <code>payload_hash</code>, <code>prev_hash</code>, <code>signature</code>, <code>lease_id</code>, <code>status</code>, <code>invoice_id</code>, <code>reason_code</code>, <code>review_*</code>, <code>UNIQUE(terminal_id, local_seq)</code></td><td>New table. The financial effect still goes through the existing tables.</td></tr>
+<tr><td>2</td><td><code>pos_terminal_offline_keys</code> (key hash, enrolled by, revoked at); <code>pos_offline_leases</code></td><td>New tables</td></tr>
+<tr><td>2</td><td><code>sales_invoices.offline_sale_id</code>, <code>offline_captured_at</code> (nullable)</td><td>Reporting and audit; no behaviour change online</td></tr>
+<tr><td>2</td><td>Reuse <code>stock_movements.negative_override</code>; review flag on <code>pos_offline_sales</code></td><td>None</td></tr>
+<tr><td>3 (if decided)</td><td>Number-lease table for per-terminal series</td><td>Touches numbering. Needs its own design review.</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="s15">
+<h2><span class="n">REPORT §15</span>Frontend changes</h2>
+<div class="tl wide"><table>
+<thead><tr><th>Existing file</th><th>Proposed new file</th><th>Change</th><th>Risk</th></tr></thead>
+<tbody>
+<tr><td><code>apps/pos/vite.config.js</code>, <code>index.html</code></td><td><code>apps/pos/public/manifest.webmanifest</code>, <code>apps/pos/src/sw.js</code> (Workbox <code>injectManifest</code>)</td><td>Precache the shell and hashed assets, scoped to <code>/pos/</code>. Never cache <code>/api/**</code>.</td><td>Medium: a stale-SW update strategy is needed (version check plus "reload when idle", never mid-sale)</td></tr>
+<tr><td>—</td><td><code>packages/shared/src/offline/db.js</code> (Dexie schema), <code>connectivity.js</code>, <code>offlinePolicy.js</code>, <code>catalogSync.js</code>, <code>outbox.js</code>, <code>syncWorker.js</code>, <code>offlineCrypto.js</code></td><td>New shared module. Exported only to <code>apps/pos</code>; run <code>npm run shared:exports</code>.</td><td>Low, additive</td></tr>
+<tr><td><code>features/checkout/useCheckout.js</code></td><td><code>features/checkout/useOfflineSettle.js</code></td><td>Persist <code>checkoutKey</code> and payload before POST (Phase 0). Route to offline settle when the policy allows (Phase 2).</td><td>Medium: characterization tests pin the reset sequence</td></tr>
+<tr><td><code>features/products/useProductEntry.js</code></td><td><code>features/products/localResolve.js</code></td><td>Local fallback on a network error only. Batch and serial pins are refused offline.</td><td>Low</td></tr>
+<tr><td><code>features/session/usePosSession.js</code></td><td><code>features/session/useOfflineBootContext.js</code></td><td>Boot from cached context when offline; close gate on the outbox.</td><td>Medium</td></tr>
+<tr><td><code>apps/pos/src/workspace/TillWorkspace.jsx</code></td><td><code>apps/pos/src/shell/OfflineStatus.jsx</code>, <code>OutboxPanel.jsx</code></td><td>Rail badge (Online / Offline / Syncing n / Needs review) and the review list.</td><td>Low</td></tr>
+<tr><td><code>api/axiosConfig.js</code></td><td>—</td><td>Mark network errors (<code>err.isNetwork</code>) for connectivity. No auto-retry of POSTs.</td><td>Low</td></tr>
+<tr><td><code>pages/Sales/POSSales.jsx</code></td><td>—</td><td>As few lines as possible: hand the new hooks into existing prop bags. Re-pin line-pinned tests.</td><td>Medium</td></tr>
+<tr><td><code>tools/pos-desktop/src/main.js</code></td><td>—</td><td>Try the URL first and show the offline page only if the SW cannot serve it.</td><td>Low</td></tr>
+</tbody></table></div>
+<p>Embedded <code>/sales/pos</code> stays online-only. The offline module is mounted only by the standalone host (a new <code>posHost</code> capability, <code>offline: true</code>), so Retail behaviour cannot change.</p>
+</section>
+
+<section id="s16">
+<h2><span class="n">REPORT §16</span>Testing strategy</h2>
+<ul>
+<li><b>Unit (frontend):</b> offline policy matrix, outbox state machine, hash chain and signature, sequence allocation under concurrent tabs. Use <code>fake-indexeddb</code> with Vitest.</li>
+<li><b>Unit (backend):</b> <code>PosCheckoutService</code> extraction run against the existing checkout tests unchanged; replay context rules (business-day gate, negative override, refused tenders); completion-marker detection; ingestion dedupe across all four layers; signature, lease and gap handling.</li>
+<li><b>DB-backed:</b> concurrent duplicate submissions (two threads, same key), named <code>*Test</code> (a <code>*IT</code> class never runs). Run against a <b>clone</b> of testdb on a disposable 8081 backend, never testdb itself.</li>
+<li><b>End to end:</b> extend <code>tools/pos-parity</code> with Chrome DevTools offline emulation: ring N sales offline on two tabs as two terminals, restore the network, then diff invoices, stock movements, GL and session totals against the same sales rung online.</li>
+<li><b>Chaos:</b> kill the tab mid-sync; restart the PC (Electron); skew the clock backwards and forwards; expire the lease mid-outage; revoke the terminal; force-close the session from back office while records are pending.</li>
+<li><b>Hardware:</b> the <code>HARDWARE_CHECKLIST.md</code> runs (agent printer and drawer offline). Network printers are expected to fail.</li>
+<li><b>Pilot:</b> one branch, cash only, offline mode enabled per branch, with a daily reconciliation report.</li>
+</ul>
+</section>
+
+<section id="s17">
+<h2><span class="n">PART 11 · REPORT §17</span>Phased roadmap</h2>
+<p>Every phase ships behind a per-branch <code>PosSettings.offlineMode</code> (<code>OFF</code> by default). The online POS is unchanged whenever the flag is off.</p>
+<div class="tl wide"><table>
+<thead><tr><th>Phase</th><th>Scope</th><th>Offline behaviour visible?</th><th>Main risk</th><th>Rollback</th></tr></thead>
+<tbody>
+<tr><td><b>0 · Safety foundations</b></td><td>Checkout completion marker and <code>CHECKOUT_INCOMPLETE</code> on replay; persisted in-flight checkout key and draft cart (IndexedDB); <code>isNetwork</code> error tagging; read-only connectivity badge.</td><td>No</td><td>Low</td><td>Revert; the column is nullable</td></tr>
+<tr><td><b>1 · Offline-ready shell</b></td><td>Service worker and manifest (PWA); Electron load change; catalog, customer and config snapshot sync; cached boot context; offline price check only.</td><td>Price check only</td><td>SW update handling</td><td>Unregister SW via a kill-switch file; flag off</td></tr>
+<tr><td><b>2 · Offline cash sales (pilot)</b></td><td>Enrollment, lease, outbox, signing, provisional receipts, ingest endpoint, review queue, close and Day Close gates, heartbeat reconciliation.</td><td>Yes: cash, untracked products, open session</td><td>Financial correctness</td><td>Flag off. Records already captured still drain (ingest stays on).</td></tr>
+<tr><td><b>3 · Broaden</b></td><td>External card, auto-FEFO batches, cached negotiated prices, queued cash movements, session-owner PIN unlock, numbering decision (b) if chosen.</td><td>Yes</td><td>Policy creep</td><td>Per-tender and per-class toggles</td></tr>
+<tr><td><b>4 · Store Node (optional)</b></td><td>Relay and cache service for large branches, if Phase 2 data justifies it.</td><td>Better cross-till warnings</td><td>Operations</td><td>Tills ignore the node</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="rec">
+<h2><span class="n">RECOMMENDATION</span>Recommended architecture and the first phase</h2>
+<div class="rec">
+<p><b>Architecture:</b> keep the standalone till as the browser or Electron app on the tenant origin. Add a terminal-local, signed, append-only outbox in IndexedDB and a cached catalog. Replay offline sales into the cloud through a refactored <code>PosCheckoutService</code>, so there is <b>one</b> copy of the checkout logic, with an explicit replay context. Offline selling is a narrow, server-leased privilege of enrolled terminals: cash first, untracked or auto-FEFO goods, within a session already open. Everything with a server-side balance, lock or number (credit, vouchers, returns, layaways, X/Z, Day Close) stays online-only. No Store Node until the data says it is needed.</p>
+<h3>Phase 0, the first implementation phase</h3>
+<ol>
+<li><b>Detect incomplete checkouts.</b> Add <code>pos_checkout_completed_at</code>, written as the final step of <code>PosCheckoutController.checkout</code>. When a <code>checkoutKey</code> replay finds an invoice without it (and created after the migration), return 409 <code>CHECKOUT_INCOMPLETE</code> with the invoice id, log a POS audit event, and show "needs supervisor check" instead of a false success.
+  <br><span class="tag d">DECISION</span> Alternative: wrap the steps in one transaction. This is cleaner, but it would hold the tenant-wide invoice-number row lock for the whole checkout, through stock, GL and payments, and serialize every sale on the tenant. A marker is recommended for now.</li>
+<li><b>Persist the in-flight attempt.</b> In <code>useCheckout.js</code>, write <code>{checkoutKey, fingerprint, payload, startedAt}</code> to IndexedDB before <code>posCheckout</code>, and clear it on a definite answer. On boot, if one exists, show "Checking the last sale…" and re-send the same key before allowing a new sale.</li>
+<li><b>Persist the working cart</b> per terminal, so a refresh restores it.</li>
+<li><b>Tag network errors</b> in <code>axiosConfig.js</code> and show a read-only connectivity badge on the till rail.</li>
+<li><b>Tests:</b> backend marker and replay tests (including a negative control), frontend refresh-mid-checkout tests, and a parity run on a disposable clone.</li>
+</ol>
+<p><b>Dependencies:</b> Dexie (or raw IndexedDB) in <code>@billbull/shared</code>; one Flyway migration. <b>Risk:</b> low. <b>Rollback:</b> revert the commits; the new column is nullable and unused by everything else.</p>
+<p><b>Decisions needed before Phase 2:</b> offline invoice numbering (provisional vs leased blocks); whether card on an external terminal is allowed; auto-FEFO for expiry goods; the offline unlock rule for cashiers; the lease limits per branch.</p>
+</div>
+</section>
+</main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true,theme:window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"default"});</script>
+</body>
+</html>

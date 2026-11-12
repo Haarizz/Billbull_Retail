@@ -196,7 +196,8 @@ const Sidebar = ({ children }) => {
       roles: ["ADMIN", "INVENTORY_MANAGER", "ACCOUNTANT"],
       subItems: [
         { path: "/purchases/vendors",         label: "Vendor Ledger",           module: "purchases.vendor", icon: <BookUser size={14} /> },
-        { path: "/purchases/lpo",             label: "LPO & Approvals",         module: "purchases.lpo",    icon: <FilePlus size={14} /> },
+        { path: "/purchases/price-shares",    label: "Vendor Price Shares",     module: "purchases.rfq",    icon: <TrendingUp size={14} /> },
+        { path: "/purchases/lpo",            label: "LPO & Approvals",         module: "purchases.lpo",    icon: <FilePlus size={14} /> },
         { path: "/purchases/grn",             label: "GRN (Goods Reciept Note)",module: "purchases.grn",    icon: <Inbox size={14} /> },
         { path: "/purchases/invoice",         label: "Purchase Invoices",       module: "purchases.invoice",icon: <FileText size={14} /> },
         { path: "/purchases/payment",         label: "Payments",               module: "purchases.payment",icon: <CreditCard size={14} /> },
