@@ -20,9 +20,21 @@ import { getEmailConfig, saveEmailConfig, sendTestEmail } from '../../api/emailC
 // name/id elsewhere, and the opt-out attributes the common password managers honour.
 const NO_PASSWORD_MANAGER = { 'data-1p-ignore': 'true', 'data-lpignore': 'true', 'data-bwignore': 'true' };
 
+// Standard ports per security mode (587 = STARTTLS, 465 = SSL / implicit TLS).
+const SECURITY_PORTS = { STARTTLS: 587, SSL: 465 };
+
+// Quick-fill values for common providers. Any other SMTP server can be typed in by hand.
+const PROVIDERS = [
+    { id: 'gmail', label: 'Gmail / Google Workspace', host: 'smtp.gmail.com', port: 587, security: 'STARTTLS' },
+    { id: 'office365', label: 'Microsoft 365 / Outlook', host: 'smtp.office365.com', port: 587, security: 'STARTTLS' },
+    { id: 'godaddy', label: 'GoDaddy Email', host: 'smtpout.secureserver.net', port: 465, security: 'SSL' },
+    { id: 'zoho', label: 'Zoho Mail', host: 'smtp.zoho.com', port: 465, security: 'SSL' },
+];
+
 const EMPTY_FORM = {
     smtpHost: 'smtp.gmail.com',
     smtpPort: 587,
+    smtpSecurity: 'STARTTLS',
     username: '',
     password: '',
     fromName: 'BillBull ERP',
@@ -54,7 +66,40 @@ export default function EmailSettings() {
         setForm((prev) => ({ ...prev, [field]: value }));
     };
 
+    // Switching mode moves a standard port along with it; a custom port is left alone.
+    const handleSecurityChange = (security) => {
+        setForm((prev) => {
+            const onStandardPort = Object.values(SECURITY_PORTS).includes(Number(prev.smtpPort));
+            return {
+                ...prev,
+                smtpSecurity: security,
+                smtpPort: onStandardPort ? SECURITY_PORTS[security] : prev.smtpPort,
+            };
+        });
+    };
+
+    const applyProvider = (id) => {
+        const provider = PROVIDERS.find((p) => p.id === id);
+        if (!provider) return;
+        setForm((prev) => ({
+            ...prev,
+            smtpHost: provider.host,
+            smtpPort: provider.port,
+            smtpSecurity: provider.security,
+        }));
+    };
+
+    const selectedProvider = PROVIDERS.find(
+        (p) => p.host === String(form.smtpHost || '').trim().toLowerCase()
+            && p.port === Number(form.smtpPort)
+            && p.security === form.smtpSecurity
+    )?.id || 'custom';
+
     const handleSave = async () => {
+        if (!String(form.smtpHost || '').trim()) {
+            showToast('SMTP Host is required.', 'error');
+            return;
+        }
         if (!form.username) {
             showToast('Email Address is required.', 'error');
             return;
@@ -62,11 +107,17 @@ export default function EmailSettings() {
 
         setSaving(true);
         try {
-            const res = await saveEmailConfig({ ...form, smtpHost: 'smtp.gmail.com', smtpPort: 587 });
-            setForm((prev) => ({ ...prev, ...res.data }));
+            const { passwordSet, ...body } = form;
+            const res = await saveEmailConfig({
+                ...body,
+                smtpHost: String(form.smtpHost).trim(),
+                smtpPort: Number(form.smtpPort) || null,
+            });
+            // The server never echoes the password back; clear the field and rely on passwordSet.
+            setForm((prev) => ({ ...prev, ...res.data, password: '' }));
             showToast('Email settings saved successfully.');
-        } catch {
-            showToast('Failed to save email settings.', 'error');
+        } catch (err) {
+            showToast(serverMessage(err) || 'Failed to save email settings.', 'error');
         } finally {
             setSaving(false);
         }
@@ -83,12 +134,7 @@ export default function EmailSettings() {
             await sendTestEmail(testEmail.trim());
             showToast(`Test email sent to ${testEmail}`);
         } catch (err) {
-            // The server answers with either a plain string or { message } — the toast needs text.
-            const data = err?.response?.data;
-            const msg = (typeof data === 'string' && data.trim())
-                || (typeof data?.message === 'string' && data.message.trim())
-                || 'Failed to send test email.';
-            showToast(msg, 'error');
+            showToast(serverMessage(err) || 'Failed to send test email.', 'error');
         } finally {
             setTestSending(false);
         }
@@ -182,22 +228,78 @@ export default function EmailSettings() {
                         </div>
 
                         <div className="grid gap-4 md:grid-cols-3">
+                            <div className="md:col-span-3">
+                                <label htmlFor="smtp-provider" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                    Mail Provider
+                                </label>
+                                <select
+                                    id="smtp-provider"
+                                    name="smtp-provider"
+                                    value={selectedProvider}
+                                    onChange={(e) => applyProvider(e.target.value)}
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-[#F5C742] focus:ring-4 focus:ring-[#F5C742]/15"
+                                >
+                                    {PROVIDERS.map((p) => (
+                                        <option key={p.id} value={p.id}>{p.label}</option>
+                                    ))}
+                                    <option value="custom">Other / custom SMTP server</option>
+                                </select>
+                                <p className="mt-1.5 text-xs text-slate-400">
+                                    Picks the host, port and security for you. Ask your email provider for these if yours is not listed.
+                                </p>
+                            </div>
+
                             <div className="md:col-span-2">
-                                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                <label htmlFor="smtp-host" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                                     SMTP Host
                                 </label>
-                                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 focus-within:border-[#F5C742] focus-within:ring-4 focus-within:ring-[#F5C742]/15">
                                     <Server size={15} className="shrink-0 text-slate-400" />
-                                    <span className="text-sm text-slate-600">smtp.gmail.com</span>
+                                    <input
+                                        id="smtp-host"
+                                        name="smtp-host"
+                                        type="text"
+                                        autoComplete="off"
+                                        {...NO_PASSWORD_MANAGER}
+                                        value={form.smtpHost || ''}
+                                        onChange={(e) => handleChange('smtpHost', e.target.value)}
+                                        placeholder="smtp.example.com"
+                                        className="flex-1 bg-transparent text-sm text-slate-700 outline-none"
+                                    />
                                 </div>
                             </div>
 
-                            <div>
-                                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                    Port
-                                </label>
-                                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
-                                    587
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label htmlFor="smtp-port" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        Port
+                                    </label>
+                                    <input
+                                        id="smtp-port"
+                                        name="smtp-port"
+                                        type="number"
+                                        min="1"
+                                        max="65535"
+                                        autoComplete="off"
+                                        value={form.smtpPort ?? ''}
+                                        onChange={(e) => handleChange('smtpPort', e.target.value === '' ? '' : Number(e.target.value))}
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-[#F5C742] focus:ring-4 focus:ring-[#F5C742]/15"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="smtp-security" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        Security
+                                    </label>
+                                    <select
+                                        id="smtp-security"
+                                        name="smtp-security"
+                                        value={form.smtpSecurity || 'STARTTLS'}
+                                        onChange={(e) => handleSecurityChange(e.target.value)}
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-[#F5C742] focus:ring-4 focus:ring-[#F5C742]/15"
+                                    >
+                                        <option value="STARTTLS">STARTTLS</option>
+                                        <option value="SSL">SSL</option>
+                                    </select>
                                 </div>
                             </div>
 
@@ -215,7 +317,7 @@ export default function EmailSettings() {
                                         {...NO_PASSWORD_MANAGER}
                                         value={form.username || ''}
                                         onChange={(e) => handleChange('username', e.target.value)}
-                                        placeholder="your@gmail.com"
+                                        placeholder="you@yourcompany.com"
                                         className="flex-1 bg-transparent text-sm text-slate-700 outline-none"
                                     />
                                 </div>
@@ -235,7 +337,7 @@ export default function EmailSettings() {
                                         {...NO_PASSWORD_MANAGER}
                                         value={form.password || ''}
                                         onChange={(e) => handleChange('password', e.target.value)}
-                                        placeholder="16-character app password"
+                                        placeholder={form.passwordSet ? 'Saved — type to replace' : 'Mailbox or app password'}
                                         className="flex-1 bg-transparent text-sm text-slate-700 outline-none"
                                     />
                                     <button
@@ -247,7 +349,7 @@ export default function EmailSettings() {
                                     </button>
                                 </div>
                                 <p className="mt-1.5 text-xs text-slate-400">
-                                    For Gmail, use an App Password instead of your normal login password.
+                                    Gmail and Microsoft 365 with 2-step sign-in need an App Password. Most other providers use the normal mailbox password.
                                 </p>
                             </div>
 
@@ -304,8 +406,8 @@ export default function EmailSettings() {
                             />
                             <StatusRow
                                 label="App password"
-                                value={form.password ? 'Saved' : 'Missing'}
-                                tone={form.password ? 'success' : 'warning'}
+                                value={form.password ? 'Not saved yet' : form.passwordSet ? 'Saved' : 'Missing'}
+                                tone={form.password || form.passwordSet ? 'success' : 'warning'}
                             />
                         </div>
                     </div>
@@ -342,6 +444,7 @@ export default function EmailSettings() {
                         </div>
                     </div>
 
+                    {selectedProvider === 'gmail' && (
                     <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 shadow-[0_10px_30px_rgba(15,23,42,0.04)]">
                         <h2 className="text-base font-bold text-amber-900">Gmail App Password</h2>
                         <ol className="mt-3 space-y-2 text-sm text-amber-800">
@@ -351,10 +454,19 @@ export default function EmailSettings() {
                             <li>4. Paste the generated 16-character password here.</li>
                         </ol>
                     </div>
+                    )}
                 </aside>
             </main>
         </div>
     );
+}
+
+// The server answers with either a plain string or { message } — the toast needs text.
+function serverMessage(err) {
+    const data = err?.response?.data;
+    return (typeof data === 'string' && data.trim())
+        || (typeof data?.message === 'string' && data.message.trim())
+        || '';
 }
 
 function StatusRow({ label, value, tone }) {

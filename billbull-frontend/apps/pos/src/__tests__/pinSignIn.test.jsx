@@ -83,7 +83,7 @@ describe('till sign-in', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     expect(await screen.findByText('TILL WORKSPACE')).toBeTruthy();
-    expect(api.fetchPinStaff).toHaveBeenCalledWith('tok');
+    expect(api.fetchPinStaff).toHaveBeenCalledWith('tok', undefined);
     expect(api.pinLogin).toHaveBeenCalledWith('tok', 10, '2580');
     expect(sessionStorage.getItem('activeBranchId')).toBe('3');
   });

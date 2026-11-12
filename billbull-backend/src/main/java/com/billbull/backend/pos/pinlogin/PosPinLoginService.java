@@ -5,6 +5,9 @@ import com.billbull.backend.auth.LoginResponses;
 import com.billbull.backend.config.JwtUtil;
 import com.billbull.backend.hr.employees.Employee;
 import com.billbull.backend.hr.employees.EmployeeRepository;
+import com.billbull.backend.pos.session.PosSession;
+import com.billbull.backend.pos.session.PosSessionRepository;
+import com.billbull.backend.pos.session.PosSessionStatus;
 import com.billbull.backend.ratelimit.RateLimitExceededException;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchRepository;
@@ -19,6 +22,7 @@ import java.util.Base64;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
@@ -51,6 +55,7 @@ public class PosPinLoginService {
     private final PosPinPolicy pinPolicy;
     private final PosPinAttemptLimiter limiter;
     private final JwtUtil jwtUtil;
+    private final PosSessionRepository sessionRepository;
     private final SecureRandom random = new SecureRandom();
 
     public PosPinLoginService(
@@ -60,7 +65,8 @@ public class PosPinLoginService {
             BranchRepository branchRepository,
             PosPinPolicy pinPolicy,
             PosPinAttemptLimiter limiter,
-            JwtUtil jwtUtil) {
+            JwtUtil jwtUtil,
+            PosSessionRepository sessionRepository) {
         this.deviceRepository = deviceRepository;
         this.employeeRepository = employeeRepository;
         this.userRepository = userRepository;
@@ -68,6 +74,7 @@ public class PosPinLoginService {
         this.pinPolicy = pinPolicy;
         this.limiter = limiter;
         this.jwtUtil = jwtUtil;
+        this.sessionRepository = sessionRepository;
     }
 
     // ------------------------------------------------------------------
@@ -117,14 +124,59 @@ public class PosPinLoginService {
     /** Who can sign in on this till. 401 when the token is unknown or revoked. */
     @Transactional(readOnly = true)
     public TillStaff staffFor(String deviceToken) {
+        return staffFor(deviceToken, null);
+    }
+
+    /**
+     * Who can sign in on this till, plus whose drawer is still open on it (only when that person
+     * is on the list). The terminal is the one recorded when the till was enrolled; a till
+     * enrolled before its terminal registered may name its own, looked up only within the till's
+     * branch. Nothing here signs anyone in: the session owner still needs their PIN.
+     */
+    @Transactional(readOnly = true)
+    public TillStaff staffFor(String deviceToken, String requestedTerminalId) {
         PosPinDevice device = requireDevice(deviceToken);
         String branchName = branchRepository.findById(device.getBranchId()).map(Branch::getName).orElse(null);
-        List<StaffMember> staff = employeeRepository.findByPosPinHashIsNotNullAndStatus("Active").stream()
-                .filter(e -> eligibleUser(e, device.getBranchId()).isPresent())
-                .map(StaffMember::of)
+        List<Eligible> eligible = employeeRepository.findByPosPinHashIsNotNullAndStatus("Active").stream()
+                .map(e -> eligibleUser(e, device.getBranchId()).map(u -> new Eligible(e, u)).orElse(null))
+                .filter(Objects::nonNull)
+                .toList();
+        List<StaffMember> staff = eligible.stream()
+                .map(x -> StaffMember.of(x.employee()))
                 .sorted(Comparator.comparing(StaffMember::name, String.CASE_INSENSITIVE_ORDER))
                 .toList();
-        return new TillStaff(device.getId(), device.getBranchId(), branchName, device.getLabel(), staff);
+        OpenTillSession open = openSessionOn(device, requestedTerminalId, eligible);
+        return new TillStaff(device.getId(), device.getBranchId(), branchName, device.getLabel(), staff, open);
+    }
+
+    private OpenTillSession openSessionOn(PosPinDevice device, String requestedTerminalId, List<Eligible> eligible) {
+        String terminalId = device.getTerminalId() != null ? device.getTerminalId() : trimTo(requestedTerminalId, 50);
+        if (terminalId == null || eligible.isEmpty()) {
+            return null;
+        }
+        Optional<PosSession> session;
+        try {
+            session = sessionRepository.findByBranchIdAndTerminalIdAndStatus(
+                    device.getBranchId(), terminalId, PosSessionStatus.OPEN);
+        } catch (RuntimeException e) {
+            return null; // best effort: a lookup problem must never block sign-in
+        }
+        return session.flatMap(s -> eligible.stream()
+                        .filter(x -> ownsSession(x.user(), s))
+                        .findFirst()
+                        .map(x -> new OpenTillSession(x.employee().getId(), s.getOpenedAt(), s.getCounterName())))
+                .orElse(null);
+    }
+
+    /** The recorded owner id; sessions opened before ownership was stored fall back to the username. */
+    static boolean ownsSession(User user, PosSession session) {
+        if (session.getOwnerUserId() != null) {
+            return session.getOwnerUserId().equals(user.getId());
+        }
+        return session.getOpenedBy() != null && session.getOpenedBy().equalsIgnoreCase(user.getUsername());
+    }
+
+    private record Eligible(Employee employee, User user) {
     }
 
     @Transactional
@@ -223,19 +275,25 @@ public class PosPinLoginService {
     }
 
     /** pinLength is null when unknown (PIN set before V134 and not used since); the till then waits for Enter. */
-    public record StaffMember(Long employeeId, String name, String initials, String role, String avatarUrl,
-                              Integer pinLength) {
+    public record StaffMember(Long employeeId, String employeeCode, String name, String initials, String role,
+                              String avatarUrl, Integer pinLength) {
         static StaffMember of(Employee e) {
             String first = e.getFirstName() == null ? "" : e.getFirstName().trim();
             String last = e.getLastName() == null ? "" : e.getLastName().trim();
             String initials = ((first.isEmpty() ? "" : first.substring(0, 1))
                     + (last.isEmpty() ? "" : last.substring(0, 1))).toUpperCase();
-            return new StaffMember(e.getId(), (first + " " + last).trim(), initials, e.getRole(), e.getAvatarUrl(),
-                    e.getPosPinLength());
+            return new StaffMember(e.getId(), e.getEmployeeCode(), (first + " " + last).trim(), initials, e.getRole(),
+                    e.getAvatarUrl(), e.getPosPinLength());
         }
     }
 
-    public record TillStaff(Long deviceId, Long branchId, String branchName, String label, List<StaffMember> staff) {
+    /** openSession is null unless an OPEN drawer on this till belongs to someone in {@code staff}. */
+    public record TillStaff(Long deviceId, Long branchId, String branchName, String label, List<StaffMember> staff,
+                            OpenTillSession openSession) {
+    }
+
+    /** Whose drawer is open on this till. No amounts or lock state: the sign-in screen only names them. */
+    public record OpenTillSession(Long employeeId, LocalDateTime openedAt, String counterName) {
     }
 
     public record PinLoginResult(LoginResponse login, Long tillBranchId) {

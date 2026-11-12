@@ -422,6 +422,15 @@ public class LpoService {
 
     private void syncItems(Lpo lpo, List<LpoItemRequest> requests) {
 
+        // Lines are rebuilt from the request. The LPO screen does not send purchaseTax, so keep a
+        // rate already stored for the same product (e.g. vendor-quoted VAT from an RFQ) on edit.
+        Map<Long, BigDecimal> storedTax = new HashMap<>();
+        for (LpoItem existing : lpo.getItems()) {
+            if (existing.getPurchaseTax() != null && existing.getProduct() != null) {
+                storedTax.putIfAbsent(existing.getProduct().getId(), existing.getPurchaseTax());
+            }
+        }
+
         lpo.getItems().clear();
 
         for (LpoItemRequest r : requests) {
@@ -448,6 +457,11 @@ public class LpoService {
             item.setRemarks(r.getRemarks());
             item.setFocQty(r.getFocQty());
             item.setFocUnit(r.getFocUnit());
+            BigDecimal lineTax = r.getPurchaseTax() != null ? r.getPurchaseTax() : storedTax.get(product.getId());
+            if (lineTax != null && (lineTax.signum() < 0 || lineTax.compareTo(BigDecimal.valueOf(100)) > 0)) {
+                throw new IllegalArgumentException("Tax % for " + product.getName() + " must be between 0 and 100");
+            }
+            item.setPurchaseTax(lineTax);
 
             BigDecimal fallbackLineTotal = r.getUnitPrice().multiply(BigDecimal.valueOf(r.getQuantity()));
             item.setLineTotal(r.getLineTotal() != null ? r.getLineTotal() : fallbackLineTotal);
@@ -460,6 +474,11 @@ public class LpoService {
         return purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(product, branchId);
     }
 
+    /** The line's own VAT % when one is stored, otherwise the product's purchase tax. */
+    private BigDecimal effectiveItemPurchaseTax(LpoItem item, Long branchId) {
+        return item.getPurchaseTax() != null ? item.getPurchaseTax() : resolveItemPurchaseTax(item.getProduct(), branchId);
+    }
+
     private void calculateTotals(Lpo lpo) {
 
         BigDecimal subtotal = BigDecimal.ZERO;
@@ -467,7 +486,7 @@ public class LpoService {
 
         for (LpoItem item : lpo.getItems()) {
             BigDecimal lineTotal = item.getLineTotal() != null ? item.getLineTotal() : BigDecimal.ZERO;
-            BigDecimal taxPercent = resolveItemPurchaseTax(item.getProduct(), lpo.getBranchId());
+            BigDecimal taxPercent = effectiveItemPurchaseTax(item, lpo.getBranchId());
             BigDecimal lineTax = lineTotal.multiply(taxPercent).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
             subtotal = subtotal.add(lineTotal);
             taxTotal = taxTotal.add(lineTax);
@@ -559,7 +578,7 @@ public class LpoService {
         List<LpoItemResponse> itemResponses = lpo.getItems().stream()
                 .map(item -> {
                     LpoItemResponse itemDto = new LpoItemResponse(item,
-                            resolveItemPurchaseTax(item.getProduct(), lpo.getBranchId()));
+                            effectiveItemPurchaseTax(item, lpo.getBranchId()));
                     itemDto.setReceivedQuantity(fulfilledMap.getOrDefault(itemDto.getProductId(), 0));
                     itemDto.setImage(imageMap.get(itemDto.getProductId()));
                     if (itemDto.getBarcode() == null || itemDto.getBarcode().isBlank()) {

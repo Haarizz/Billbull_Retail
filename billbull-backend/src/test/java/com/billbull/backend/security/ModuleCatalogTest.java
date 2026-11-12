@@ -27,7 +27,7 @@ class ModuleCatalogTest {
                 "inventory.warehouse", "inventory.stock", "inventory.barcode", "inventory.reports",
                 // purchases
                 "purchases.vendor", "purchases.lpo", "purchases.grn", "purchases.invoice",
-                "purchases.payment", "purchases.templates", "purchases.reports",
+                "purchases.payment", "purchases.templates", "purchases.reports", "purchases.rfq",
                 // finance
                 "finance.ledger", "finance.voucher", "finance.expense", "finance.reconcile",
                 "finance.tax", "finance.reports", "finance.config", "finance.templates",

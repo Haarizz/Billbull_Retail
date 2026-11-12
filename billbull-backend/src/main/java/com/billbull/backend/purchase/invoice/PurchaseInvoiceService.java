@@ -269,7 +269,10 @@ public class PurchaseInvoiceService {
             BigDecimal unitCost = i.getUnitPrice() != null ? i.getUnitPrice() : BigDecimal.ZERO;
             d.setUnitCost(unitCost);
 
-            BigDecimal taxPercent = purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(i.getProduct(), lpo.getBranchId());
+            // A rate stored on the LPO line (e.g. vendor-quoted VAT from an RFQ) wins, as on GRN lines.
+            BigDecimal taxPercent = i.getPurchaseTax() != null
+                    ? i.getPurchaseTax()
+                    : purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(i.getProduct(), lpo.getBranchId());
             
             BigDecimal base = unitCost.multiply(BigDecimal.valueOf(i.getQuantity() != null ? i.getQuantity() : 0));
             

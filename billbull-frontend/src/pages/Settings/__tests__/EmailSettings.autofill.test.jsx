@@ -73,7 +73,7 @@ describe("EmailSettings autofill protection (T-P0-4)", () => {
     }
   });
 
-  it("keeps the saved password masked and sends the mask back unchanged so the backend keeps it", async () => {
+  it("sends an old-server mask back unchanged so the backend keeps the password", async () => {
     const user = userEvent.setup();
     await renderPage();
     expect(screen.getByLabelText("App Password")).toHaveValue(MASK);
@@ -88,6 +88,62 @@ describe("EmailSettings autofill protection (T-P0-4)", () => {
       smtpHost: "smtp.gmail.com",
       smtpPort: 587,
     });
-    expect(screen.getByLabelText("App Password")).toHaveValue(MASK);
+  });
+});
+
+describe("EmailSettings SMTP server (any provider)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getEmailConfig.mockResolvedValue({
+      data: { ...SAVED, password: undefined, smtpSecurity: "STARTTLS", passwordSet: true },
+    });
+    saveEmailConfig.mockImplementation(async (body) => {
+      const { password, ...rest } = body;
+      return { data: { ...rest, passwordSet: true } };
+    });
+  });
+
+  it("shows a saved password as Saved even though the server never returns it", async () => {
+    await renderPage();
+    expect(screen.getByLabelText("App Password")).toHaveValue("");
+    expect(screen.getByText("Saved")).toBeInTheDocument();
+  });
+
+  it("saves a provider picked from the list instead of forcing Gmail", async () => {
+    const user = userEvent.setup();
+    await renderPage();
+
+    await user.selectOptions(screen.getByLabelText("Mail Provider"), "godaddy");
+    expect(screen.getByLabelText("SMTP Host")).toHaveValue("smtpout.secureserver.net");
+    expect(screen.getByLabelText("Port")).toHaveValue(465);
+    expect(screen.getByLabelText("Security")).toHaveValue("SSL");
+
+    await user.click(screen.getByRole("button", { name: /save settings/i }));
+    expect(saveEmailConfig.mock.calls[0][0]).toMatchObject({
+      smtpHost: "smtpout.secureserver.net",
+      smtpPort: 465,
+      smtpSecurity: "SSL",
+    });
+    expect(saveEmailConfig.mock.calls[0][0]).not.toHaveProperty("passwordSet");
+  });
+
+  it("saves a hand-typed host and moves a standard port with the security mode", async () => {
+    const user = userEvent.setup();
+    await renderPage();
+
+    const host = screen.getByLabelText("SMTP Host");
+    await user.clear(host);
+    await user.type(host, "mail.example.org");
+    expect(screen.getByLabelText("Mail Provider")).toHaveValue("custom");
+
+    await user.selectOptions(screen.getByLabelText("Security"), "SSL");
+    expect(screen.getByLabelText("Port")).toHaveValue(465);
+
+    await user.click(screen.getByRole("button", { name: /save settings/i }));
+    expect(saveEmailConfig.mock.calls[0][0]).toMatchObject({
+      smtpHost: "mail.example.org",
+      smtpPort: 465,
+      smtpSecurity: "SSL",
+    });
   });
 });

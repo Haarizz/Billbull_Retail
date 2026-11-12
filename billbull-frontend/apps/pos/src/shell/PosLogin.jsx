@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Loader2, ArrowRight, User, Lock, KeyRound, RotateCw } from 'lucide-react';
 import { isAuthenticated, persistLoginSession } from '@billbull/shared/api/auth';
@@ -7,6 +7,17 @@ import { useCompany } from '@billbull/shared/context/CompanyContext';
 import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 import { clearPinDevice, describeTillLoginError, readPinDevice } from './pinDevice';
 import { ErrorBox, NAVY, PinPad, PinSetup, StaffPicker, inputCls, linkCls } from './PinSignIn';
+import { distinctInitials, layoutFor, readRecent, rememberSignIn } from './staffDirectory';
+
+// This PC's registered POS terminal for the till's branch (written by the workspace when it
+// registers the terminal). Only sent so the server can name whose drawer is open here.
+const terminalIdFor = (device) => {
+  try {
+    return localStorage.getItem(`billbull:pos:terminal_id:${device.branchId}`) || undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 // Decorative barcode at the foot of the receipt: bar/gap widths in px.
 const BARCODE = [3, 1, 1, 2, 2, 1, 1, 3, 1, 1, 2, 1, 3, 2, 1, 1, 1, 2, 3, 1, 2, 1, 1, 3, 1, 2, 2, 1, 1, 1, 3, 2, 1, 2, 1, 1, 2, 3, 1, 1];
@@ -52,7 +63,7 @@ export default function PosLogin() {
   const [notice, setNotice] = useState('');
 
   // PIN mode
-  const [staff, setStaff] = useState(() => ({ loading: Boolean(readPinDevice()), error: '', list: [], branchName: '' }));
+  const [staff, setStaff] = useState(() => ({ loading: Boolean(readPinDevice()), error: '', list: [], branchName: '', openSession: null }));
   const [person, setPerson] = useState(null);
   const [reload, setReload] = useState(0);
   const [attempt, setAttempt] = useState(0); // bumps on each wrong PIN to replay the shake
@@ -68,9 +79,17 @@ export default function PosLogin() {
   useEffect(() => {
     if (mode !== 'pin' || !device) return undefined;
     let cancelled = false;
-    fetchPinStaff(device.token)
+    fetchPinStaff(device.token, terminalIdFor(device))
       .then((data) => {
-        if (!cancelled) setStaff({ loading: false, error: '', list: data.staff || [], branchName: data.branchName || device.branchName || '' });
+        if (!cancelled) {
+          setStaff({
+            loading: false,
+            error: '',
+            list: data.staff || [],
+            branchName: data.branchName || device.branchName || '',
+            openSession: data.openSession || null,
+          });
+        }
       })
       .catch((err) => {
         if (cancelled) return;
@@ -85,6 +104,15 @@ export default function PosLogin() {
       });
     return () => { cancelled = true; };
   }, [mode, device, reload]);
+
+  // Initials made unique across this till's list (Store 1 / Supervisor 1 -> ST1 / SU1).
+  const people = useMemo(() => {
+    const initials = distinctInitials(staff.list);
+    return staff.list.map((p) => ({ ...p, initials: initials.get(p.employeeId) || p.initials }));
+  }, [staff.list]);
+  const layout = layoutFor(people.length);
+  // A few ids from localStorage: cheap enough to read on every render, so it is never stale.
+  const recentIds = device ? readRecent(device.deviceId) : [];
 
   if (isAuthenticated()) return <Navigate to="/" replace />;
 
@@ -122,6 +150,7 @@ export default function PosLogin() {
     setError('');
     try {
       const data = await pinLogin(device.token, person.employeeId, pin);
+      rememberSignIn(device.deviceId, person.employeeId); // only after the server accepted the PIN
       finishSignIn(data, data.tillBranchId);
     } catch (err) {
       if (err?.response?.status === 401 && /not enabled/i.test(err.response.data?.message || '')) {
@@ -152,6 +181,11 @@ export default function PosLogin() {
   const date = now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   const receiptDate = `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()}`;
 
+  // Larger branches get a wider receipt while choosing a name, so cards and the directory have room
+  // for full names. The PIN pad and the password form keep the classic narrow receipt.
+  const picking = mode === 'pin' && device && !person && !staff.loading && !staff.error && people.length > 0;
+  const wide = picking && layout !== 'tiles';
+
   const noticeBox = notice && (
     <p role="status" className="mt-4 rounded-lg border border-[#FDE6A9] bg-[#FFF8E7] px-4 py-3 text-sm text-[#7a5b07]">{notice}</p>
   );
@@ -162,7 +196,7 @@ export default function PosLogin() {
       <p className="mt-1 text-center text-sm text-[#66737F]">
         {!device ? 'This till isn’t set up for PIN sign-in yet'
           : person ? (staff.branchName || 'Enter your PIN')
-            : `Tap your name${staff.branchName ? ` · ${staff.branchName}` : ''}`}
+            : `${layout === 'tiles' ? 'Tap your name' : 'Find your name'}${staff.branchName ? ` · ${staff.branchName}` : ''}`}
       </p>
       {noticeBox}
 
@@ -190,7 +224,8 @@ export default function PosLogin() {
           plus a BillBull login for this branch.
         </p>
       ) : (
-        <StaffPicker staff={staff.list} onPick={(p) => { setPerson(p); setError(''); }} />
+        <StaffPicker staff={people} layout={layout} openSession={staff.openSession} recentIds={recentIds}
+          onPick={(p) => { setPerson(p); setError(''); }} />
       )}
 
       <div className="mt-5 text-center">
@@ -245,7 +280,11 @@ export default function PosLogin() {
   );
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-hidden bg-[#F3F1EC] text-[#1C2838]">
+    // The screen is exactly one viewport tall. The staff list shortens itself to fit (StaffPicker's
+    // useFitToScreen); anything still too tall (e.g. the password form on a tiny screen) scrolls
+    // inside <main>, and the auto margins keep it centred when it fits.
+    // (--bb-scaled-vh is the viewport height in the app's 90%-zoomed #root, see index.css.)
+    <div className="relative flex h-[var(--bb-scaled-vh)] w-full flex-col overflow-hidden bg-[#F3F1EC] text-[#1C2838]">
       <style>{`
         @keyframes bbPrint { from { transform: translateY(-48px); clip-path: inset(0 0 100% 0); } to { transform: none; clip-path: inset(0 0 0 0); } }
         @media (prefers-reduced-motion: no-preference) { .bb-print { animation: bbPrint 700ms cubic-bezier(.2,.8,.2,1) both; } }
@@ -269,12 +308,15 @@ export default function PosLogin() {
       </header>
 
       {/* Printer + receipt */}
-      <main className="relative flex flex-1 flex-col items-center justify-center px-4 pb-10 short:pb-4">
-        <p className="mb-6 short:mb-3 text-center text-lg text-[#66737F]">
+      <main className={`relative flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-4 short:pb-4 ${wide ? 'pb-6' : 'pb-10'}`}>
+        <div aria-hidden className="grow" />
+        {/* The greeting gives its room to the staff list on short screens and on the wider receipt. */}
+        <p className={`mb-6 text-center text-lg text-[#66737F] short:hidden ${wide ? 'hidden' : ''}`}>
           {greeting}. <span className="font-semibold text-[#1C2838]">Ready to open the till?</span>
         </p>
 
-        <div className="w-full max-w-[440px]">
+        <div data-testid="till-receipt" data-layout={picking ? layout : 'form'}
+          className={`flex w-full flex-col transition-[max-width] duration-300 ease-out ${!wide ? 'max-w-110' : layout === 'directory' ? 'max-w-180' : 'max-w-160'}`}>
           {/* Printer body */}
           <div className="relative z-10 -mx-4 rounded-2xl px-5 pb-3 pt-4 shadow-xl shadow-[#1C2838]/25" style={{ background: NAVY }}>
             <div className="flex items-center justify-between">
@@ -288,8 +330,8 @@ export default function PosLogin() {
           </div>
 
           {/* Receipt paper */}
-          <div className="bb-print relative -mt-2 drop-shadow-[0_18px_24px_rgba(28,40,56,0.15)]">
-            <div className="bg-white px-7 pb-6 pt-8 short:pb-4 short:pt-5 sm:px-9">
+          <div className="bb-print relative -mt-2 flex flex-col drop-shadow-[0_18px_24px_rgba(28,40,56,0.15)]">
+            <div className="flex flex-col bg-white px-7 pb-6 pt-8 short:pb-4 short:pt-5 sm:px-9">
               <div className="text-center font-mono text-xs uppercase tracking-[0.25em] text-[#66737F]">
                 *** Point of Sale ***
               </div>
@@ -303,7 +345,7 @@ export default function PosLogin() {
 
               <Dashed />
               <p className="text-center font-mono text-xs uppercase tracking-[0.2em] text-[#66737F]">Have a great shift</p>
-              <div aria-hidden className="mt-4 flex h-10 short:hidden items-stretch justify-center gap-px opacity-80">
+              <div aria-hidden className={`mt-4 h-10 short:hidden items-stretch justify-center gap-px opacity-80 ${picking && layout === 'directory' ? 'hidden' : 'flex'}`}>
                 {BARCODE.map((w, i) => (
                   <span key={i} style={{ width: w * 2, background: i % 2 === 0 ? NAVY : 'transparent' }} />
                 ))}
@@ -312,6 +354,7 @@ export default function PosLogin() {
             <div aria-hidden style={zigzag} />
           </div>
         </div>
+        <div aria-hidden className="grow" />
       </main>
 
       <footer className="relative flex flex-col items-center gap-1 px-6 pb-6 short:pb-3 text-xs text-[#8A939C] sm:flex-row sm:justify-between sm:px-10">
