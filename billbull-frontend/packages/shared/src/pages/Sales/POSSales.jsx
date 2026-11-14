@@ -193,8 +193,8 @@ import ReceiptShareModal from '../../components/pos/ReceiptShareModal';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter, warmPrintAgent } from '../../utils/localPrintAgent';
 import { startPrintTimer } from '../../utils/printTiming';
 import { buildEscPosDocumentBase64 } from '../../utils/escPosReceipt';
-import { mapToTemplate2Data, mapInvoiceToTxn } from './POS/receiptTemplates/billBullTaxInvoiceData';
-import { buildTemplate2Html } from './POS/receiptTemplates/buildTemplate2Html';
+import { getReceiptTemplate } from './POS/receiptTemplates';
+import { stableCheckoutPreviewHtml } from './POS/receiptTemplates/stablePreviewHtml'; // Template 2/3 checkout preview: registry + time-only-change guard
 // ─── POS feature modules (Phase 3 in-place decomposition) ─────────────────────
 import { DELIVERY_SETTLE_METHODS } from './POS/features/delivery/deliveryConstants';
 import NewDeliveryOrder from './POS/features/delivery/NewDeliveryOrder';
@@ -1420,15 +1420,15 @@ export default function POSSales() {
       // Template 2 (Arabic/bilingual) has its own HTML renderer — the checkout
       // preview must show whichever template is saved in Print Templates, same
       // as the ESC/POS print path below already does (see buildReceiptEscPosBase64).
-      if (receiptTemplateId === 'billbull-ar') {
-        const isWalkInPreview = !customer || customer.id === 'walk-in';
+      const componentTemplate = getReceiptTemplate(receiptTemplateId);
+      if (componentTemplate.kind === 'component') { const isWalkInPreview = !customer || customer.id === 'walk-in';
         // Template 2's Show/Hide toggles are split per sub-tab (previewT2 already
         // resolved above by previewHasTax) so the preview honours whichever tab's
         // settings the till will actually print.
         const t2Toggles = previewT2;
         const t2StampAvailable = previewT2.showQRCode && !!tplStampDataUrl;
         const t2ShowQr = previewT2.showQRCode && !t2StampAvailable;
-        const txn = mapInvoiceToTxn(mockInvoice, {
+        const txn = componentTemplate.mapInvoiceToTxn(mockInvoice, {
           currency: activeCurrency,
           terminalId: currentTerminal?.terminalId,
           cashierName: cashierDisplayName,
@@ -1459,7 +1459,7 @@ export default function POSSales() {
           titleEn: previewHeader,
           titleAr: previewHeaderAr,
         };
-        const html = buildTemplate2Html(mapToTemplate2Data(outlet, txn, t2Toggles));
+        const html = stableCheckoutPreviewHtml(componentTemplate.buildHtml(componentTemplate.mapData(outlet, txn, t2Toggles)));
         checkoutPreviewFreezeRef.current = html;
         return html;
       }
