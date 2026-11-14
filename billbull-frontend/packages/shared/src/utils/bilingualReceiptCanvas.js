@@ -21,7 +21,7 @@ const PAPER_DOTS = { 58: 384, 80: 576 };
 // ── Code 128 (subset B) — invoice-number barcode ───────────────────────────
 // Standard pattern table: each symbol is 6 alternating bar/space widths
 // totalling 11 modules (stop = 13). Index = symbol value 0..106.
-const CODE128_PATTERNS = [
+export const CODE128_PATTERNS = [
   '212222', '222122', '222221', '121223', '121322', '131222', '122213', '122312', '132212', '221213',
   '221312', '231212', '112232', '122132', '122231', '113222', '123122', '123221', '223211', '221132',
   '221231', '213212', '223112', '312131', '311222', '321122', '321221', '312212', '322112', '322211',
@@ -37,7 +37,7 @@ const CODE128_PATTERNS = [
 const CODE128B_START = 104;
 const CODE128_STOP = 106;
 
-const code128BCodes = (text) => {
+export const code128BCodes = (text) => {
   const codes = [CODE128B_START];
   for (const ch of String(text)) {
     const v = ch.charCodeAt(0) - 32;
@@ -51,7 +51,7 @@ const code128BCodes = (text) => {
   return codes;
 };
 
-const code128Modules = (text) => code128BCodes(text).reduce((sum, c) => sum + CODE128_PATTERNS[c].split('').reduce((a, d) => a + Number(d), 0), 0);
+export const code128Modules = (text) => code128BCodes(text).reduce((sum, c) => sum + CODE128_PATTERNS[c].split('').reduce((a, d) => a + Number(d), 0), 0);
 
 // Inline SVG version of the same Code 128B symbol — used by the HTML preview
 // twin (posPrintUtils.js) so the on-screen/browser-printed barcode is the same

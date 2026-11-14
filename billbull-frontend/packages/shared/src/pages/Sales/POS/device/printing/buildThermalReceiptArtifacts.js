@@ -274,6 +274,9 @@ export async function buildThermalReceiptArtifacts({
       creditInvoiceCredit,
       creditAmountPaid,
       creditUpdatedBalance,
+      // Template 3 prints Credit Limit / Available Credit when the customer
+      // record carries a limit; every other builder ignores this key.
+      creditLimit: custRecForPrint?.creditLimit ?? null,
       currency: activeCurrency,
     };
 
@@ -284,7 +287,9 @@ export async function buildThermalReceiptArtifacts({
     // the Template 2 designer settings for the sub-tab that applies to THIS
     // invoice — not always the Tax Invoice tab's. These keys are consumed by
     // the bilingual canvas renderer (ESC/POS).
-    if (receiptTemplateId === 'billbull-ar') {
+    // Template 3 shares Template 2's toggle set, so this covers every component
+    // template (anything but the native Template 1).
+    if (getReceiptTemplate(receiptTemplateId).kind === 'component') {
       escPosOpts.showLogo = activeT2.showLogo;
       escPosOpts.showCompanyDetails = activeT2.showCompanyDetails;
       escPosOpts.showTrn = activeT2.showTrn;
