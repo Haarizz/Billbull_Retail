@@ -78,7 +78,10 @@ const PAPER_DIMENSIONS_MM = {
 
 const resolvePaperDimensions = (paperSize = 'A4', orientation = 'Portrait') => {
     const base = PAPER_DIMENSIONS_MM[paperSize] || PAPER_DIMENSIONS_MM.A4;
-    return orientation === 'Landscape'
+    // Case-insensitive: rows are stored 'Landscape', but designer settings and
+    // seeded paper variants carry 'landscape'. An exact match would size a
+    // landscape sheet as portrait (148mm wide, zoomed) while @page still said landscape.
+    return /^landscape$/i.test(String(orientation || '').trim())
         ? { width: base.height, height: base.width }
         : base;
 };
@@ -1441,11 +1444,6 @@ const buildPrintDateStamp = (layout, renderTarget) =>
         ? `<div class="print-date-stamp">Printed: ${escapeHtml(new Date().toISOString().slice(0, 10))}</div>`
         : '';
 
-const buildPageNumbers = (layout, renderTarget) =>
-    renderTarget === 'print' && layout.showPageNumbers
-        ? '<div class="page-number-label">Page 1 of 1</div>'
-        : '';
-
 const buildHeaderAddon = (layout) =>
     layout.headerAddon
         ? `<div class="layout-addon layout-addon-header">${layout.headerAddon}</div>`
@@ -2711,12 +2709,6 @@ const buildCoreStyles = () => `
         color: #94a3b8;
         font-size: 7px;
     }
-    .page-number-label {
-        margin-top: 8px;
-        text-align: right;
-        color: #cbd5e1;
-        font-size: 7px;
-    }
     .page-num::before { content: counter(page); }
     .page-total::before { content: counter(pages); }
     @media (max-width: 720px) {
@@ -3044,9 +3036,6 @@ const buildLandscapeStyles = (important = false) => {
         .document-shell-landscape .stamp-caption {
             margin-top: 2px${i};
         }
-        .document-shell-landscape .page-number-label {
-            margin-top: 2px${i};
-        }
         /* Logo stays stacked above the company block. Setting them side by side
            looked like free height, but it squeezes the company column, and the
            company name is set nowrap — a long trading name then overflows across
@@ -3098,11 +3087,28 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
     const continuousPageTop = isDesignerLayout ? '0' : (isLandscape ? '12mm' : '26mm');
     const continuationInnerGap = isDesignerLayout ? '0' : '4mm';
     const shellPaddingPrint = isDesignerLayout ? designerPadding : `${continuationInnerGap} 12mm 0 12mm`;
+    // "Page X of Y" lives in the page's bottom-right margin box: counter(pages) only
+    // resolves there, so it is right on every sheet (an in-flow label could only
+    // ever say "Page 1 of 1"). The box needs margin to sit in, so a layout whose
+    // bottom page margin is smaller (designer: 0) gets 7mm while page numbers are on.
+    // Its right inset matches the shell's side padding so it lines up with the content.
+    const showPageNumbers = Boolean(layout.showPageNumbers);
+    const pageBottom = showPageNumbers && parseFloat(pageTopBottom) < 7 ? '7mm' : pageTopBottom;
+    const labelInset = isDesignerLayout ? (isLandscape ? '28px' : '32px') : '12mm';
+    const pageNumberBox = showPageNumbers ? `
+            @bottom-right {
+                content: "Page " counter(page) " of " counter(pages);
+                font-family: Inter, sans-serif;
+                font-size: 7px;
+                color: #94a3b8;
+                padding-right: ${labelInset};
+                vertical-align: middle;
+            }` : '';
 
     return `
         @page {
             size: ${resolvedPaperSize} ${resolvedOrientation};
-            margin: ${continuousPageTop} 0 ${pageTopBottom} 0;
+            margin: ${continuousPageTop} 0 ${pageBottom} 0;${pageNumberBox}
         }
         @page :first {
             margin-top: ${pageTopBottom};
@@ -4831,7 +4837,7 @@ const isGrnDesignerTemplate = (template = {}) => {
     return settings.purchaseDesigner === 'grn' || settings.docType === 'grn';
 };
 
-const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'print') => {
+const renderGrnReceiptHtml = (template, data, options = {}, renderTarget = 'print') => {
     const s = getTemplateDesignerSettings(template);
     const company = normalizeDocumentCompanyProfile(options.companyProfile || {});
     const meta = data.grnMeta || {};
@@ -5178,7 +5184,7 @@ const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'pri
             </div>
             <div style="font-size:10px;color:#5a7a96;text-align:right;">
                 <strong style="color:#8ca4bc;font-weight:500;">${txt(meta.warehouse) || txt(meta.branchName) || ''}</strong><br/>
-                ${on('showPageNumbers') ? 'Page 1 of 1 · ' : ''}Confidential — Internal Use Only
+                Confidential — Internal Use Only
             </div>
         </div>` : '';
 
@@ -5196,10 +5202,32 @@ const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'pri
 
     const pageSizeCss = `${paperSize} ${String(orientation).toLowerCase() === 'landscape' ? 'landscape' : 'portrait'}`;
 
+    // "Page X of Y" goes in the page's bottom-right margin box, the only place
+    // counter(pages) resolves; it used to be a fixed "Page 1 of 1" in the footer bar,
+    // which sits on the last page only. The box needs a bottom page margin to sit in,
+    // so the sheet gets 7mm there while page numbers are on. Email has no pages.
+    const showPageNumbers = renderTarget !== 'email' && on('showPageNumbers');
+    const pageRule = showPageNumbers
+        ? `@page {
+            size: ${pageSizeCss};
+            margin: 0 0 7mm 0;
+            /* The page margin is not painted by the body; match it so a tinted sheet has no white band. */
+            background: ${bgColor};
+            @bottom-right {
+                content: "Page " counter(page) " of " counter(pages);
+                font-family: ${fontFamily};
+                font-size: 8px;
+                color: #5a7a96;
+                padding-right: 24px;
+                vertical-align: middle;
+            }
+        }`
+        : `@page { size: ${pageSizeCss}; margin: 0; }`;
+
     const styles = `
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
         * { box-sizing: border-box; }
-        @page { size: ${pageSizeCss}; margin: 0; }
+        ${pageRule}
         html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; background: ${bgColor}; }
         .grn-doc {
             background: ${bgColor};
@@ -5365,7 +5393,6 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
                         ${buildSignatureBlock(layout)}
                         ${buildStampBlock(layout, renderTarget)}
                         ${buildPrintDateStamp(layout, renderTarget)}
-                        ${buildPageNumbers(layout, renderTarget)}
                     </div>
                 </main>
                 ${buildFooterBar(layout, renderTarget, options.billBullLogo)}
