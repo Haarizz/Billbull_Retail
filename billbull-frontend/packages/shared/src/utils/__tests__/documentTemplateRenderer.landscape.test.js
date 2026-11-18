@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { generateDocumentPrintHtml } from '../documentTemplateRenderer';
+import { generateDocumentEmailHtml, generateDocumentPrintHtml } from '../documentTemplateRenderer';
 
 const printData = {
     title: 'Tax Invoice',
@@ -58,5 +58,69 @@ describe('documentTemplateRenderer — landscape sheets', () => {
 
     it('emits no landscape rules at all for portrait, leaving its output untouched', () => {
         expect(render('Portrait')).not.toContain('.document-shell-landscape');
+    });
+
+    it('sizes a lowercase "landscape" sheet exactly like "Landscape"', () => {
+        // Designer settings and the seeded A5 variants carry lowercase. An exact
+        // 'Landscape' match laid the body out 148mm wide and zoomed it to 0.7048
+        // while @page still printed a landscape sheet.
+        const lower = render('landscape');
+        expect(lower).not.toMatch(/zoom: 0\.7048/);
+        expect(lower).toMatch(/html,\s*body \{\s*width: 210mm;\s*min-height: 148mm;/);
+        // Identical apart from the @page keyword's case, which CSS ignores.
+        const norm = (html) => html.replace(/Gen-[^<"]*/g, '').toLowerCase();
+        expect(norm(lower)).toBe(norm(render('Landscape')));
+    });
+});
+
+describe('documentTemplateRenderer — page numbers', () => {
+    const withPageNumbers = (on) => generateDocumentPrintHtml(
+        { ...template('Portrait'), salesDesignerSettings: { paperSize: 'A5', orientation: 'Portrait', showPageNumbers: on } },
+        printData,
+        {},
+    );
+
+    it('prints "Page X of Y" in the page margin box, never a hardcoded "Page 1 of 1"', () => {
+        // counter(pages) only resolves in an @page margin box; the old in-flow label
+        // could only ever say "Page 1 of 1", on the last sheet only.
+        const html = withPageNumbers(true);
+        expect(html).not.toContain('Page 1 of 1');
+        expect(html).toMatch(/@bottom-right \{\s*content: "Page " counter\(page\) " of " counter\(pages\);/);
+        // The designer layout has no bottom page margin; the label needs room.
+        expect(html).toMatch(/@page \{\s*size: A5 Portrait;\s*margin: 0 0 7mm 0;/);
+    });
+
+    it('leaves the page untouched when page numbers are off', () => {
+        const html = withPageNumbers(false);
+        expect(html).not.toContain('@bottom-right');
+        expect(html).toMatch(/@page \{\s*size: A5 Portrait;\s*margin: 0 0 0 0;/);
+    });
+});
+
+describe('documentTemplateRenderer — GRN page numbers', () => {
+    const grn = (settings = {}) => ({
+        id: 7, name: 'GRN', category: 'Goods Receipt Note', paperSize: 'A4', orientation: 'Portrait',
+        displayOptions: JSON.stringify({ purchaseDesignerSettings: { docType: 'grn', ...settings } }),
+    });
+    const grnData = { docNo: 'GRN-1', date: '2026-11-18', items: [{ code: 'A', name: 'Tank', qty: 1 }], totals: {}, meta: {} };
+
+    it('prints "Page X of Y" in the margin box instead of a fixed "Page 1 of 1" in the footer bar', () => {
+        const html = generateDocumentPrintHtml(grn(), grnData, {});
+        expect(html).toContain('class="grn-doc"');
+        expect(html).not.toContain('Page 1 of 1');
+        expect(html).toMatch(/@bottom-right \{\s*content: "Page " counter\(page\) " of " counter\(pages\);/);
+        expect(html).toContain('Confidential — Internal Use Only');
+    });
+
+    it('paints the reserved bottom margin in the sheet colour, so a tinted GRN has no white band', () => {
+        const html = generateDocumentPrintHtml(grn({ backgroundColor: '#FFF4D6' }), grnData, {});
+        expect(html).toMatch(/margin: 0 0 7mm 0;[\s\S]*?background: #FFF4D6;\s*@bottom-right/i);
+    });
+
+    it('keeps the full-bleed page when page numbers are off, and in email', () => {
+        const off = generateDocumentPrintHtml(grn({ showPageNumbers: false }), grnData, {});
+        expect(off).toContain('@page { size: A4 portrait; margin: 0; }');
+        expect(off).not.toContain('@bottom-right');
+        expect(generateDocumentEmailHtml(grn(), grnData, {})).not.toContain('@bottom-right');
     });
 });
