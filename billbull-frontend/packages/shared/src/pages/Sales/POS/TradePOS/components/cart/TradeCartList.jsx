@@ -44,7 +44,7 @@ export const TradeCartList = React.memo(({
           <TradeInvoiceRow
             key={item.id}
             item={item}
-            index={idx}
+            index={items.length - 1 - idx}
             posSettings={posSettings}
             selected={item.id === selectedItemId}
             onClick={onSelectItem}

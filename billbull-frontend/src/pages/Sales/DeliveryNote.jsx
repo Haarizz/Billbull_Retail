@@ -44,7 +44,7 @@ import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
 import { generatePrintHtmlAsync, printHtml } from '@billbull/shared/utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { sendDeliveryNoteEmail } from '../../api/deliveryNoteApi';
-import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
+import SendDocumentEmailModal from '@billbull/shared/components/SendDocumentEmailModal';
 import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import { useCompany } from '@billbull/shared/context/CompanyContext';
 import { useBranch } from '@billbull/shared/context/BranchContext';
@@ -122,6 +122,8 @@ import useShortcuts from '../../hooks/useShortcuts';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
 // QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
 import InlineProductSearchCell from '../../components/InlineProductSearchCell';
+import { orderRowsForEntryDisplay, entryRowAttrs, isBlankByCodeDesc, placeEntryLine, findOpenEntryRow } from '../../utils/entryRowOrder';
+import useEntryRowTable from '../../hooks/useEntryRowTable';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 import TableSkeleton from '../../components/common/TableSkeleton';
@@ -370,6 +372,7 @@ const DeliveryNote = () => {
 
     // Items
     const [items, setItems] = useState([]);
+    const entryTableRef = useEntryRowTable(items, isBlankByCodeDesc);
     const [focusedItem, setFocusedItem] = useState(null);
 
     // --- ITEM INTELLIGENCE SIDEBAR ---
@@ -1021,7 +1024,8 @@ const DeliveryNote = () => {
         if (targetId == null) return;
         const raf = requestAnimationFrame(() => {
             const el = inlineSearchRefs.current[targetId];
-            if (el) el.focus();
+            // the search row is pinned, so keep the latest lines in view
+            if (el) el.focus({ preventScroll: true });
             focusNextInlineSearchRef.current = null;
         });
         return () => cancelAnimationFrame(raf);
@@ -1499,8 +1503,7 @@ const DeliveryNote = () => {
                     return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
                 }
             }
-            const hasData = prev.some(item => item.code || item.desc);
-            return hasData ? [...prev, newItem] : [newItem];
+            return placeEntryLine(prev, newItem, isBlankByCodeDesc);
         });
         const filledItem = { ...newItem, id: resolvedRowId };
         setPendingFastEntrySearch('');
@@ -1543,8 +1546,7 @@ const DeliveryNote = () => {
         });
 
         setItems(prev => {
-            const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
-            return isFirstItemEmpty ? [newItem] : [...prev, newItem];
+            return placeEntryLine(prev, newItem, isBlankByCodeDesc);
         });
         if (newItem.code) {
             fetchItemContext(newItem.code);
@@ -2735,7 +2737,7 @@ const DeliveryNote = () => {
                                             </div>
                                         </div>
 
-                                        <div className="overflow-auto max-h-[380px]">
+                                        <div ref={entryTableRef} className="overflow-auto max-h-[380px]">
                                             <table className="bb-nowrap-table w-full text-xs text-left min-w-[880px]">
                                                 <thead className="sticky top-0 z-10 bg-white border-b border-slate-100/80 text-[11px] font-semibold text-slate-500">
                                                     <tr>
@@ -2757,10 +2759,10 @@ const DeliveryNote = () => {
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-slate-100/50">
-                                                    {hasItemData ? items.map((item, index) => (
+                                                    {hasItemData ? orderRowsForEntryDisplay(items, isBlankByCodeDesc).map(({ item, rowNo, blank }) => (
                                                         <React.Fragment key={item.id}>
-                                                            <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isLockedForEdit ? 'opacity-80' : ''}`}>
-                                                                <td className="p-2 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
+                                                            <tr {...entryRowAttrs({ item, blank })} className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isLockedForEdit ? 'opacity-80' : ''}`}>
+                                                                <td className="p-2 text-center text-slate-400 text-xs font-medium">{rowNo}</td>
                                                                 <td className="p-2">
                                                                     {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
                                                                     {(!item.code && !item.desc) ? (
@@ -2829,6 +2831,8 @@ const DeliveryNote = () => {
                                                                                 if (e.key === 'Tab' && !e.shiftKey && !isLockedForEdit) {
                                                                                     e.preventDefault();
                                                                                     const newRow = createBlankDeliveryItem();
+                                                                                    const openRow = findOpenEntryRow(items, isBlankByCodeDesc);
+                                                                                    if (openRow) { inlineSearchRefs.current[openRow.id]?.focus({ preventScroll: true }); return; }
                                                                                     focusNextInlineSearchRef.current = newRow.id;
                                                                                     setItems(prev => [...prev, newRow]);
                                                                                 }

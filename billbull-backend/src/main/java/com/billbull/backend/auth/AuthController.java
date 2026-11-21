@@ -114,6 +114,9 @@ public class AuthController {
         } else {
             loginRateLimiter.recordSuccess(clientIp);
         }
+        // /api/auth/** runs before any JWT exists, so without this every sign-in's audit row said
+        // "SYSTEM". After the password check only: a failed attempt is not pinned on an account.
+        com.billbull.backend.logging.LogContext.attributeTo(user.getUsername(), user.getId());
         return user;
     }
 

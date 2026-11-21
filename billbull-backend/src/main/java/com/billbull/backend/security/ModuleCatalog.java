@@ -41,6 +41,8 @@ public final class ModuleCatalog {
             "customer.inquiry", "customer.followup", "customer.message",
             // User Management resources
             "userManagement.user", "userManagement.role", "userManagement.setup",
+            // Access-control audit log (security.accessaudit) — view; export needs canExport
+            "userManagement.audit",
             // POS module (administration — day-to-day cashiering stays under sales.pos)
             "pos", "pos.terminals", "pos.sessions", "pos.counters", "pos.devices",
             "pos.printers", "pos.scanners", "pos.hardwareprofiles", "pos.settings",
@@ -57,6 +59,10 @@ public final class ModuleCatalog {
             "permissions.customer.advance.refund",
             "permissions.customer.advance.adjust",
             "permissions.customer.advance.void",
+            // Ownership override (OwnershipAccessService.VIEW_ALL_RECORDS_MODULE): holders see every
+            // user's records when ownership.filtering.enabled is on. Enforced and seeded since the
+            // ownership feature shipped, but missing here, so it could not be granted from the UI.
+            "permissions.records.view-all",
             // POS Terminal lifecycle actions (single-switch grants — the 6 CRUD flags don't
             // express "can Block but not Decommission"; see BillBull RBAC-for-POS extension)
             "permissions.pos.terminal.register",
@@ -72,6 +78,7 @@ public final class ModuleCatalog {
             "permissions.pos.terminal.decommission",
             "permissions.pos.terminal.keepactive",
             "permissions.pos.terminal.setautoarchiveexempt",
+            "permissions.pos.terminal.viewactivity",
             // Cash Drop / Outs Management actions (single-switch grants, same mechanism as
             // permissions.pos.terminal.* above)
             "permissions.pos.cashmovement.create",

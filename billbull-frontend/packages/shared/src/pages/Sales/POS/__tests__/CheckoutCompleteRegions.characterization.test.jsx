@@ -92,10 +92,10 @@ function OriginalCheckoutMarkup({
   tplOutletName, effectiveOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl, company,
   tplStampDataUrl, USE_NEW_POS_PRINT_TEMPLATE, tplInvoiceShowStamp, printHtml, buildInvoiceSheetHtml,
   buildThermalReceiptArtifacts, printThermalReceiptWithConfiguredPrinter, setShowReprintModal,
-  receiptShareChannel, receiptShareInitialValue, handleReceiptShareSend,
+  receiptShareChannel, receiptShareInitialValue, handleReceiptShareSend, receiptLinkDoc = null, receiptEmailDoc = null,
   shippingCharge, currentInvoice, activeLayawayDeposit, activeSalesOrderAdvance = 0, checkoutEffectiveDue, previewInvoiceNo,
   checkoutPayment, checkoutCompatibility, showA4CheckoutPreview, checkoutA4Html, checkoutA4BlobUrl,
-  checkoutPreviewBlobUrl, PaymentAllocationPanel,
+  checkoutPreviewBlobUrl, checkoutSheetPreview, PaymentAllocationPanel,
   loadPosCustomers, selectedCustomer, selectedCustomerData, checkoutOnlineBankAccounts,
   checkoutOnlineBankAccountsLoading, checkoutRemarks, setCheckoutRemarks, checkoutPaymentFields,
   checkoutError, setCheckoutError, cancelCheckoutTenders, processPayment, checkoutLoading,
@@ -196,6 +196,8 @@ function OriginalCheckoutMarkup({
                   initialValue={receiptShareInitialValue}
                   onClose={() => setReceiptShareChannel(null)}
                   onSend={handleReceiptShareSend}
+                  linkDoc={receiptLinkDoc}
+                  emailDoc={receiptEmailDoc}
                 />
               )}
             </div>
@@ -230,6 +232,8 @@ function OriginalCheckoutMarkup({
                 checkoutA4Html={checkoutA4Html}
                 checkoutA4BlobUrl={checkoutA4BlobUrl}
                 checkoutPreviewBlobUrl={checkoutPreviewBlobUrl}
+                thermalPaperSize={checkoutSheetPreview.thermalPaper}
+                sheetPageSize={checkoutSheetPreview.pageSize}
               />
             </div>
 
@@ -303,6 +307,7 @@ function OriginalCheckoutMarkup({
                   cancelCheckoutTenders();
                 }}
                 onSettle={() => processPayment()}
+                onDismissError={() => setCheckoutError(null)}
               />
 
             </div>
@@ -390,6 +395,7 @@ function makeProps(overrides = {}) {
     checkoutA4Html: '',
     checkoutA4BlobUrl: null,
     checkoutPreviewBlobUrl: 'blob:thermal-preview',
+    checkoutSheetPreview: { thermalPaper: '80mm', pageSize: { width: 794, height: 1055 } },
     PaymentAllocationPanel: PanelStub,
     loadPosCustomers: vi.fn(),
     selectedCustomer: 'walk-in',
@@ -986,6 +992,10 @@ const C8_MODAL = [
   '                  initialValue={receiptShareInitialValue}',
   '                  onClose={() => setReceiptShareChannel(null)}',
   '                  onSend={handleReceiptShareSend}',
+  // WhatsApp receipt link (document share links): ReceiptShareModal opens WhatsAppLinkShareDialog with it.
+  '                  linkDoc={receiptLinkDoc}',
+  // Email receipt (back-office Send Email dialog with the receipt PDF): ReceiptShareModal opens it with this.
+  '                  emailDoc={receiptEmailDoc}',
   '                />',
   '              )}',
 ].join('\n');
@@ -1002,16 +1012,17 @@ const PARENT_LOCALS = [
 const readsOf = (src) => PARENT_LOCALS.filter((id) => new RegExp(`\\b${id}\\b`).test(src));
 
 describe('1. source — the copy and the complete-phase region map', () => {
-  it('the verbatim copy in this file is the live POSSales checkout region, byte for byte (204 lines)', () => {
+  it('the verbatim copy in this file is the live POSSales checkout region, byte for byte (209 lines)', () => {
     const copy = between(SELF, '{/* VERBATIM-START */}\n', '\n      {/* VERBATIM-END */}');
     expect(copy).toBe(REGION);
-    // 202 before P3 passed the checkout panel its double/triple-Enter Cash request (+2 props).
-    expect(REGION.split('\n')).toHaveLength(204);
+    // 202 before P3 passed the checkout panel its double/triple-Enter Cash request (+2 props);
+    // 204 before the preview learned the sale's paper size (+2 props: thermalPaperSize, sheetPageSize).
+    expect(REGION.split('\n')).toHaveLength(209); // 209 since the email receipt prop (208 since the WhatsApp receipt link prop)
     expect(count(POS_SALES, REGION_START)).toBe(1);
   });
 
-  it('the complete branch is 95 lines: guard, closeComplete, derivation, return, root, card, C3–C8', () => {
-    expect(COMPLETE_BRANCH.split('\n')).toHaveLength(95);
+  it('the complete branch is 97 lines: guard, closeComplete, derivation, return, root, card, C3–C8', () => {
+    expect(COMPLETE_BRANCH.split('\n')).toHaveLength(97); // 97 since the email receipt prop (96 since the WhatsApp receipt link prop)
     expect(COMPLETE_BRANCH.startsWith("        if (checkoutPhase === 'complete' && lastPaidInvoice) {\n")).toBe(true);
     const order = [
       C0_CLOSE, C0_ROWS, '          return (', C1_ROOT, C2_CARD, C3_HEADER, C4_AMOUNT, C5_INDICATOR, C6_SUMMARY,

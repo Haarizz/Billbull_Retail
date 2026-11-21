@@ -8,6 +8,7 @@ import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 import { clearPinDevice, describeTillLoginError, readPinDevice } from './pinDevice';
 import { ErrorBox, NAVY, PinPad, PinSetup, StaffPicker, inputCls, linkCls } from './PinSignIn';
 import { distinctInitials, layoutFor, readRecent, rememberSignIn } from './staffDirectory';
+import OfflineEntry from './OfflineEntry';
 
 // This PC's registered POS terminal for the till's branch (written by the workspace when it
 // registers the terminal). Only sent so the server can name whose drawer is open here.
@@ -294,6 +295,13 @@ export default function PosLogin() {
       <div aria-hidden className="pointer-events-none absolute inset-0 opacity-[0.35]"
         style={{ backgroundImage: 'radial-gradient(#D6D2C7 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
       <div aria-hidden className="pointer-events-none absolute left-1/2 top-1/3 h-[520px] w-[520px] -translate-x-1/2 rounded-full bg-[#F5C742]/25 blur-3xl" />
+
+      <OfflineEntry onEntered={() => {
+        // Same as finishSignIn: providers mounted before there were credentials reload now.
+        refreshCompany();
+        window.dispatchEvent(new CustomEvent('billbull:login'));
+        navigate('/', { replace: true });
+      }} />
 
       {/* Header: brand + till clock */}
       <header className="relative flex items-center justify-between px-6 py-5 short:py-2 sm:px-10">

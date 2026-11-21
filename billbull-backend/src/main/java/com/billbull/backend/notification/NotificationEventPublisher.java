@@ -1,12 +1,12 @@
 package com.billbull.backend.notification;
 
-import com.billbull.backend.role.Role;
-import com.billbull.backend.user.User;
 import com.billbull.backend.user.UserRepository;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
+import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Single integration point for publishing notifications from any business module.
@@ -14,6 +14,10 @@ import java.util.List;
  * <p>Uses the fan-out-on-write pattern: when a notification targets a role,
  * this publisher resolves all active users with that role and creates one
  * notification row per user. This guarantees isolated read/dismiss state.</p>
+ *
+ * <p>Every notification also records who triggered it (JPA auditing's {@code createdBy}), the
+ * branch the request was acting on, and a small {@code details} map of the event's key facts,
+ * which the inbox renders as labelled chips (amount, customer, vendor, qty, ...).</p>
  *
  * <h3>Usage from other services:</h3>
  * <pre>{@code
@@ -23,8 +27,8 @@ import java.util.List;
  *   notifPublisher.notifyUser("admin", "Invoice Paid", "INV-0042 has been paid",
  *       "SUCCESS", "SALES", "MEDIUM", "/sales/invoice", "INV-0042", "INVOICE");
  *
- *   // Notify all users with a role
- *   notifPublisher.notifyRole("INVENTORY_MANAGER", ...);
+ *   // Notify all users with a role, with details
+ *   notifPublisher.notifyRoles(List.of("ADMIN"), ..., details("Amount", "AED 120.00"));
  *
  *   // Use convenience methods
  *   notifPublisher.lowStockAlert("Widget Pro", "SKU-123", 3, 10);
@@ -32,6 +36,9 @@ import java.util.List;
  */
 @Component
 public class NotificationEventPublisher {
+
+    /** A stock alert that is still unread is not repeated inside this window. */
+    private static final Duration STOCK_ALERT_DEDUPE = Duration.ofHours(12);
 
     private final NotificationService notificationService;
     private final UserRepository userRepository;
@@ -50,24 +57,29 @@ public class NotificationEventPublisher {
                            String type, String category, String priority,
                            String actionUrl,
                            String referenceId, String referenceType) {
-        notificationService.createForUser(username, title, message, type, category,
-                priority, actionUrl, referenceId, referenceType, null);
+        notifyUser(username, title, message, type, category, priority, actionUrl, referenceId, referenceType, null);
     }
 
-    /**
-     * Fan-out: resolve all active users with the given role and create one
-     * notification per user.
-     */
+    /** Send a notification with details to a single user. */
+    public void notifyUser(String username,
+                           String title, String message,
+                           String type, String category, String priority,
+                           String actionUrl,
+                           String referenceId, String referenceType,
+                           Map<String, ?> details) {
+        if (username == null || username.isBlank()) return;
+        notificationService.createForUser(username, title, message, type, category,
+                priority, actionUrl, referenceId, referenceType, null, details);
+    }
+
+    /** Fan-out: one notification per active user holding the role. */
     public void notifyRole(String roleName,
                            String title, String message,
                            String type, String category, String priority,
                            String actionUrl,
                            String referenceId, String referenceType) {
-        List<String> usernames = resolveUsernamesForRole(roleName);
-        if (!usernames.isEmpty()) {
-            notificationService.createForUsers(usernames, title, message, type, category,
-                    priority, actionUrl, referenceId, referenceType, null);
-        }
+        notifyRoles(List.of(roleName), title, message, type, category, priority,
+                actionUrl, referenceId, referenceType, null, null);
     }
 
     /**
@@ -79,14 +91,35 @@ public class NotificationEventPublisher {
                             String type, String category, String priority,
                             String actionUrl,
                             String referenceId, String referenceType) {
+        notifyRoles(roleNames, title, message, type, category, priority,
+                actionUrl, referenceId, referenceType, null, null);
+    }
+
+    /** Fan-out to multiple roles with details and optional de-duplication of repeats. */
+    public void notifyRoles(List<String> roleNames,
+                            String title, String message,
+                            String type, String category, String priority,
+                            String actionUrl,
+                            String referenceId, String referenceType,
+                            Map<String, ?> details,
+                            Duration dedupeWithin) {
         List<String> usernames = roleNames.stream()
-                .flatMap(role -> resolveUsernamesForRole(role).stream())
+                .flatMap(role -> userRepository.findActiveUsernamesByRoleName(role).stream())
                 .distinct()
                 .toList();
         if (!usernames.isEmpty()) {
             notificationService.createForUsers(usernames, title, message, type, category,
-                    priority, actionUrl, referenceId, referenceType, null);
+                    priority, actionUrl, referenceId, referenceType, null, details, dedupeWithin);
         }
+    }
+
+    /** Ordered label → value map for {@code details}; nulls are dropped when stored. */
+    public static Map<String, Object> details(Object... labelValuePairs) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        for (int i = 0; i + 1 < labelValuePairs.length; i += 2) {
+            m.put(String.valueOf(labelValuePairs[i]), labelValuePairs[i + 1]);
+        }
+        return m;
     }
 
     // ── Convenience Methods for Common Business Events ────────────────────────
@@ -99,7 +132,9 @@ public class NotificationEventPublisher {
                 productName, sku, currentQty, reorderLevel);
         notifyRoles(List.of("ADMIN", "INVENTORY_MANAGER"),
                 title, message, "WARNING", "INVENTORY", "HIGH",
-                "/inventory/products", sku, "PRODUCT");
+                "/inventory/products", sku, "PRODUCT",
+                details("Product", productName, "Code", sku, "In stock", currentQty, "Reorder level", reorderLevel),
+                STOCK_ALERT_DEDUPE);
     }
 
     /** Out of stock alert → sent to ADMIN + INVENTORY_MANAGER users. */
@@ -108,7 +143,9 @@ public class NotificationEventPublisher {
         String message = String.format("%s (%s) has reached zero stock", productName, sku);
         notifyRoles(List.of("ADMIN", "INVENTORY_MANAGER"),
                 title, message, "ERROR", "INVENTORY", "CRITICAL",
-                "/inventory/products", sku, "PRODUCT");
+                "/inventory/products", sku, "PRODUCT",
+                details("Product", productName, "Code", sku, "In stock", 0),
+                STOCK_ALERT_DEDUPE);
     }
 
     /** New sales invoice created → notify ADMIN + ACCOUNTANT. */
@@ -119,7 +156,9 @@ public class NotificationEventPublisher {
                 invoiceNumber, customerName, amount, createdBy);
         notifyRoles(List.of("ADMIN", "ACCOUNTANT"),
                 title, message, "SUCCESS", "SALES", "MEDIUM",
-                "/sales/invoice", invoiceNumber, "INVOICE");
+                "/sales/invoice", invoiceNumber, "INVOICE",
+                details("Invoice", invoiceNumber, "Customer", customerName, "Amount", amount, "Salesperson", createdBy),
+                null);
     }
 
     /** LPO requires approval → notify ADMIN. */
@@ -128,20 +167,24 @@ public class NotificationEventPublisher {
         String title = "LPO Pending Approval";
         String message = String.format("LPO %s for %s — %s (requested by %s)",
                 lpoNumber, vendorName, amount, requestedBy);
-        notifyRole("ADMIN",
+        notifyRoles(List.of("ADMIN"),
                 title, message, "WARNING", "PURCHASE", "HIGH",
-                "/purchases/lpo", lpoNumber, "LPO");
+                "/purchases/lpo", lpoNumber, "LPO",
+                details("LPO", lpoNumber, "Vendor", vendorName, "Amount", amount, "Requested by", requestedBy),
+                null);
     }
 
-    /** Payment received → notify the invoice creator and ACCOUNTANT. */
+    /** Payment received → notify ADMIN + ACCOUNTANT. The last argument is the payment mode. */
     public void paymentReceived(String referenceNumber, String customerName,
-                                String amount, String receivedBy) {
+                                String amount, String paymentMode) {
         String title = "Payment Received";
         String message = String.format("Payment of %s from %s (ref: %s)",
                 amount, customerName, referenceNumber);
         notifyRoles(List.of("ADMIN", "ACCOUNTANT"),
                 title, message, "SUCCESS", "FINANCE", "MEDIUM",
-                "/sales/payment", referenceNumber, "PAYMENT");
+                "/sales/payment", referenceNumber, "PAYMENT",
+                details("Payment", referenceNumber, "Customer", customerName, "Amount", amount, "Mode", paymentMode),
+                null);
     }
 
     /** GRN completed → notify ADMIN + INVENTORY_MANAGER. */
@@ -151,7 +194,9 @@ public class NotificationEventPublisher {
                 vendorName, grnNumber, receivedBy);
         notifyRoles(List.of("ADMIN", "INVENTORY_MANAGER"),
                 title, message, "SUCCESS", "PURCHASE", "MEDIUM",
-                "/purchases/grn", grnNumber, "GRN");
+                "/purchases/grn", grnNumber, "GRN",
+                details("GRN", grnNumber, "Vendor", vendorName, "Received by", receivedBy),
+                null);
     }
 
     /** Overdue customer follow-up → notify the assigned salesperson. */
@@ -161,10 +206,11 @@ public class NotificationEventPublisher {
         String message = String.format("Follow-up with %s is overdue", customerName);
         notifyUser(assignedTo,
                 title, message, "WARNING", "SALES", "HIGH",
-                "/customer/followups", followUpId, "FOLLOW_UP");
+                "/customer/followups", followUpId, "FOLLOW_UP",
+                details("Customer", customerName));
     }
 
-    /** Stock transfer completed → notify receiving warehouse manager. */
+    /** Stock transfer completed → notify ADMIN + INVENTORY_MANAGER. */
     public void stockTransferCompleted(String transferNumber,
                                        String fromWarehouse, String toWarehouse) {
         String title = "Stock Transfer Received";
@@ -172,7 +218,9 @@ public class NotificationEventPublisher {
                 transferNumber, fromWarehouse, toWarehouse);
         notifyRoles(List.of("ADMIN", "INVENTORY_MANAGER"),
                 title, message, "INFO", "INVENTORY", "MEDIUM",
-                "/inventory/stock-transfer", transferNumber, "STOCK_TRANSFER");
+                "/inventory/stock-transfer", transferNumber, "STOCK_TRANSFER",
+                details("Transfer", transferNumber, "From", fromWarehouse, "To", toWarehouse),
+                null);
     }
 
     /** System-level alert (e.g. scheduled job failure). */
@@ -194,7 +242,9 @@ public class NotificationEventPublisher {
                 terminalName, daysInactive, daysUntilArchive);
         notifyRoles(List.of("ADMIN", "BRANCH_ADMIN"),
                 title, message, "WARNING", "POS", isFinal ? "CRITICAL" : "HIGH",
-                "/sales/pos-console?tab=terminals", terminalId, "POS_TERMINAL");
+                "/sales/pos", terminalId, "POS_TERMINAL",
+                details("Terminal", terminalName, "Inactive days", daysInactive, "Archived in (days)", daysUntilArchive),
+                null);
     }
 
     // ── POS Administration > Correction lifecycle (Phase 5) ───────────────────
@@ -210,7 +260,8 @@ public class NotificationEventPublisher {
                 requestNumber, targetType, targetId);
         notifyRoles(List.of("ADMIN", "BRANCH_ADMIN", "ACCOUNTANT"),
                 title, message, "INFO", "POS", "MEDIUM",
-                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST");
+                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST",
+                correctionDetails(requestNumber, targetType, targetId), null);
     }
 
     /** Correction approved → sent to the original requester. */
@@ -219,7 +270,8 @@ public class NotificationEventPublisher {
         String message = String.format("Your correction %s (%s #%d) was approved.",
                 requestNumber, targetType, targetId);
         notifyUser(requestedByUsername, title, message, "SUCCESS", "POS", "MEDIUM",
-                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST");
+                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST",
+                correctionDetails(requestNumber, targetType, targetId));
     }
 
     /** Correction rejected → sent to the original requester. */
@@ -227,8 +279,10 @@ public class NotificationEventPublisher {
         String title = "Correction Rejected";
         String message = String.format("Your correction %s (%s #%d) was rejected. Reason: %s",
                 requestNumber, targetType, targetId, reason);
+        Map<String, Object> d = correctionDetails(requestNumber, targetType, targetId);
+        d.put("Reason", reason);
         notifyUser(requestedByUsername, title, message, "ERROR", "POS", "MEDIUM",
-                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST");
+                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST", d);
     }
 
     /** Correction applied — now the effective overlay → sent to the original requester. */
@@ -237,7 +291,8 @@ public class NotificationEventPublisher {
         String message = String.format("Correction %s (%s #%d) has been applied.",
                 requestNumber, targetType, targetId);
         notifyUser(requestedByUsername, title, message, "SUCCESS", "POS", "LOW",
-                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST");
+                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST",
+                correctionDetails(requestNumber, targetType, targetId));
     }
 
     /** Execution failed after approval → sent to the requester and every approver role, since
@@ -246,22 +301,16 @@ public class NotificationEventPublisher {
         String title = "Correction Failed";
         String message = String.format("Correction %s (%s #%d) failed to apply: %s",
                 requestNumber, targetType, targetId, failureReason);
+        Map<String, Object> d = correctionDetails(requestNumber, targetType, targetId);
+        d.put("Failure", failureReason);
         notifyUser(requestedByUsername, title, message, "ERROR", "POS", "HIGH",
-                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST");
+                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST", d);
         notifyRoles(List.of("ADMIN", "BRANCH_ADMIN", "ACCOUNTANT"),
                 title, message, "ERROR", "POS", "HIGH",
-                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST");
+                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST", d, null);
     }
 
-    // ── Private ───────────────────────────────────────────────────────────────
-
-    private List<String> resolveUsernamesForRole(String roleName) {
-        return userRepository.findAll().stream()
-                .filter(User::isActive)
-                .filter(u -> u.getRoles().stream()
-                        .map(Role::getName)
-                        .anyMatch(roleName::equals))
-                .map(User::getUsername)
-                .toList();
+    private static Map<String, Object> correctionDetails(String requestNumber, String targetType, Long targetId) {
+        return details("Request", requestNumber, "Target", targetType, "Target #", targetId);
     }
 }

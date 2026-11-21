@@ -389,6 +389,8 @@ public class SalesInvoiceService {
             }
         }
 
+        rejectItemCodesSharedByProducts(invoice);
+
         Branch resolvedBranch = resolveBranchForSave(existing);
         applyBranchSnapshot(invoice, existing, resolvedBranch);
         validateInvoiceWarehouses(invoice, resolvedBranch != null ? resolvedBranch.getId() : null);
@@ -2703,6 +2705,38 @@ public class SalesInvoiceService {
      * first active warehouse mapped to the branch. Returns null when nothing is
      * resolvable (caller then leaves the line unstamped and validation handles it).
      */
+    /**
+     * Branch-level inventory lets one item code exist as a separate product in several branches,
+     * but this service still resolves lines with the branch-blind
+     * {@code findByCodeAndIsActiveTrue}. Such a code would surface mid-save as Hibernate's
+     * "Query did not return a unique result: 2 results were returned", which tells a cashier
+     * nothing. Refuse up front instead, naming each item, before anything is written.
+     */
+    private void rejectItemCodesSharedByProducts(SalesInvoice invoice) {
+        if (invoice.getItems() == null || invoice.getItems().isEmpty()) {
+            return;
+        }
+        java.util.Set<String> codes = new java.util.LinkedHashSet<>();
+        for (SalesInvoiceItem item : invoice.getItems()) {
+            if (!item.isVoided() && item.getItemCode() != null && !item.getItemCode().isBlank()) {
+                codes.add(item.getItemCode());
+            }
+        }
+        if (codes.isEmpty()) {
+            return;
+        }
+        List<Object[]> shared = productRepo.findCodesSharedByActiveProducts(codes);
+        if (shared == null || shared.isEmpty()) {
+            return;
+        }
+        String items = shared.stream()
+                .map(row -> row[0] + " (" + row[1] + ") is set up as " + row[2] + " separate products")
+                .collect(java.util.stream.Collectors.joining(";\n"));
+        throw new ResponseStatusException(HttpStatus.CONFLICT,
+                items + ", so this sale can't tell which one to use. The sale was not saved.\n"
+                        + "Ask an administrator to give each product its own item code.");
+    }
+
     private Long resolveBranchDefaultWarehouseId(Long branchId) {
         if (branchId == null) {
             return null;

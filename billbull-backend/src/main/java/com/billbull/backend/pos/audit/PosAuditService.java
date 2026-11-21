@@ -38,6 +38,15 @@ public class PosAuditService {
                 "Checkout completed: " + invoiceNumber, null, null);
     }
 
+    /** A checkout refused before anything was written (Phase 0 / M1 session guard, key reuse). */
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logCheckoutRefused(Long sessionId, String terminalId, Long branchId, String detail) {
+        save(sessionId, terminalId, branchId,
+                PosAuditAction.CHECKOUT_FAILED, "CHECKOUT", null,
+                "Checkout refused before any write: " + detail, null, null);
+    }
+
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void logItemVoided(Long sessionId, String terminalId, Long branchId,

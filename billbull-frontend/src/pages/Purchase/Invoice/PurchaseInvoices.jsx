@@ -47,6 +47,8 @@ import { getDefaultProductUnit, resolveUnitAmount } from "../../../utils/unitPri
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 // QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
 import InlineProductSearchCell from '../../../components/InlineProductSearchCell';
+import { orderRowsForEntryDisplay, entryRowAttrs, isBlankByCodeName, placeEntryLine, findOpenEntryRow } from '../../../utils/entryRowOrder';
+import useEntryRowTable from '../../../hooks/useEntryRowTable';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal'; // BB-026
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
@@ -912,6 +914,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     insurance: 0,
     otherCosts: 0
   });
+  const entryTableRef = useEntryRowTable(formData.items, isBlankByCodeName);
 
   const [isVendorSearchOpen, setIsVendorSearchOpen] = useState(false);
   const [landedCostItems, setLandedCostItems] = useState([]);
@@ -923,7 +926,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     if (targetId == null) return;
     const raf = requestAnimationFrame(() => {
       const el = inlineSearchRefs.current[targetId];
-      if (el) el.focus();
+      // the search row is pinned, so keep the latest lines in view
+      if (el) el.focus({ preventScroll: true });
       focusNextInlineSearchRef.current = null;
     });
     return () => cancelAnimationFrame(raf);
@@ -1580,7 +1584,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         resolvedRowId = targetRowId;
         return { ...prev, items: prev.items.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it) };
       }
-      return { ...prev, items: [...prev.items, newItem] };
+      return { ...prev, items: placeEntryLine(prev.items, newItem, isBlankByCodeName) };
     });
     const filledItemId = resolvedRowId;
     setPendingFastEntrySearch('');
@@ -1627,7 +1631,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       unitCosts: product.unitCosts || {},
       productId: product.id,
     };
-    setFormData(prev => ({ ...prev, items: [...prev.items, newItem] }));
+    setFormData(prev => ({ ...prev, items: placeEntryLine(prev.items, newItem, isBlankByCodeName) }));
   };
 
   // Standardized Locking Logic
@@ -2252,7 +2256,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             </div>
 
             {/* Items Table */}
-            <div className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>
+            <div ref={entryTableRef} className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>
               <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
                 <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 sticky top-0 z-10">
                   <tr>
@@ -2298,12 +2302,12 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                       <td colSpan={5} className="p-3 text-[11px] text-slate-400">Type above to add an item or click "Select from Products".</td>
                     </tr>
                   )}
-                  {formData.items.map((item, index) => {
+                  {orderRowsForEntryDisplay(formData.items, isBlankByCodeName).map(({ item, rowNo, blank }) => {
                     const calc = calculateRow(item);
                     return (
                       <React.Fragment key={item.id}>
-                        <tr className="hover:bg-slate-50 group">
-                          <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
+                        <tr {...entryRowAttrs({ item, blank })} className="hover:bg-slate-50 group">
+                          <td className="p-3 text-center text-slate-400 text-xs font-medium">{rowNo}</td>
                           <td className="p-3">
                             {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
                             {(!item.code && !item.name) ? (
@@ -2400,6 +2404,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                                     serialEnabled: false, serials: [], batchEnabled: false,
                                     availableUnits: ['PCS'], unitConversions: {}, unitPrices: {}, unitCosts: {}
                                   };
+                                  const openRow = findOpenEntryRow(formData.items, isBlankByCodeName);
+                                  if (openRow) { inlineSearchRefs.current[openRow.id]?.focus({ preventScroll: true }); return; }
                                   focusNextInlineSearchRef.current = blankRow.id;
                                   setFormData(prev => ({ ...prev, items: [...prev.items, blankRow] }));
                                 }

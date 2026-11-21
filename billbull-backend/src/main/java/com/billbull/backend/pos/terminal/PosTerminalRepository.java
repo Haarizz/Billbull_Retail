@@ -29,6 +29,25 @@ public interface PosTerminalRepository extends JpaRepository<PosTerminal, Long> 
            "AND t.status NOT IN ('ARCHIVED', 'DECOMMISSIONED', 'BLOCKED')")
     long countByCounterIdAndStatusIn(@Param("counterId") Long counterId);
 
+    /** Terminals that still hold a counter: everything except ARCHIVED/DECOMMISSIONED (a blocked
+     *  terminal keeps its slot, so it keeps its counter too). {@code excludePk} skips the terminal
+     *  being linked; pass -1 for none. */
+    @Query("SELECT COUNT(t) FROM PosTerminal t WHERE t.counterId = :counterId AND t.id <> :excludePk " +
+           "AND t.status NOT IN ('ARCHIVED', 'DECOMMISSIONED')")
+    long countLiveByCounterIdExcluding(@Param("counterId") Long counterId, @Param("excludePk") Long excludePk);
+
+    /** Keeps the cached terminal.counterName in step with a renamed counter. */
+    @Modifying
+    @Query("UPDATE PosTerminal t SET t.counterName = :counterName WHERE t.counterId = :counterId")
+    int syncCounterName(@Param("counterId") Long counterId, @Param("counterName") String counterName);
+
+    /** Before a counter is deleted: retired terminals let go of it (their counterName text stays as
+     *  history); a restored terminal is re-linked to a live counter by PosTerminalService.restore. */
+    @Modifying
+    @Query("UPDATE PosTerminal t SET t.counterId = NULL WHERE t.counterId = :counterId " +
+           "AND t.status IN ('ARCHIVED', 'DECOMMISSIONED')")
+    int detachRetiredFromCounter(@Param("counterId") Long counterId);
+
     // Heartbeat / offline-detection queries (used by PosTerminalScheduler)
     @Query("SELECT t FROM PosTerminal t WHERE t.branchId = :branchId " +
            "AND t.status IN ('ACTIVE', 'IDLE') " +

@@ -1052,4 +1052,125 @@ class PosSettingsServiceTest {
         assertTrue(saved.getTerminalArchiveNotifyBefore());
         assertEquals(7, saved.getTerminalArchiveWarningDays());
     }
+
+    // ------------------------------------------------------------------ Phase 0 / M2.2 approval vs handover
+
+    private void stubSupervisor(String username, String role) {
+        com.billbull.backend.user.User u = new com.billbull.backend.user.User();
+        u.setUsername(username);
+        u.setFullName("Sup " + username);
+        com.billbull.backend.role.Role r = new com.billbull.backend.role.Role();
+        r.setName(role);
+        u.setRoles(new java.util.HashSet<>(List.of(r)));
+        when(posCredentialVerificationService.verifyCredentials(username, "pw"))
+                .thenReturn(com.billbull.backend.pos.auth.CredentialVerificationResult.valid(u));
+    }
+
+    @Test
+    void supervisorApprovalNeverChangesSessionOwnership() {
+        stubSupervisor("manager", "MANAGER");
+        SecurityContextHolder.getContext().setAuthentication(new TestingAuthenticationToken("cashier2", null));
+
+        PosSettingsService.SupervisorAuthResult r = service.verifySupervisorCredentials("manager", "pw", "T-1", "cashier1");
+
+        assertTrue(r.isValid());
+        verify(posSessionService, never()).reassignSessionOwner(any(), any());
+        verify(auditLogService).logDomainEvent(org.mockito.ArgumentMatchers.eq("POS_TERMINAL"),
+                org.mockito.ArgumentMatchers.eq("T-1"), org.mockito.ArgumentMatchers.eq("SUPERVISOR_AUTHORIZED"), any());
+        verify(auditLogService, never()).logDomainEvent(any(), any(),
+                org.mockito.ArgumentMatchers.eq("SUPERVISOR_HANDOVER"), any());
+    }
+
+    @Test
+    void explicitHandoverReassignsTheSessionToTheSignedInCashier() {
+        stubSupervisor("manager", "MANAGER");
+        SecurityContextHolder.getContext().setAuthentication(new TestingAuthenticationToken("cashier2", null));
+
+        PosSettingsService.SupervisorAuthResult r = service.authorizeShiftHandover("manager", "pw", "T-1", "cashier1");
+
+        assertTrue(r.isValid());
+        verify(posSessionService).reassignSessionOwner("T-1", "cashier2");
+        verify(auditLogService).logDomainEvent(org.mockito.ArgumentMatchers.eq("POS_TERMINAL"),
+                org.mockito.ArgumentMatchers.eq("T-1"), org.mockito.ArgumentMatchers.eq("SUPERVISOR_HANDOVER"), any());
+    }
+
+    @Test
+    void handoverRefusedByTheCheckoutBarrierIsNotAuditedAsAHandover() {
+        stubSupervisor("manager", "MANAGER");
+        SecurityContextHolder.getContext().setAuthentication(new TestingAuthenticationToken("cashier2", null));
+        org.mockito.Mockito.doThrow(new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.CONFLICT, "SESSION_CHECKOUT_IN_PROGRESS"))
+                .when(posSessionService).reassignSessionOwner("T-1", "cashier2");
+
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> service.authorizeShiftHandover("manager", "pw", "T-1", "cashier1"));
+        verify(auditLogService, never()).logDomainEvent(any(), any(),
+                org.mockito.ArgumentMatchers.eq("SUPERVISOR_HANDOVER"), any());
+    }
+
+    @Test
+    void nonSupervisorIsRefusedForApprovalAndHandoverWithoutTouchingTheSession() {
+        stubSupervisor("clerk", "CASHIER");
+        SecurityContextHolder.getContext().setAuthentication(new TestingAuthenticationToken("cashier2", null));
+
+        assertFalse(service.verifySupervisorCredentials("clerk", "pw", "T-1", "cashier1").isValid());
+        assertFalse(service.authorizeShiftHandover("clerk", "pw", "T-1", "cashier1").isValid());
+        verify(posSessionService, never()).reassignSessionOwner(any(), any());
+    }
+
+    // ── Approval Credential = Personal PIN ──────────────────────────────────────
+
+    private com.billbull.backend.pos.pinlogin.PosApproverPinService approverPins() {
+        var approverPins = org.mockito.Mockito.mock(com.billbull.backend.pos.pinlogin.PosApproverPinService.class);
+        service.setApproverPinService(approverPins);
+        lenient().when(branchAccessService.getActiveBranchId()).thenReturn(1L);
+        return approverPins;
+    }
+
+    private static com.billbull.backend.user.User userWithRole(String username, String roleName) {
+        var role = new com.billbull.backend.role.Role();
+        role.setName(roleName);
+        var u = new com.billbull.backend.user.User();
+        u.setUsername(username);
+        u.setRoles(java.util.Set.of(role));
+        return u;
+    }
+
+    @Test
+    void personalPinApprovesASupervisorAndAuditsIt() {
+        var approverPins = approverPins();
+        when(approverPins.verify(1L, 5L, "2580"))
+                .thenReturn(new com.billbull.backend.pos.pinlogin.PosApproverPinService.Result(userWithRole("sam", "SUPERVISOR"), null));
+
+        var result = service.verifySupervisorPersonalPin(5L, "2580", "T-1", "cashier1");
+
+        assertTrue(result.isValid());
+        assertEquals("sam", result.getSupervisorUsername());
+        verify(auditLogService).logDomainEvent(org.mockito.ArgumentMatchers.eq("POS_TERMINAL"), org.mockito.ArgumentMatchers.eq("T-1"),
+                org.mockito.ArgumentMatchers.eq("SUPERVISOR_AUTHORIZED"), org.mockito.ArgumentMatchers.contains("with their PIN"));
+    }
+
+    @Test
+    void personalPinOfANonSupervisorIsRefused() {
+        var approverPins = approverPins();
+        when(approverPins.verify(1L, 6L, "3691"))
+                .thenReturn(new com.billbull.backend.pos.pinlogin.PosApproverPinService.Result(userWithRole("aisha", "CASHIER"), null));
+
+        var result = service.verifySupervisorPersonalPin(6L, "3691", "T-1", "cashier1");
+
+        assertFalse(result.isValid());
+        assertEquals("This account does not have supervisor privileges.", result.getReason());
+    }
+
+    @Test
+    void wrongPersonalPinPassesTheServerReasonThrough() {
+        var approverPins = approverPins();
+        when(approverPins.verify(1L, 5L, "0000"))
+                .thenReturn(new com.billbull.backend.pos.pinlogin.PosApproverPinService.Result(null, "Wrong PIN. Try again."));
+
+        var result = service.verifySupervisorPersonalPin(5L, "0000", "T-1", "cashier1");
+
+        assertFalse(result.isValid());
+        assertEquals("Wrong PIN. Try again.", result.getReason());
+    }
 }

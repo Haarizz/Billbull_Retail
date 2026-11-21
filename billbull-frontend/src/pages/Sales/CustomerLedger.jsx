@@ -52,7 +52,7 @@ import {
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 // QA-040: shared email modal
-import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
+import SendDocumentEmailModal from '@billbull/shared/components/SendDocumentEmailModal';
 import { sendReceiptVoucherEmail } from '@billbull/shared/api/receiptVoucherApi';
 import TableSkeleton from '../../components/common/TableSkeleton';
 import usePriceLevels from '@billbull/shared/hooks/usePriceLevels';

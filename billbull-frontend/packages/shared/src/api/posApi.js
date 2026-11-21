@@ -1,4 +1,7 @@
 import api from "./axiosConfig";
+// M3: before a session leaves service, the Standalone POS sends its offline sales and settles its
+// offline lease (the server refuses the transition while one is outstanding). Inert elsewhere.
+import { releaseOfflineLeaseForClosure } from "../pages/Sales/POS/offline/offlineRuntime";
 
 const BASE = "/api/pos";
 
@@ -108,11 +111,33 @@ export const verifyPosSupervisorPin = async (pin) => {
   return res.data?.valid === true;
 };
 
-// Verify supervisor identity by user credentials for shift handover.
+// Verify supervisor identity by user credentials to approve one action (price override, void,
+// POS function). Authorization only: it never changes who owns the terminal's session.
 // Returns { valid, supervisorName, supervisorUsername, reason } — never ships passwords to client.
 export const verifySupervisorAuth = async ({ email, password, terminalId, lockedBy }) => {
   const res = await api.post(`${BASE}/settings/supervisor-auth`, { email, password, terminalId, lockedBy });
   return res.data; // { valid: bool, supervisorName?: string, supervisorUsername?: string, reason?: string }
+};
+
+// Approval Credential = Personal PIN: the chosen supervisor's own till PIN. Same answer as
+// verifySupervisorAuth; wrong PINs lock that supervisor (5) or the branch (20) for a while.
+export const verifySupervisorPersonalPin = async ({ employeeId, pin, terminalId, lockedBy }) => {
+  const res = await api.post(`${BASE}/settings/supervisor-auth`, { employeeId, pin, terminalId, lockedBy });
+  return res.data;
+};
+
+// Who can approve with their own PIN at the active branch: [{ employeeId, name, initials, role, avatarUrl, pinLength }].
+export const getPosPinApprovers = async () => {
+  const res = await api.get(`${BASE}/settings/pin-approvers`);
+  return Array.isArray(res.data) ? res.data : [];
+};
+
+// Shift handover on a terminal locked by another cashier: verifies the supervisor, then hands the
+// terminal's open session to the signed-in cashier. Same answer as verifySupervisorAuth. Rejects
+// with 409 (SESSION_CHECKOUT_IN_PROGRESS) while a sale is being recorded on that session.
+export const authorizeShiftHandover = async ({ email, password, terminalId, lockedBy }) => {
+  const res = await api.post(`${BASE}/settings/supervisor-handover`, { email, password, terminalId, lockedBy });
+  return res.data;
 };
 
 // ── Session management ─────────────────────────────────────────────────────
@@ -191,6 +216,7 @@ export const closePosSession = async (sessionId, {
   // Closing Approval on and the signed-in user is not an administrator.
   adminApprovalToken,
 } = {}) => {
+  await releaseOfflineLeaseForClosure(sessionId);
   const res = await api.post(`${BASE}/sessions/${sessionId}/close`, {
     notes, closingDenominations, currencyCode, varianceApprovalToken,
     cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks,
@@ -276,6 +302,7 @@ export const getPosXReport = async (sessionId) => {
  * getPosXReport above is for the dashboard preview and does NOT mark completion.
  */
 export const generatePosXReport = async (sessionId) => {
+  await releaseOfflineLeaseForClosure(sessionId);
   const res = await api.post(`${BASE}/sessions/${sessionId}/x-report/generate`);
   return res.data;
 };
@@ -283,6 +310,16 @@ export const generatePosXReport = async (sessionId) => {
 export const getAllPosTerminals = async (branchId) => {
   const res = await api.get(`${BASE}/terminals/branch/${branchId}/all`);
   return res.data;
+};
+
+// Recent POS audit trail for a branch (optionally one terminal), newest first.
+// Requires permissions.pos.terminal.viewactivity (ADMIN/BRANCH_ADMIN/MANAGER/SUPERVISOR by default).
+export const getTerminalActivity = async (branchId, { terminalId, limit } = {}) => {
+  const params = {};
+  if (terminalId) params.terminalId = terminalId;
+  if (limit) params.limit = limit;
+  const res = await api.get(`${BASE}/terminals/branch/${branchId}/activity`, { params });
+  return Array.isArray(res.data) ? res.data : [];
 };
 
 export const renamePosTerminal = async (terminalId, { terminalName, counterName }) => {
@@ -402,6 +439,38 @@ export const resolvePosEntry = async (q) => {
  */
 export const posCheckout = async (payload) => {
   const res = await api.post(`${BASE}/checkout`, payload);
+  return res.data;
+};
+
+/**
+ * Read-only: what the server holds under a checkout key the till persisted (Phase 0 / M2.2.2).
+ * `payload` is the exact saved request, key included. Resolves to
+ * { checkoutKey, found, state, sameRequest, recorded: 'YES'|'NO'|'PARTIAL'|'UNKNOWN', invoiceId,
+ *   invoiceNumber, branchId, sessionId, terminalId, leaseExpired }. Never records or replays a sale.
+ */
+export const lookupPosCheckoutAttempt = async (payload) => {
+  const res = await api.post(`${BASE}/checkout/attempts/lookup`, payload);
+  return res.data;
+};
+
+/**
+ * Explicit, confirmed abandonment of a checkout key (Phase 0 / M2.2.3). `payload` is the exact saved
+ * request, key included. Resolves (200) to { outcome: 'ABANDONED'|'ALREADY_ABANDONED', terminal: true,
+ * status } once the key can never record a sale; rejects with a 409 whose body carries `code`
+ * (CHECKOUT_RECORDED, CHECKOUT_IN_PROGRESS, CHECKOUT_STALLED, CHECKOUT_KEY_REUSED) and the key's
+ * current `status` when it cannot be abandoned.
+ */
+export const abandonPosCheckoutAttempt = async (payload, reason) => {
+  const res = await api.post(`${BASE}/checkout/attempts/abandon`, payload, { params: reason ? { reason } : undefined });
+  return res.data;
+};
+
+/**
+ * Checkouts the server holds that the caller may recover (M2.2.3), for a till that lost its local
+ * records. Resolves to { branchId, scope, sinceHours, attempts: [...] }. Never carries a payload.
+ */
+export const listRecoverablePosCheckoutAttempts = async (params = {}) => {
+  const res = await api.get(`${BASE}/checkout/attempts/recoverable`, { params });
   return res.data;
 };
 
@@ -571,6 +640,12 @@ export const verifySessionClosurePermission = async (sessionId, usernameOrEmail,
   return res.data;
 };
 
+/** Same as verifySessionClosurePermission, with the approver's own till PIN (Personal PIN mode). */
+export const verifySessionClosurePermissionByPin = async (sessionId, employeeId, pin) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/authorize-closure`, { employeeId, pin });
+  return res.data;
+};
+
 /**
  * Start the session's closure workflow. The session stays OPEN, but normal POS work on it
  * (continue/resume, checkout, cash movements) is refused server-side until it is closed or
@@ -585,6 +660,7 @@ export const verifySessionClosurePermission = async (sessionId, usernameOrEmail,
  * NOT consumed here, so the close call that follows can still spend it.
  */
 export const beginPosSessionClosure = async (sessionId, { closureAuthToken } = {}) => {
+  await releaseOfflineLeaseForClosure(sessionId);
   const res = await api.post(`${BASE}/sessions/${sessionId}/begin-closure`, { closureAuthToken });
   return res.data;
 };

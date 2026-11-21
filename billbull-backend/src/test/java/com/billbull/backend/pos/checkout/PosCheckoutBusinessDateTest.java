@@ -103,6 +103,8 @@ class PosCheckoutBusinessDateTest {
 
     // Till permission (sales.pos) check on every till endpoint; a bare mock grants it.
     @Mock private com.billbull.backend.security.ModulePermissionService modulePermissionService;
+    /** Phase 0 / M1: the session guard resolves the branch the invoice will be stamped with. */
+    @Mock private com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
     @InjectMocks private PosCheckoutController controller;
 
     private AutoCloseable mocks;
@@ -110,6 +112,7 @@ class PosCheckoutBusinessDateTest {
     @BeforeEach
     void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
+        PosCheckoutTillFixture.stubOpenTill(sessionService, branchAccessService);
         // Phase 2 salesperson/target settings default to OFF, which is the state in which
         // this suite's pre-Phase-2 behaviour is defined. The enforcement paths have their
         // own suite (PosCheckoutSalespersonEnforcementTest).
@@ -128,6 +131,7 @@ class PosCheckoutBusinessDateTest {
 
     private PosSession overnightSession() {
         PosSession s = new PosSession();
+        s.setBranchId(1L);
         s.setId(7L);
         s.setTradingDate(TRADING_DATE);
         // Deliberately different from tradingDate: proves tradingDate wins, not the
@@ -156,6 +160,8 @@ class PosCheckoutBusinessDateTest {
     private PosCheckoutRequest cashCheckout(Long sessionId) {
         PosCheckoutRequest req = new PosCheckoutRequest();
         req.setSessionId(sessionId);
+        // M2.1: a sale that takes payment carries a stable checkout key, as every till does.
+        req.setCheckoutKey("bd-test-" + sessionId);
         req.setBranchId(1L);
         req.setPaymentMode("Cash");
         req.setAmountTendered(100.0);
@@ -224,6 +230,7 @@ class PosCheckoutBusinessDateTest {
     @DisplayName("Sessions predating tradingDate fall back to sessionDate, never to LocalDate.now()")
     void legacySessionFallsBackToSessionDate() {
         PosSession legacy = new PosSession();
+        legacy.setBranchId(1L);
         legacy.setId(7L);
         legacy.setTradingDate(null);
         legacy.setSessionDate(TRADING_DATE);
@@ -240,7 +247,14 @@ class PosCheckoutBusinessDateTest {
     void noSessionFallsBackToBusinessDayClock() {
         stubSaveEchoingInvoice();
 
-        controller.checkout(cashCheckout(null));
+        // A sale that takes payment now needs a session (M1 guard), so the no-session case is a
+        // tenderless credit sale, which is what can still reach the server without one.
+        PosCheckoutRequest sessionless = cashCheckout(null);
+        sessionless.setPaymentMode("Credit");
+        sessionless.setAmountTendered(null);
+        sessionless.setCashAmount(null);
+        sessionless.setPaymentAllocations(null);
+        controller.checkout(sessionless);
 
         assertEquals(businessDayClock.now().toLocalDate(), capturedInvoiceDate());
     }

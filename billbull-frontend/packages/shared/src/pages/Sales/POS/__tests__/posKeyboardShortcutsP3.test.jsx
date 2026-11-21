@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../../api/salesInvoiceApi', () => ({
@@ -961,6 +961,11 @@ function SettleHarness({ args, canSettle = true }) {
 describe('settlement through useCheckout', () => {
   const chord = () => key('Enter', { ctrlKey: true });
   const keyOf = (call) => posCheckout.mock.calls[call][0].checkoutKey;
+  // Since M2.2.2 the POST follows an IndexedDB commit (checkoutOperation.submitCheckout), which
+  // fake timers would freeze. Nothing in this block depends on timers, so it runs on real ones and
+  // waits for the request instead of a fixed number of flushes.
+  beforeEach(() => { vi.useRealTimers(); });
+  const posted = (n) => waitFor(() => expect(posCheckout.mock.calls.length).toBeGreaterThanOrEqual(n));
 
   it('31/32. Ctrl+Enter pressed twice in one tick posts exactly one checkout, carrying a checkoutKey', async () => {
     posCheckout.mockResolvedValue(SAVED);
@@ -968,6 +973,8 @@ describe('settlement through useCheckout', () => {
     await flush();
     chord();
     chord();
+    await flush();
+    await posted(1);
     await flush();
     expect(posCheckout).toHaveBeenCalledTimes(1);
     expect(typeof keyOf(0)).toBe('string');
@@ -979,10 +986,11 @@ describe('settlement through useCheckout', () => {
     render(<SettleHarness args={checkoutArgs()} />);
     await flush();
     chord();
+    await posted(1);
     await flush();
     await flush();
     chord();
-    await flush();
+    await posted(2);
     expect(posCheckout).toHaveBeenCalledTimes(2);
     expect(keyOf(1)).toBe(keyOf(0));
   });

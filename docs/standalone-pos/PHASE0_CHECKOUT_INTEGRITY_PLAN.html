@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phase 0 Checkout Integrity Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: technical review dossier, sticky index rail on wide screens, single column on phones. */
+:root{
+  --paper:#FBFAF7; --sheet:#FFFFFF; --ink:#1D2126; --ink-2:#4A525C; --rule:#E3E0D8; --rule-2:#EFECE5;
+  --amber:#F5C742; --amber-ink:#7A5200; --amber-wash:#FFF6DA;
+  --bad:#B4261E; --bad-wash:#FCEBE9; --warn:#8F5A00; --warn-wash:#FFF1D6;
+  --ok:#1F6B45; --ok-wash:#E5F3EB; --info:#1F4F8A; --info-wash:#E7EEF8; --new:#6B3FA0; --new-wash:#F1EAFA;
+  --code-bg:#F3F1EC;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",Arial,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#15171A; --sheet:#1C1F23; --ink:#E9E6DF; --ink-2:#A9AFB7; --rule:#30343A; --rule-2:#262A2F;
+  --amber:#F5C742; --amber-ink:#F5C742; --amber-wash:#3A3016;
+  --bad:#FF8A80; --bad-wash:#3A1D1B; --warn:#F2B755; --warn-wash:#382A14;
+  --ok:#7CD3A3; --ok-wash:#18301F; --info:#8DB8F0; --info-wash:#1A2738; --new:#C7A6F0; --new-wash:#2A2038;
+  --code-bg:#24282D; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --paper:#15171A; --sheet:#1C1F23; --ink:#E9E6DF; --ink-2:#A9AFB7; --rule:#30343A; --rule-2:#262A2F;
+  --amber:#F5C742; --amber-ink:#F5C742; --amber-wash:#3A3016;
+  --bad:#FF8A80; --bad-wash:#3A1D1B; --warn:#F2B755; --warn-wash:#382A14;
+  --ok:#7CD3A3; --ok-wash:#18301F; --info:#8DB8F0; --info-wash:#1A2738; --new:#C7A6F0; --new-wash:#2A2038;
+  --code-bg:#24282D; color-scheme:dark }
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px;padding-block:32px 80px}
+@media (max-width:900px){.wrap{grid-template-columns:minmax(0,1fr);gap:16px}}
+nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px);align-self:start;font-size:13px;max-height:calc(100vh - 32px);overflow:auto}
+@media (max-width:900px){nav.toc{position:static;max-height:none;border:1px solid var(--rule);border-radius:6px;padding:12px 14px;background:var(--sheet)}}
+nav.toc p{font-family:var(--f-display);text-transform:uppercase;letter-spacing:.08em;font-size:12px;color:var(--ink-2);margin:14px 0 6px}
+nav.toc p:first-child{margin-top:0}
+nav.toc a{display:block;color:var(--ink);text-decoration:none;padding:2px 0 2px 10px;border-left:2px solid var(--rule)}
+nav.toc a:hover,nav.toc a:focus-visible{border-left-color:var(--amber);outline:none;color:var(--amber-ink)}
+main{min-width:0}
+header.cover{border-bottom:3px solid var(--ink);padding-bottom:20px;margin-bottom:28px}
+.eyebrow{font-family:var(--f-display);text-transform:uppercase;letter-spacing:.1em;font-size:12px;color:var(--ink-2)}
+h1{font-family:var(--f-display);font-weight:700;font-size:clamp(30px,4.4vw,44px);line-height:1.08;margin:6px 0 10px;text-wrap:balance}
+h2{font-family:var(--f-display);font-weight:700;font-size:26px;line-height:1.2;margin:52px 0 6px;text-wrap:balance;scroll-margin-top:16px}
+h2 .num{color:var(--amber-ink);margin-right:8px}
+h3{font-family:var(--f-display);font-weight:600;font-size:19px;margin:28px 0 6px;text-wrap:balance;scroll-margin-top:16px}
+h4{font-family:var(--f-body);font-weight:600;font-size:15px;margin:18px 0 4px}
+p,li{max-width:76ch}
+.lede{font-size:17px;color:var(--ink-2);max-width:72ch;margin:0}
+.meta{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:14px;font-size:13px;color:var(--ink-2)}
+.meta b{color:var(--ink);font-weight:500}
+code,.mono{font-family:var(--f-mono);font-size:.86em;background:var(--code-bg);padding:1px 4px;border-radius:3px;overflow-wrap:anywhere}
+pre{font-family:var(--f-mono);font-size:12.5px;line-height:1.5;background:var(--code-bg);padding:12px 14px;border-radius:6px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;font-size:inherit}
+.verdict{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin:24px 0 8px}
+@media (max-width:640px){.verdict{grid-template-columns:minmax(0,1fr)}}
+.vcard{border:1px solid var(--rule);background:var(--sheet);border-radius:8px;padding:16px 18px;min-width:0}
+.vcard.primary{border:2px solid var(--amber);background:var(--amber-wash)}
+.vcard .k{font-family:var(--f-display);text-transform:uppercase;letter-spacing:.08em;font-size:12px;color:var(--ink-2)}
+.vcard .v{font-family:var(--f-display);font-weight:700;font-size:24px;line-height:1.15;margin:4px 0 6px}
+.vcard p{margin:0;font-size:14px}
+.pill{display:inline-block;font-family:var(--f-display);font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;padding:1px 7px;border-radius:999px;white-space:nowrap;vertical-align:1px}
+.p-bad{background:var(--bad-wash);color:var(--bad)} .p-warn{background:var(--warn-wash);color:var(--warn)}
+.p-ok{background:var(--ok-wash);color:var(--ok)} .p-info{background:var(--info-wash);color:var(--info)}
+.p-new{background:var(--new-wash);color:var(--new)} .p-dec{background:var(--amber-wash);color:var(--amber-ink);border:1px solid var(--amber)}
+.tbl{overflow-x:auto;margin:12px 0 4px;border:1px solid var(--rule);border-radius:6px;background:var(--sheet)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.5}
+th,td{text-align:left;vertical-align:top;padding:8px 10px;border-bottom:1px solid var(--rule-2)}
+th{font-family:var(--f-display);font-weight:600;font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-2);background:var(--paper);border-bottom:1px solid var(--rule)}
+tr:last-child td{border-bottom:0}
+td.id{font-family:var(--f-mono);font-size:12px;white-space:nowrap;color:var(--ink-2)}
+.wide table{min-width:820px}
+.callout{border-left:4px solid var(--amber);background:var(--sheet);padding:12px 16px;margin:14px 0;border-radius:0 6px 6px 0}
+.callout.bad{border-left-color:var(--bad)} .callout.ok{border-left-color:var(--ok)}
+.callout p{margin:4px 0}
+.answer{font-weight:500}
+ol.steps,ul.tight{padding-left:22px} ul.tight li,ol.steps li{margin:3px 0}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+@media (max-width:760px){.two{grid-template-columns:minmax(0,1fr)}}
+.box{border:1px solid var(--rule);border-radius:6px;padding:12px 14px;background:var(--sheet);min-width:0}
+.box h4{margin-top:0}
+.mermaid-wrap{overflow-x:auto;border:1px solid var(--rule);border-radius:6px;background:var(--sheet);padding:12px;margin:12px 0}
+pre.mermaid{background:none;margin:0;padding:0;font-size:13px}
+.final{border:2px solid var(--ink);border-radius:8px;padding:20px 22px;margin-top:28px;background:var(--sheet)}
+.final .v{font-family:var(--f-display);font-weight:700;font-size:30px;margin:4px 0 10px}
+.small{font-size:13px;color:var(--ink-2)}
+a{color:var(--info)}
+a:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+hr{border:0;border-top:1px solid var(--rule);margin:40px 0}
+</style>
+
+</head>
+<body>
+<style>
+.p-nv{background:var(--rule-2);color:var(--ink-2)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 14px;font-size:13px;margin-top:12px}
+td .pill{margin-bottom:2px}
+.chg td:nth-child(1){min-width:180px}
+</style>
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <p>Plan</p>
+  <a href="#s1">1 · Executive summary</a>
+  <a href="#s2">2 · Repository status</a>
+  <a href="#s3">3 · Critical defect</a>
+  <a href="#s4">4 · Transaction flow</a>
+  <a href="#s5">5 · Architecture</a>
+  <a href="#s6">6 · Backend sequence</a>
+  <a href="#s7">7 · Frontend sequence</a>
+  <a href="#s8">8 · Migration plan</a>
+  <a href="#s9">9 · API contracts</a>
+  <a href="#s10">10 · Attempt lifecycle</a>
+  <a href="#s11">11 · Payment-leg keys</a>
+  <a href="#s12">12 · Manual resolution</a>
+  <a href="#s13">13 · Session and Day Close</a>
+  <a href="#s14">14 · Flags and rollout</a>
+  <a href="#s15">15 · Test cases</a>
+  <a href="#s16">16 · Performance</a>
+  <a href="#s17">17 · Security and audit</a>
+  <a href="#s18">18 · Risks and decisions</a>
+  <a href="#s19">19 · Milestones</a>
+  <a href="#s20">20 · Acceptance checklist</a>
+  <a href="#final">A–D · Go / no-go</a>
+</nav>
+
+<main>
+<header class="cover">
+  <div class="eyebrow">BillBull ERP · Standalone POS · Phase 0</div>
+  <h1>Phase 0 Checkout Integrity Plan</h1>
+  <p class="lede">An implementation plan for making the online POS checkout safe against partial financial commits, recoverable after a crash or lost response, and reviewable by supervisors. Shared by <code>/sales/pos</code> and <code>/pos/</code>. This is a plan only: no files, migrations, properties, databases or services were changed.</p>
+  <div class="meta">
+    <span>Prepared <b>12 Nov 2026</b></span>
+    <span>Branch <b>feat/email-pdf-attachments</b></span>
+    <span>HEAD <b>be9be921</b></span>
+    <span>Next free migration <b>V138</b> (re-check at merge)</span>
+  </div>
+  <div class="legend">
+    <span><span class="pill p-info">Confirmed</span> confirmed in current code</span>
+    <span><span class="pill p-new">Proposed</span> proposed change</span>
+    <span><span class="pill p-dec">Decision</span> business decision</span>
+    <span><span class="pill p-warn">Reproduce</span> needs reproduction</span>
+    <span><span class="pill p-nv">Not verified</span> not verified</span>
+  </div>
+</header>
+<section id="m0-correction">
+  <div class="callout bad">
+    <p><b>M0 correction, added 12 Nov 2026 after this document was written.</b> A database-backed reproduction (<code>PosCheckoutClosedSessionDefectTest</code>, run twice on the disposable clone <code>billbull_m0_checkout_20261112</code>, HEAD <code>be9be921</code>) did <b>not</b> reproduce the predicted partial commit for a checkout naming a CLOSED or SUSPENDED session.</p>
+    <p><b>Observed:</b></p>
+    <ul class="tight">
+      <li>HTTP 200, invoice PAID with zero balance.</li>
+      <li>Delivery Note, stock movement, invoice journal and receipt journal written.</li>
+      <li>Payment and Receipt Voucher written, with the Payment attributed to the closed or suspended session.</li>
+      <li>The session's totals stayed at 0.</li>
+      <li>The closed session's live X-Report expected cash rose after it had been closed.</li>
+      <li>The same-key retry returned 200 with the same, fully paid invoice.</li>
+    </ul>
+    <p><b>Cause:</b> <code>SalesInvoiceService.createSalesPaymentForInvoice</code> calls the one-argument <code>PaymentService.savePayment(p)</code> (<code>SalesInvoiceService.java:1948</code>), so <code>PosDrawerSessionValidator.requireOpenDrawerSession</code> never runs on the till path. <code>PosSessionRepository.incrementSessionTotals</code> updates OPEN sessions only.</p>
+    <p><b>What this changes:</b> statements in this document that describe "invoice posted, then payment refused", an unpaid invoice returned on retry, or Day Close counting it as a credit sale are <b>not correct for this scenario</b>. They are kept and marked rather than removed. The real defect is silent acceptance and misattribution of cash to a session that is already closed or suspended.</p>
+    <p><b>Still open:</b></p>
+    <ul class="tight">
+      <li>Other partial-commit paths in this document, such as a payment leg failing for a different reason after posting, were not tested by M0. They remain plausible but unverified.</li>
+      <li><b>Day Close behaviour with such a sale remains unverified</b>: <code>closeDay</code> was not run.</li>
+      <li>M1 adds a pre-write session guard that refuses these checkouts with 409 before any write. It is not concurrency-safe; the session-row lock and attempt claim remain M2.</li>
+    </ul>
+  </div>
+</section>
+
+
+<!-- 1 -->
+<section id="s1">
+  <h2><span class="num">1</span>Executive summary</h2>
+  <ul class="tight">
+    <li><span class="pill p-info">Confirmed</span> The defect described in the brief is still present at <code>be9be921</code>, by static trace. A checkout naming a CLOSED or SUSPENDED session passes every gate, saves the invoice, posts stock, the Delivery Note and the invoice GL, and only then fails at the first payment leg. <span class="pill p-bad">Corrected by M0</span> Not reproduced: the checkout fully succeeded. See the <a href="#m0-correction">M0 correction</a>. The original text is kept below. <span class="pill p-warn">Reproduce</span> The committed database effects still need to be shown by a database-backed test. That is milestone M0.</li>
+    <li><span class="pill p-info">Confirmed</span> Closing a session races with a checkout in progress. Only <code>closeSession</code> locks the session row. <code>beginClosure</code>, <code>generateXReport</code>, <code>suspendSession</code>, <code>resumeSession</code>, <code>transferSession</code> and the idle scheduler all read, modify and save without a lock. No entity uses <code>@Version</code>.</li>
+    <li><span class="pill p-new">Proposed</span> The fix has five parts:
+      <ul class="tight">
+        <li><b>A session claim.</b> A short transaction, before any invoice write, locks the session row, validates it and records an <code>IN_PROGRESS</code> attempt. Every session transition takes the same lock and refuses while an attempt is in progress.</li>
+        <li><b>A fenced attempt journal</b>, with a child table for payment legs.</li>
+        <li><b>Allocation keys on <code>sales_payments</code>.</b></li>
+        <li><b>Explicit replay outcomes.</b></li>
+        <li><b>A supervisor resolution queue</b>, built on the existing POS Administration correction framework.</li>
+      </ul></li>
+    <li><span class="pill p-new">Proposed</span> <span class="pill p-dec">Decision</span> <b>Strongly recommended:</b> wrap invoice posting, all payment legs, the session totals and serial marking in <em>one</em> transaction. <code>PosDeliverySettlementService</code> (<code>:108</code>) already does this for delivery settlement. It removes most partial states instead of only detecting them, and it does not hold the invoice-number lock, because the invoice is saved in its own earlier transaction.</li>
+    <li>The session-status refusal ships with <b>no flag that can switch it off</b>. Terminal and branch matching starts log-only, because of session transfer and takeover.</li>
+    <li>Recommendation: <b>Phase 0 can begin</b>, starting with M0 (reproduce the defect and run the read-only legacy report), then M1 (the session guard).</li>
+  </ul>
+</section>
+
+<!-- 2 -->
+<section id="s2">
+  <h2><span class="num">2</span>Current repository and Git status</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Item</th><th>Finding</th></tr></thead>
+    <tbody>
+      <tr><td>Branch and HEAD</td><td><code>feat/email-pdf-attachments</code> at <code>be9be921</code>. This is the same revision as the second review, so the line references below still apply.</td></tr>
+      <tr><td>Working tree</td><td><code>M billbull-backend/src/main/resources/application.properties</code> (3 lines: a local datasource pointing at <code>testdb</code>). This is the user's local setting and must never be committed or overwritten. <code>?? docs/standalone-pos/OFFLINE_POS_AUDIT_REVIEW.html</code> (the second review, uncommitted). One unrelated stash on <code>feature/loqfix</code>.</td></tr>
+      <tr><td>Migrations</td><td>133 files on this branch, highest <code>V137__rfq_vendor_portal_and_lpo_line_tax.sql</code>. <code>origin/main</code> and <code>feat/tenant-alamwag</code> stop at V135, so V136 and V137 exist only on this branch. <code>target/classes</code> holds no stray higher version. <b>The next free number is V138.</b> If this branch merges after another branch that adds V138, renumber upward; never down into a gap (see <code>V8__fk_constraints.sql</code>).</td></tr>
+      <tr><td>Applied history</td><td><span class="pill p-nv">Not verified</span> <code>flyway_schema_history</code> on testdb was not read: <code>psql</code> is not on this PC. The disposable clone in M0 will confirm it.</td></tr>
+      <tr><td>Checkout consumers</td><td><code>POST /api/pos/checkout</code> is called through <code>posApi.posCheckout</code> (<code>packages/shared/src/api/posApi.js:403</code>) from two places:
+        <ol class="tight">
+          <li><code>useCheckout.settleSale</code> (<code>useCheckout.js:328</code>), with a key.</li>
+          <li>The delivery-order builder inline in <code>POSSales.jsx</code> (<code>:2880</code>), with <b>no checkoutKey</b>. <span class="pill p-info">Confirmed</span> No other occurrence of <code>checkoutKey</code> exists in <code>POSSales.jsx</code>.</li>
+        </ol>
+        Both <code>/sales/pos</code> and <code>/pos/</code> mount the same <code>POSSales</code>. <code>tools/pos-parity/compare.cjs</code> diffs this endpoint.</td></tr>
+      <tr><td>Other uses of the key</td><td><code>SalesReturnEligibilityService:118,205</code> shows <code>posCheckoutKey</code> as the receipt number on returns, so the key format must not change. <code>SalesInvoiceRepository:80</code> searches by it.</td></tr>
+      <tr><td>Test conventions</td><td>Mockito unit tests in <code>src/test/java/com/billbull/backend/pos/checkout/</code> (<code>PosCheckoutControllerTest</code> and others). <code>PosDeliverySettlementConcurrencyIT</code> exists but <b>never runs</b> (no failsafe plugin). Database-backed tests must be named <code>*Test</code> and pointed at a clone.</td></tr>
+      <tr><td>Infrastructure</td><td><code>spring-boot-starter-actuator</code> is present (<code>pom.xml:78</code>). No <code>statement_timeout</code>, lock timeout or default transaction timeout is configured. Hikari <code>connection-timeout=20000</code>.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 3 -->
+<section id="s3">
+  <h2><span class="num">3</span>Verified critical checkout defect</h2>
+  <div class="callout bad"><p><span class="pill p-bad">Corrected by M0</span> M0 did not reproduce steps 5 to 7 below. The payment was recorded against the closed or suspended session, and the sale was not left half-posted. See the <a href="#m0-correction">M0 correction</a>. The original text is kept below.</p></div>
+  <p><span class="pill p-info">Confirmed</span> by static trace at <code>be9be921</code>. <span class="pill p-warn">Reproduce</span> for the committed rows (M0).</p>
+  <ol class="steps">
+    <li><code>PosCheckoutController.checkout</code> (<code>:228</code>) loads the session (<code>:262</code>) and runs <code>BusinessDayContinuationGate.assertMayContinue</code>, which returns empty for a CLOSED session (<code>evaluate</code>: only OPEN or SUSPENDED are checked). It then runs <code>PosSessionClosureWorkflowGate.assertMayOperate</code>, where <code>isInClosureWorkflow</code> is false for CLOSED, and for SUSPENDED unless closure has started. <b>No status check runs.</b></li>
+    <li><code>businessDayCheckoutGate.assertCheckoutAllowed(request.getBranchId())</code> (<code>:277</code>) checks the branch window only.</li>
+    <li>TX1: <code>invoiceService.save</code> (<code>:343</code>) commits the invoice, its items and a number from the counter.</li>
+    <li>TX2: <code>invoiceService.updateStatus</code> (<code>:414</code>) commits stock, the auto Delivery Note, the batch consumption and the invoice journal, with the status set to PAID.</li>
+    <li>TX3: <code>invoiceService.recordPayment</code> (<code>:452</code>) → <code>PaymentService.savePayment</code> (<code>:272-276</code>) → <code>PosDrawerSessionValidator.requireOpenDrawerSession</code> throws 400 because the status is not OPEN. No compensation runs.</li>
+    <li>The client keeps <code>checkoutAttemptRef</code> on error (<code>useCheckout.js:161-171</code>; it is cleared only on success, <code>:331</code>), so the retry sends the same key. <code>:240-247</code> returns 200 with the posted, unpaid invoice, and the till treats that as success and prints.</li>
+    <li>Day Close (<code>PosSessionService.closeDay</code>): once the session is CLOSED, the OPEN and SUSPENDED blockers pass. The invoice is not a DRAFT, and it has no pending or failed payment. Its balance falls into <code>creditSales</code>, so the identity balances and <b>the damage is invisible</b>.</li>
+  </ol>
+  <h4>Related variants in current code</h4>
+  <ul class="tight">
+    <li><span class="pill p-info">Confirmed</span> A credit-only checkout on a CLOSED session records no payment, so it <em>succeeds</em>. <code>recordInvoiceOnSession</code> (<code>:1791-1855</code>) then increments the totals of a closed session.</li>
+    <li><span class="pill p-info">Confirmed</span> A CASH, CARD or ONLINE checkout on a SUSPENDED session follows the same path as CLOSED.</li>
+    <li><span class="pill p-info">Confirmed</span> Race: the session is OPEN at <code>:262</code> but is closed before TX3. This is possible because <code>closeSession</code> locks the row (<code>:888</code>) while checkout never does.</li>
+    <li><span class="pill p-info">Confirmed</span> No terminal check runs at checkout. <code>request.terminalId</code>, <code>sessionId</code> and <code>branchId</code> are not checked against each other, and a BLOCKED, ARCHIVED or DECOMMISSIONED terminal is not refused (<code>PosTerminalService.heartbeat</code>, around <code>:183-185</code>, refuses those, but checkout does not call it).</li>
+    <li>Realistic triggers: a supervisor closes a session from another device while a cashier still has a cart open; the idle or hard-limit scheduler suspends it (<code>PosSessionScheduler:34-63</code>); or an X-Report or close lands in the same second.</li>
+  </ul>
+</section>
+
+<!-- 4 -->
+<section id="s4">
+  <h2><span class="num">4</span>Exact transaction flow and partial-commit risks</h2>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Step</th><th>Code</th><th>Boundary</th><th>Kind</th><th>Partial state if it fails or the process dies after it</th></tr></thead>
+    <tbody>
+      <tr><td>Replay lookup</td><td><code>:240-247</code></td><td>read</td><td>—</td><td>Returns DRAFT, partial or still-running invoices with 200</td></tr>
+      <tr><td>Gates and validation</td><td><code>:261-331</code></td><td>read</td><td>—</td><td>None</td></tr>
+      <tr><td>TX1 save</td><td><code>SalesInvoiceService.save:339</code></td><td>own TX; holds the tenant invoice-number lock until commit</td><td>financial</td><td>P1: a DRAFT holding the key</td></tr>
+      <tr><td>Plan resolve</td><td><code>:352</code>; PI flow <code>:362-385</code>; card total <code>:391-400</code></td><td>—</td><td>—</td><td><code>deleteQuietly</code> (<code>:1377</code>) physically deletes, leaving a number gap. If the delete fails, P1.</td></tr>
+      <tr><td>TX2 post</td><td><code>updateStatus:1636</code>, <code>rollbackFor=Exception</code></td><td>own TX, all-or-nothing</td><td>financial and inventory</td><td>P2: posted, PAID, no payment</td></tr>
+      <tr><td>TX3a voucher</td><td><code>CreditVoucherService.redeem:279</code></td><td>own TX, idempotent</td><td>financial</td><td>P4: voucher drawn down, leg missing</td></tr>
+      <tr><td>TX3b…n legs</td><td><code>recordPayment:1833</code> → <code>savePayment:240</code></td><td>own TX each</td><td>financial</td><td>P3: some legs recorded</td></tr>
+      <tr><td>TX4 session</td><td><code>recordInvoiceOnSession:1791</code></td><td>own TX; closure re-check at <code>:1807</code></td><td>derived counters</td><td>P5: paid, but the till shows a refusal</td></tr>
+      <tr><td>SO conversion</td><td><code>:476-483</code></td><td>own TX, caught</td><td>document link</td><td>SO not marked INVOICED</td></tr>
+      <tr><td>Serials</td><td><code>markSerialsSold:1348</code>, called at <code>:485</code></td><td>repository-level; <b>not caught</b></td><td>inventory integrity</td><td>P6: error response for a complete sale; the serial can be sold again</td></tr>
+      <tr><td>QR, stats</td><td><code>:495-530</code></td><td>caught</td><td>cosmetic</td><td>Missing QR or stats</td></tr>
+      <tr><td>Audit</td><td><code>PosAuditService</code> (<code>@Async</code>, <code>REQUIRES_NEW</code>)</td><td>async</td><td>audit</td><td>Lost audit line</td></tr>
+      <tr><td>Activity</td><td><code>terminalActivityService.recordActivity</code> (<code>:537</code>)</td><td><b>not caught</b></td><td>cosmetic</td><td>Error response for a complete sale</td></tr>
+    </tbody>
+  </table></div>
+  <p class="small"><code>REQUIRES_NEW</code> calls inside the chain: <code>VoucherSequenceService.nextVoucherNumber</code> (<code>:37</code>, used for journal numbers by <code>PostingEngineService:2419</code>) and <code>InventoryBalanceService.refresh</code> (deferred through <code>InventoryBalanceRefreshScheduler</code>). Both commit independently, so they leave number gaps and stale-then-refreshed balances, but never partial financial state. <span class="pill p-warn">Reproduce</span> under the single-transaction option (§6, M5).</p>
+</section>
+
+<!-- 5 -->
+<section id="s5">
+  <h2><span class="num">5</span>Proposed architecture and component boundaries</h2>
+  <p>All new backend code goes in a new package, <code>com.billbull.backend.pos.checkout.attempt</code>, to keep the already very wide controller stable. New dependencies are setter-injected, following the controller's existing pattern (<code>:104-135</code>), so the hand-built test instances in <code>PosCheckoutControllerTest</code> keep compiling.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Component (new unless noted)</th><th>Responsibility</th><th>Transaction rule</th></tr></thead>
+    <tbody>
+      <tr><td><code>PosCheckoutAttempt</code>, <code>PosCheckoutAttemptLeg</code> (entities)</td><td>The journal rows. They do <b>not</b> extend <code>BaseEntity</code>: its <code>ownerFilter</code> (<code>created_by_user_id</code>) would scope rows to the cashier and hide them from supervisors, and <code>isActive</code> has no meaning here. Audit columns are explicit, as on <code>Payment</code>.</td><td>—</td></tr>
+      <tr><td><code>PosCheckoutAttemptRepository</code></td><td>Native <code>INSERT … ON CONFLICT (checkout_key) DO NOTHING</code>, plus fenced conditional updates (<code>WHERE id=? AND owner_token=? AND status='IN_PROGRESS'</code>)</td><td>—</td></tr>
+      <tr><td><code>PosCheckoutAttemptService</code></td><td><code>begin</code>, <code>claimStep</code>, <code>recordStep</code>, <code>complete</code>, <code>markRefused</code>, <code>markIncomplete</code></td><td>Every method <code>REQUIRES_NEW</code>, short, so journal writes survive a business rollback</td></tr>
+      <tr><td><code>PosCheckoutSessionGuard</code></td><td>Inside <code>begin</code>: <code>PosSessionRepository.findByIdForUpdate</code> (existing, <code>:39-41</code>), then validate status, closure, terminal, branch and terminal status. Also touches <code>lastActivityAt</code>.</td><td>Runs inside begin's transaction; lock held for milliseconds</td></tr>
+      <tr><td><code>PosCheckoutRequestHasher</code></td><td>Canonical SHA-256 of the request. Uses a copy of the app <code>ObjectMapper</code> with <code>SORT_PROPERTIES_ALPHABETICALLY</code> and <code>ORDER_MAP_ENTRIES_BY_KEYS</code>, and leaves out <code>checkoutKey</code> and <code>supervisorOverride{Pin,Email,Password}</code>, matching the client fingerprint at <code>useCheckout.js:164-166</code>.</td><td>pure</td></tr>
+      <tr><td><code>PosCheckoutReplayService</code></td><td>Decides the outcome for an existing key (§10)</td><td>read</td></tr>
+      <tr><td><code>PosCheckoutEvidenceService</code></td><td>Builds the evidence used to classify stale attempts and to show the review screen</td><td>read-only</td></tr>
+      <tr><td><code>PosCheckoutAttemptSweepJob</code></td><td>Finds stale attempts and classifies them from evidence (§10). Modelled on <code>PosPrintJobTimeoutSweepJob</code>.</td><td><code>REQUIRES_NEW</code> per attempt</td></tr>
+      <tr><td><code>ActiveCheckoutRegistry</code></td><td>In-memory map of attempts executing in this JVM, plus a boot <code>instanceId</code></td><td>—</td></tr>
+      <tr><td><code>PosCheckoutStepHook</code> (interface)</td><td>No-op in production. Tests supply implementations that throw or block at a named step.</td><td>—</td></tr>
+      <tr><td><code>PosCheckoutSettlementService</code> (M5)</td><td><code>postAndSettle</code>: status and posting, voucher redemption, legs, session totals and serials in one transaction</td><td><code>@Transactional(rollbackFor=Exception.class, timeout=…)</code></td></tr>
+      <tr><td><code>CheckoutOutcomeException</code> and its handler</td><td>Structured 409 and 423 bodies (§9)</td><td>—</td></tr>
+      <tr><td><code>PosIncompleteCheckoutController</code> and <code>PosIncompleteCheckoutService</code></td><td>Review queue, evidence, resolution actions. Approvals go through the existing <code>CorrectionRequestService</code> (REQUESTED → PENDING_APPROVAL → APPROVED → EXECUTING → APPLIED).</td><td>Each action is its own transaction</td></tr>
+      <tr><td>Modified: <code>PosSessionService</code>, <code>PosSessionScheduler</code>, <code>PaymentService</code>, <code>SalesInvoiceService</code>, <code>Payment</code>, <code>PosCheckoutController</code></td><td>See §6</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 6 -->
+<section id="s6">
+  <h2><span class="num">6</span>Backend implementation sequence</h2>
+  <div class="tbl wide chg"><table>
+    <thead><tr><th>#</th><th>Current file · class/method</th><th>Proposed change</th><th>Responsibility</th><th>Depends on</th><th>Risk</th><th>Tests</th></tr></thead>
+    <tbody>
+      <tr><td class="id">B1</td><td><code>pos/checkout/PosCheckoutController.java</code> · <code>checkout</code> <code>:261-265</code></td><td><span class="pill p-new">Proposed</span> Interim guard: right after loading the session, refuse with 409 <code>SESSION_NOT_OPEN</code> if the status is not OPEN, and require <code>sessionId</code> for a POS sale (<a href="#s18">B13</a>). No migration needed. Replaced by B4 in M2, but the rule stays.</td><td>Stops the deterministic case at once</td><td>—</td><td>Low. Changes a half-post into a clean refusal.</td><td>T01, T02, negative control</td></tr>
+      <tr><td class="id">B2</td><td><code>db/migration/V138__pos_checkout_attempts.sql</code> (new)</td><td><span class="pill p-new">Proposed</span> Tables and index from §8</td><td>Schema</td><td>—</td><td>Low (additive)</td><td>Migration run twice on a clone</td></tr>
+      <tr><td class="id">B3</td><td>New <code>pos/checkout/attempt/*</code></td><td><span class="pill p-new">Proposed</span> Entities, repository, <code>PosCheckoutAttemptService</code>, <code>PosCheckoutRequestHasher</code>, <code>ActiveCheckoutRegistry</code></td><td>Journal</td><td>B2</td><td>Medium</td><td>Unit tests; database-backed conflict test</td></tr>
+      <tr><td class="id">B4</td><td><code>PosCheckoutController.checkout</code> <code>:240-265</code></td><td><span class="pill p-new">Proposed</span> Replace the replay block and gates with <code>attemptService.begin(request, hash)</code>, which runs <code>PosCheckoutSessionGuard</code> under <code>findByIdForUpdate</code> and inserts IN_PROGRESS with <code>ON CONFLICT DO NOTHING</code>. If the row already exists, hand over to <code>PosCheckoutReplayService</code>. Business Day, continuation and validation gates keep their order <em>after</em> begin. A refusal there calls <code>markRefused</code>.</td><td>Claim, guard, replay</td><td>B3</td><td>Medium. Changes the response for replays.</td><td>T03–T06, T15–T19</td></tr>
+      <tr><td class="id">B5</td><td><code>PosCheckoutController.checkout</code> <code>:343-469</code></td><td><span class="pill p-new">Proposed</span> Wrap each step with <code>claimStep</code> / <code>recordStep</code> (INVOICE_SAVED with id and number, PLAN_RESOLVED with the resolved plan and allocation keys, POSTED, LEG_n, SESSION_RECORDED, SERIALS_MARKED, COMPLETED). If a claim is fenced, abort before the next financial step.</td><td>Step tracking</td><td>B3</td><td>Medium</td><td>T07–T14</td></tr>
+      <tr><td class="id">B6</td><td><code>PosCheckoutController.deleteQuietly</code> <code>:1377</code></td><td><span class="pill p-new">Proposed</span> Keep the behaviour (it deletes only an unposted DRAFT, after TX2 has rolled back), but record the result: <code>ROLLED_BACK</code> with the consumed number, or <code>INCOMPLETE(INVOICE_DRAFT)</code> if the delete failed</td><td>Compensation visibility</td><td>B5</td><td>Low</td><td>T08</td></tr>
+      <tr><td class="id">B7</td><td><code>PosCheckoutController</code> <code>:485</code>, <code>:537</code></td><td><span class="pill p-new">Proposed</span> Guard <code>markSerialsSold</code> (moved into M5's transaction when M5 ships) and <code>recordActivity</code> with try/catch. Serial failure sets INCOMPLETE(SERIALS) with <code>doNotRering</code>. Activity failure is logged only.</td><td>Post-money errors</td><td>B5</td><td>Low</td><td>T13, T14</td></tr>
+      <tr><td class="id">B8</td><td><code>sales/payment/Payment.java</code>; <code>sales/invoice/SalesInvoiceService.recordPayment</code> <code>:1833</code> and <code>createSalesPaymentForInvoice</code>; <code>sales/payment/PaymentService.savePayment</code> <code>:240</code></td><td><span class="pill p-new">Proposed</span> Field <code>posAllocationKey</code> (JSON <code>READ_ONLY</code>, like <code>posSessionId</code>). A new <code>recordPayment(..., Long posSessionId, String posAllocationKey)</code> overload. An idempotent pre-check in <code>savePayment</code> (§11). The controller passes <code>key#index</code>.</td><td>Leg idempotency</td><td>B2</td><td>Medium. Shared payment path.</td><td>T10, T27, back-office payment regression</td></tr>
+      <tr><td class="id">B9</td><td><code>exception/GlobalExceptionHandler.handleDataIntegrity</code> <code>:171</code></td><td><span class="pill p-new">Proposed</span> Recognise the constraint names <code>uq_si_pos_checkout_key</code> and <code>uq_sp_pos_allocation_key</code> and map them to replay outcomes or <code>ALLOCATION_KEY_CONFLICT</code> rather than the generic 409</td><td>Concurrency safety net</td><td>B4</td><td>Low</td><td>T17</td></tr>
+      <tr><td class="id">B10</td><td>New <code>GET /api/pos/checkout/attempts/{key}</code> in <code>PosCheckoutController</code></td><td><span class="pill p-new">Proposed</span> Status for the till's recovery. Requires till permission and the same branch.</td><td>Recovery</td><td>B3</td><td>Low</td><td>T21, T22</td></tr>
+      <tr><td class="id">B11</td><td>New <code>PosCheckoutAttemptSweepJob</code></td><td><span class="pill p-new">Proposed</span> Stale detection (§10)</td><td>Crash recovery</td><td>B3, B5</td><td>Medium</td><td>T07, T19</td></tr>
+      <tr><td class="id">B12</td><td><code>pos/session/PosSessionService</code>: <code>beginClosure:1240</code>, <code>generateXReport:1881</code>, <code>suspendSession:1366</code>, <code>resumeSession:1376</code>, <code>transferSession:1451</code>, <code>supervisorTakeover:1404</code>, <code>closeSession:877</code></td><td><span class="pill p-new">Proposed</span> Replace <code>getById</code> with <code>repo.findByIdForUpdate</code>, then refuse with 409 <code>SESSION_HAS_ACTIVE_CHECKOUT</code> if <code>attemptRepo.existsBySessionIdAndStatus(id, IN_PROGRESS)</code>. <code>closeSession</code> already locks; only the check is added. Resume and takeover only need the lock, for consistency.</td><td>Race coordination</td><td>B3</td><td>Medium. Lock ordering (§13).</td><td>T05, T06, T25</td></tr>
+      <tr><td class="id">B13</td><td><code>pos/session/PosSessionScheduler.suspendIdleSessions</code> <code>:34-63</code>; <code>PosSessionRepository</code></td><td><span class="pill p-new">Proposed</span> Replace the read-then-save with a conditional bulk update: <code>UPDATE pos_sessions SET status='SUSPENDED' WHERE id=:id AND status='OPEN' AND NOT EXISTS (SELECT 1 FROM pos_checkout_attempts a WHERE a.session_id=:id AND a.status='IN_PROGRESS')</code>. Same for the hard-limit branch.</td><td>Scheduler safety</td><td>B2</td><td>Low</td><td>Scheduler unit and database tests</td></tr>
+      <tr><td class="id">B14</td><td><code>PosSessionService.closeDay</code> <code>:2435</code>; <code>getDayCloseSummary:2190</code></td><td><span class="pill p-new">Proposed</span> A new blocker: attempts IN_PROGRESS or INCOMPLETE for the date's sessions give 409 <code>CHECKOUT_ATTEMPTS_UNRESOLVED</code> with the list. Override through the existing <code>close-day/admin-approval</code> grant (<code>PosCloseApprovalService</code>) plus a reason. Show them in the summary.</td><td>Day Close protection</td><td>B3</td><td>Medium. Could block Day Close.</td><td>T24</td></tr>
+      <tr><td class="id">B15</td><td>New <code>PosCheckoutSettlementService.postAndSettle</code>; <code>PosCheckoutController</code> <code>:413-485</code></td><td><span class="pill p-new">Proposed</span> <span class="pill p-dec">Decision</span> One transaction (pattern: <code>PosDeliverySettlementService:108-226</code>). Inner <code>@Transactional</code> calls join it. On failure everything rolls back to the DRAFT and B6 compensation runs.</td><td>Prevent P2–P6</td><td>B5, B8</td><td>Medium-high</td><td>T08–T13 rerun with the flag on; parity</td></tr>
+      <tr><td class="id">B16</td><td><code>pos/audit/PosAuditAction</code>, <code>PosAuditService</code></td><td><span class="pill p-new">Proposed</span> New actions (§17)</td><td>Audit</td><td>—</td><td>Low</td><td>Unit</td></tr>
+      <tr><td class="id">B17</td><td>New <code>pos/checkout/attempt/PosIncompleteCheckout*</code>; <code>pos/admin/CorrectionType</code>, <code>CorrectionTargetType</code>; <code>security/RolePermissionInitializer</code> (around <code>:323-329</code>)</td><td><span class="pill p-new">Proposed</span> Review queue API, evidence, and resolution through the correction framework. New modules <code>pos.admin.checkout</code> (view) and <code>pos.admin.checkout.resolve</code>.</td><td>Manual resolution</td><td>B3, B8</td><td>Medium</td><td>T10, T11, resolution tests</td></tr>
+      <tr><td class="id">B18</td><td>New read-only SQL report (run by hand on each clone; no code path)</td><td><span class="pill p-new">Proposed</span> Legacy suspects:
+        <ul class="tight">
+          <li>POS_SALE with status PAID and balance above 0.005.</li>
+          <li>POS_SALE DRAFT holding a key, older than one hour, with <code>pos_proforma_pending</code> not set.</li>
+          <li><code>amount_paid</code> different from the sum of <code>sales_payments</code> for the invoice.</li>
+          <li>Invoices on sessions that were already CLOSED at <code>created_at</code>.</li>
+        </ul></td><td>Find existing damage</td><td>—</td><td>None (read-only)</td><td>Run on the clone</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 7 -->
+<section id="s7">
+  <h2><span class="num">7</span>Frontend implementation sequence</h2>
+  <p>No new dependency. A small raw-IndexedDB helper replaces Dexie. <code>POSSales.jsx</code> (11,037 lines) gets only the delivery-key change and the hand-off of new props. Its line-pinned tests, including the PromotionsDialog START/END/Zap pins, must be bumped in the same change.</p>
+  <div class="tbl wide chg"><table>
+    <thead><tr><th>#</th><th>Current file · method</th><th>Proposed change</th><th>Responsibility</th><th>Depends on</th><th>Risk</th><th>Tests</th></tr></thead>
+    <tbody>
+      <tr><td class="id">F1</td><td>New <code>packages/shared/src/pages/Sales/POS/features/checkout/pendingCheckoutStore.js</code></td><td><span class="pill p-new">Proposed</span> IndexedDB database <code>billbull-pos</code>, store <code>pendingCheckout</code> keyed by <code>terminalId</code>. Holds <code>{key, fingerprint, payload, sessionId, terminalId, branchId, startedAt}</code>. Supervisor credentials are removed before writing. Uses <code>durability:'strict'</code>, with every call in try/catch and an in-memory fallback.</td><td>Persisted attempt</td><td>—</td><td>Low</td><td>Vitest with <code>fake-indexeddb</code> (dev dependency, <span class="pill p-dec">Decision</span>) or a hand-written fake</td></tr>
+      <tr><td class="id">F2</td><td><code>features/checkout/useCheckout.js</code> · <code>checkoutKeyFor</code> <code>:161-171</code>, <code>settleSale</code> <code>:317-331</code>, catch block <code>:490-545</code></td><td><span class="pill p-new">Proposed</span>
+        <ul class="tight">
+          <li>Write to F1 <em>before</em> <code>posCheckout</code>.</li>
+          <li>On 200, clear the store.</li>
+          <li>On a definite refusal (<code>SESSION_*</code>, <code>TERMINAL_*</code>, <code>BRANCH_*</code>, validation 4xx, 423), clear the store but keep the in-memory key for an identical retry, as today.</li>
+          <li>On an unknown outcome (no response, 408/502/503/504) or <code>CHECKOUT_IN_PROGRESS</code>, keep it.</li>
+          <li>On <code>CHECKOUT_INCOMPLETE</code>, keep it, block Settle and show the "recorded, needs supervisor" state.</li>
+          <li>On <code>CHECKOUT_KEY_REUSED</code>, show a clear error and keep the store.</li>
+        </ul>
+        Never mint a new key while F1 holds an unresolved attempt for this terminal.</td><td>Correct client outcomes</td><td>F1, B4, B10</td><td>Medium. The characterization test <code>useCheckout.characterization.test.js</code> pins the reset sequence.</td><td>T20–T22; updated characterization test</td></tr>
+      <tr><td class="id">F3</td><td>New <code>features/checkout/usePendingCheckoutRecovery.js</code> and <code>PendingCheckoutDialog.jsx</code></td><td><span class="pill p-new">Proposed</span> After the session is ready, read F1. If an entry exists, call <code>GET /checkout/attempts/{key}</code> and show "Checking the last sale…". Then:
+        <ul class="tight">
+          <li>COMPLETED: success screen and a reprint offer; clear the store.</li>
+          <li>NOT_FOUND: offer "send again" with the same key and payload.</li>
+          <li>IN_PROGRESS: poll.</li>
+          <li>INCOMPLETE: supervisor message.</li>
+          <li>REFUSED or ROLLED_BACK: clear the store and return to the cart.</li>
+        </ul></td><td>Recovery after refresh</td><td>F1, B10</td><td>Medium</td><td>T20, T21</td></tr>
+      <tr><td class="id">F4</td><td><code>packages/shared/src/api/posApi.js</code></td><td><span class="pill p-new">Proposed</span> <code>getCheckoutAttemptStatus(key)</code></td><td>API</td><td>B10</td><td>Low</td><td>Unit</td></tr>
+      <tr><td class="id">F5</td><td><code>POSSales.jsx</code> delivery payload builder, around <code>:2860-2880</code></td><td><span class="pill p-new">Proposed</span> Add <code>checkoutKey</code> using the same fingerprint rule. Preferably move that block into <code>useDelivery.js</code> (whose header already describes <code>handleOutForDelivery</code>), so <code>POSSales.jsx</code> shrinks.</td><td>Delivery idempotency</td><td>—</td><td>Medium (line pins)</td><td>Delivery characterization tests</td></tr>
+      <tr><td class="id">F6</td><td>New <code>features/cart/cartDraftStore.js</code> and <code>useCartDraftPersistence.js</code>, used from <code>features/cart/useCart.js</code></td><td><span class="pill p-new">Proposed</span> Key <code>{terminalId}:{sessionId}</code>. Debounced writes of lines, customer, price level and remarks. No tenders, no card references, no credentials. Restored only when the cart is empty and the session matches. Cleared on a confirmed sale or <code>clearInvoice</code>, and on session change.</td><td>Working-cart persistence</td><td>F1 helper</td><td>Medium (restoring stale prices: the server re-prices, and the restored cart shows a "restored" banner)</td><td>Vitest</td></tr>
+      <tr><td class="id">F7</td><td><code>packages/shared/src/api/axiosConfig.js</code> · response interceptor <code>:90</code></td><td><span class="pill p-new">Proposed</span> Tag <code>err.isNetwork = !err.response</code> and <code>err.isTimeout = err.code === 'ECONNABORTED'</code>. Report the outcome to <code>connectivity.js</code>. <b>No retries</b> of POST requests.</td><td>Classification</td><td>—</td><td>Low</td><td>Extend <code>axiosSessionExpired.test.js</code></td></tr>
+      <tr><td class="id">F8</td><td>New <code>packages/shared/src/offline/connectivity.js</code> (read-only state) and <code>apps/pos/src/shell/ConnectivityBadge.jsx</code>, mounted in <code>apps/pos/src/workspace/TillWorkspace.jsx</code></td><td><span class="pill p-new">Proposed</span> Online, Server unreachable, or Checking, from <code>navigator.onLine</code> plus the last request outcome. Standalone only. Run <code>npm run shared:exports</code> after adding the import.</td><td>Indicator</td><td>F7</td><td>Low</td><td>Vitest; boundary test</td></tr>
+      <tr><td class="id">F9</td><td><code>features/session/sessionWorkflowErrors.js</code>; <code>useSessionClosure.js</code>; <code>CloseDayVarianceDialog.jsx</code></td><td><span class="pill p-new">Proposed</span> Render <code>SESSION_HAS_ACTIVE_CHECKOUT</code> ("a sale is finishing on T3, try again in a few seconds") and <code>CHECKOUT_ATTEMPTS_UNRESOLVED</code> (list plus override). New codes must not contain <code>SESSION_CLOSING_WORKFLOW</code>, which <code>isClosureWorkflowError</code> matches.</td><td>Close and Day Close UI</td><td>B12, B14</td><td>Low</td><td>Vitest</td></tr>
+      <tr><td class="id">F10</td><td><code>billbull-frontend/src/pages/Enterprise/PosAdministration.jsx</code>; new <code>src/pages/Enterprise/posAdmin/IncompleteCheckouts.jsx</code>; new <code>src/api/posIncompleteCheckoutApi.js</code></td><td><span class="pill p-new">Proposed</span> Review queue tab (§12)</td><td>Back office</td><td>B17</td><td>Medium</td><td>Vitest and a manual QA script</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 8 -->
+<section id="s8">
+  <h2><span class="num">8</span>Database migration plan (not created yet)</h2>
+  <p><span class="pill p-new">Proposed</span> One file, <code>V138__pos_checkout_attempts.sql</code> (re-check at merge). It follows the <code>V13__pos_safety_fixes.sql</code> style: <code>to_regclass</code> guards, <code>IF NOT EXISTS</code> everywhere, safe to run twice. Flyway runs before Hibernate <code>ddl-auto=update</code>, so the entities must match the SQL exactly.</p>
+  <h4><code>pos_checkout_attempts</code></h4>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Column</th><th>Type, null</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>id</code></td><td>BIGSERIAL PK</td><td>Identity, matching the <code>BaseEntity</code> convention</td></tr>
+      <tr><td><code>checkout_key</code></td><td>VARCHAR(100) NOT NULL, UNIQUE</td><td>Same length as <code>sales_invoices.pos_checkout_key</code></td></tr>
+      <tr><td><code>key_source</code></td><td>VARCHAR(10) NOT NULL</td><td><code>CLIENT</code>, or <code>SERVER</code> for keyless legacy requests (<code>srv-</code> plus a UUIDv7 from <code>common.UuidV7</code>)</td></tr>
+      <tr><td><code>request_hash</code>, <code>hash_version</code></td><td>CHAR(64) NOT NULL, SMALLINT NOT NULL</td><td>A version, so the canonicalization can change without breaking replay</td></tr>
+      <tr><td><code>requested_allocations</code></td><td>JSONB NOT NULL</td><td>Type, amount, mode and <em>masked</em> reference for each leg, as sent</td></tr>
+      <tr><td><code>resolved_plan</code></td><td>JSONB NULL</td><td>Written at PLAN_RESOLVED, after TX1, because the plan needs the invoice total (<code>:352</code>)</td></tr>
+      <tr><td><code>status</code>, <code>outcome_code</code>, <code>failed_step</code>, <code>failure_message</code></td><td>VARCHAR NOT NULL / NULL / NULL / VARCHAR(2000) NULL</td><td>§10</td></tr>
+      <tr><td><code>branch_id</code>, <code>session_id</code>, <code>terminal_id</code>, <code>terminal_pk</code>, <code>user_id</code>, <code>username</code></td><td>BIGINT NOT NULL FK <code>branches</code> / BIGINT NULL FK <code>pos_sessions</code> / VARCHAR / BIGINT NULL / BIGINT / VARCHAR</td><td>The <em>server-resolved</em> values, never the raw request fields</td></tr>
+      <tr><td><code>invoice_id</code>, <code>invoice_number</code></td><td>BIGINT NULL (<b>no FK</b>), VARCHAR(50) NULL</td><td>No FK on purpose: <code>deleteQuietly</code> physically deletes DRAFTs, and the evidence must survive that</td></tr>
+      <tr><td><code>invoice_saved_at</code>, <code>posted_at</code>, <code>session_recorded_at</code>, <code>serials_marked_at</code>, <code>completed_at</code></td><td>TIMESTAMP NULL</td><td>Step flags. Hints only; evidence decides (§10).</td></tr>
+      <tr><td><code>owner_token</code>, <code>owner_instance</code>, <code>current_step</code>, <code>heartbeat_at</code>, <code>lease_expires_at</code>, <code>execution_count</code></td><td>UUID, VARCHAR(64), VARCHAR(40), TIMESTAMP, TIMESTAMP, INT</td><td>Fencing</td></tr>
+      <tr><td><code>started_at</code>, <code>updated_at</code>, <code>finished_at</code></td><td>TIMESTAMP</td><td>Taken from <code>BusinessDayClock</code>, the convention used by other POS timestamps</td></tr>
+      <tr><td><code>resolution_code</code>, <code>resolved_by</code>, <code>resolved_at</code>, <code>resolution_note</code>, <code>correction_request_id</code>, <code>day_close_override_ref</code></td><td>All NULL</td><td>Resolution and override audit</td></tr>
+    </tbody>
+  </table></div>
+  <h4><code>pos_checkout_attempt_legs</code></h4>
+  <p><code>id</code>; <code>attempt_id</code> (FK, cascade on delete is not needed because rows are never deleted); <code>leg_index</code>; <code>allocation_key</code> VARCHAR(140) UNIQUE; <code>type</code>; <code>amount</code> NUMERIC(19,2); <code>receipt</code> BOOLEAN; <code>voucher_redeemed_at</code>; <code>payment_id</code> BIGINT NULL; <code>recorded_at</code>; <code>resolved_by_correction_id</code>. Unique on <code>(attempt_id, leg_index)</code>.</p>
+  <h4><code>sales_payments</code></h4>
+  <p><code>ADD COLUMN IF NOT EXISTS pos_allocation_key VARCHAR(140)</code>, nullable. <code>CREATE UNIQUE INDEX IF NOT EXISTS uq_sp_pos_allocation_key ON sales_payments (pos_allocation_key) WHERE pos_allocation_key IS NOT NULL</code>.</p>
+  <h4>Indexes</h4>
+  <ul class="tight">
+    <li>A partial index on <code>(session_id) WHERE status = 'IN_PROGRESS'</code>, for session transitions and the scheduler.</li>
+    <li><code>(branch_id, status, started_at)</code>, for the queue and Day Close.</li>
+    <li>A partial index on <code>(lease_expires_at) WHERE status = 'IN_PROGRESS'</code>, for the sweep.</li>
+    <li><code>(invoice_id)</code>.</li>
+  </ul>
+  <h4>Other properties</h4>
+  <ul class="tight">
+    <li><b>Tenant isolation</b>: each tenant has its own database, so there is no tenant column.</li>
+    <li><b>Historical rows</b>: none are created. Invoices made before the change have no attempt and follow the legacy rule (§10). All existing payments keep a NULL key.</li>
+    <li><b>Rollback</b>: the project has no down migrations. Reverting the code leaves the tables and the column unused, and the nullable column is harmless to old code. Never drop them on a tenant that ran with them, because they are evidence.</li>
+    <li><b>Multi-tenant rollout</b>: the migration applies on the next boot of each tenant (the profile per client). Run it first on a testdb clone with <code>-Dspring.flyway.locations=filesystem:src/main/resources/db/migration</code>, to avoid the stale <code>target/classes</code> copy problem.</li>
+  </ul>
+</section>
+
+<!-- 9 -->
+<section id="s9">
+  <h2><span class="num">9</span>API response contracts</h2>
+  <p>The successful body is <b>unchanged</b>: the <code>SalesInvoice</code> JSON that old clients expect. Two headers are added: <code>X-Checkout-Attempt-Status: COMPLETED</code> and <code>X-Checkout-Key</code>.</p>
+  <p>Every error body uses one shape, with a human-readable <code>message</code> so that cached older clients still show something sensible:</p>
+<pre><code>{
+  "code": "CHECKOUT_INCOMPLETE",
+  "message": "This sale was recorded but its payment is not complete. Do not ring it again — ask a supervisor.",
+  "checkoutKey": "…", "attemptStatus": "INCOMPLETE",
+  "invoiceId": 123, "invoiceNumber": "INV-…",
+  "completedSteps": ["INVOICE_SAVED","POSTED","LEG_0"], "missingSteps": ["LEG_1","SESSION_RECORDED"],
+  "doNotRering": true, "retryAfterSeconds": null
+}</code></pre>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Code</th><th>HTTP</th><th>When</th><th>Anything written?</th><th>Client</th></tr></thead>
+    <tbody>
+      <tr><td><code>SESSION_NOT_OPEN</code></td><td>409</td><td>Session missing, CLOSED or SUSPENDED, or in closure (the existing closure 409 keeps its own code)</td><td>Attempt row only (REFUSED)</td><td>Definite refusal</td></tr>
+      <tr><td><code>SESSION_MISMATCH</code></td><td>409</td><td>Session's terminal differs from the request's terminal</td><td>Attempt only</td><td>Definite refusal</td></tr>
+      <tr><td><code>TERMINAL_MISMATCH</code></td><td>409</td><td>Terminal not found, or belongs to another branch</td><td>Attempt only</td><td>Definite refusal</td></tr>
+      <tr><td><code>TERMINAL_NOT_OPERATIONAL</code></td><td>403</td><td>Terminal BLOCKED, ARCHIVED or DECOMMISSIONED (<a href="#s18">B8</a>)</td><td>Attempt only</td><td>Definite refusal</td></tr>
+      <tr><td><code>BRANCH_MISMATCH</code></td><td>403</td><td>Session's branch differs from the server-resolved branch (<code>BranchScope</code> / <code>getRequiredCurrentUserBranch</code>)</td><td>Attempt only</td><td>Definite refusal</td></tr>
+      <tr><td><code>CHECKOUT_KEY_REUSED</code></td><td>409</td><td>Same key, different hash</td><td>Nothing new</td><td>Show the error, keep the store</td></tr>
+      <tr><td><code>CHECKOUT_IN_PROGRESS</code></td><td>409 + <code>Retry-After</code></td><td>Attempt executing and its lease is valid</td><td>Nothing new</td><td>Unknown outcome; poll</td></tr>
+      <tr><td><code>CHECKOUT_INCOMPLETE</code></td><td>409</td><td>Partial commit, or a failure after money was committed</td><td>Nothing new</td><td>Block Settle; supervisor</td></tr>
+      <tr><td><code>CHECKOUT_FENCED</code></td><td>409</td><td>This execution lost ownership (internal; reported as INCOMPLETE to the client)</td><td>—</td><td>As INCOMPLETE</td></tr>
+      <tr><td><code>ALLOCATION_KEY_CONFLICT</code></td><td>409</td><td>Leg key already used with a different invoice or amount</td><td>Nothing</td><td>Supervisor</td></tr>
+      <tr><td><code>SESSION_HAS_ACTIVE_CHECKOUT</code></td><td>409 + <code>Retry-After</code></td><td>On close, begin-closure, X-Report, suspend or transfer while an attempt is IN_PROGRESS</td><td>Nothing</td><td>Retry shortly</td></tr>
+      <tr><td><code>CHECKOUT_ATTEMPTS_UNRESOLVED</code></td><td>409</td><td>Day Close blocker</td><td>Nothing</td><td>List and override</td></tr>
+      <tr><td>Existing codes (<code>BUSINESS_DAY_CLOSED</code> 423, <code>PREVIOUS_DAY_SESSION_OPEN</code>, closure workflow, readiness)</td><td>unchanged</td><td>As today</td><td>Attempt marked REFUSED</td><td>Unchanged handling</td></tr>
+    </tbody>
+  </table></div>
+  <p><code>GET /api/pos/checkout/attempts/{key}</code> returns <code>{status, outcomeCode, invoiceId, invoiceNumber, completedSteps, missingSteps, retryAfterSeconds}</code>. It returns 404 <code>NOT_FOUND</code> only when no attempt <em>and</em> no invoice with that key exist.</p>
+</section>
+
+<!-- 10 -->
+<section id="s10">
+  <h2><span class="num">10</span>Attempt lifecycle and replay state machine</h2>
+  <div class="mermaid-wrap"><pre class="mermaid">
+stateDiagram-v2
+  [*] --> IN_PROGRESS: begin (session row locked, guard passed)
+  [*] --> REFUSED: guard failed (row written for audit)
+  IN_PROGRESS --> REFUSED: gate or validation refused before TX1
+  IN_PROGRESS --> ROLLED_BACK: TX2 or settle rolled back and DRAFT deleted
+  IN_PROGRESS --> COMPLETED: all financial steps recorded
+  IN_PROGRESS --> INCOMPLETE: step failed after a financial commit, or stale with evidence of writes
+  IN_PROGRESS --> ABANDONED: stale with evidence of no writes
+  REFUSED --> IN_PROGRESS: same key and same hash re-executed
+  ROLLED_BACK --> IN_PROGRESS: same key and same hash re-executed
+  ABANDONED --> IN_PROGRESS: same key and same hash re-executed
+  INCOMPLETE --> RESOLVED: supervisor resolution (via correction request)
+  COMPLETED --> [*]
+  RESOLVED --> [*]
+  </pre></div>
+  <h3>Replay decisions (an existing attempt for the key)</h3>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Attempt state</th><th>Same hash</th><th>Different hash</th></tr></thead>
+    <tbody>
+      <tr><td>COMPLETED</td><td>200 with the current invoice (<code>getById</code>, as today)</td><td>409 KEY_REUSED</td></tr>
+      <tr><td>IN_PROGRESS, lease valid</td><td>409 IN_PROGRESS, <code>Retry-After</code> = remaining lease</td><td>409 KEY_REUSED</td></tr>
+      <tr><td>IN_PROGRESS, lease expired</td><td>Evaluate staleness now (below), then answer</td><td>409 KEY_REUSED</td></tr>
+      <tr><td>INCOMPLETE</td><td>409 INCOMPLETE</td><td>409 KEY_REUSED</td></tr>
+      <tr><td>REFUSED, ROLLED_BACK, ABANDONED</td><td>Re-execute: new <code>owner_token</code>, <code>execution_count + 1</code>, guard runs again. This is how a supervisor-authorized retry works, since credentials are outside the hash.</td><td>409 KEY_REUSED</td></tr>
+      <tr><td>RESOLVED</td><td>409 INCOMPLETE with <code>resolutionCode</code> (the till shows the outcome)</td><td>409 KEY_REUSED</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Legacy invoice with the key but no attempt row</h3>
+  <ul class="tight">
+    <li>Status DRAFT with <code>posProformaPending</code> set (PI flow, DRAFT by design): 200.</li>
+    <li>Status DRAFT otherwise: 409 INCOMPLETE <code>LEGACY_DRAFT</code>.</li>
+    <li>Status PAID and balance above 0.005: 409 INCOMPLETE <code>LEGACY_SUSPECT</code>. A completed checkout can never be PAID with a balance outstanding.</li>
+    <li>PAID with zero balance, or PARTIALLY_PAID or CONFIRMED: 200, as today. Intent cannot be proven for legacy rows, and a deliberate credit sale is legitimate. These still appear in the B18 report.</li>
+  </ul>
+  <h3>Telling a running request from a dead one</h3>
+  <ol class="steps">
+    <li><b>Each step is bounded.</b> Every new transactional service method carries <code>@Transactional(timeout = stepTimeoutSeconds)</code> (proposed default 30 s). Nothing bounds it today, because no statement timeout is configured.</li>
+    <li><b>Lease.</b> <code>claimStep</code> sets <code>lease_expires_at = now + stepTimeout + margin</code> (proposed 45 s) before every financial step. An expired lease therefore means the owner is dead, or that its next <code>claimStep</code> will be fenced. A step that started before expiry cannot still be running after it, because its own transaction timeout is shorter than the lease.</li>
+    <li><b>Fencing.</b> <code>claimStep</code> and <code>recordStep</code> are conditional on <code>owner_token</code> and <code>IN_PROGRESS</code>. The sweep changes <code>owner_token</code> when it marks an attempt, so a slow original thread cannot start another financial step.</li>
+    <li><b>Same JVM.</b> If <code>owner_instance</code> is this JVM and <code>ActiveCheckoutRegistry</code> still holds the attempt, it is alive: log <code>CHECKOUT_SLOW</code> and do not mark it. A different <code>owner_instance</code> together with an expired lease means a previous process crashed.</li>
+    <li><b>Classify from evidence, not flags.</b>
+      <ul class="tight">
+        <li>No invoice with the key and no payment with any of its allocation keys: <code>ABANDONED</code>, retry allowed.</li>
+        <li>A DRAFT invoice only: <code>INCOMPLETE(INVOICE_DRAFT)</code>.</li>
+        <li>Posted invoice with legs missing (judged by allocation keys present on <code>sales_payments</code>): <code>INCOMPLETE(PAYMENT)</code>.</li>
+        <li>Every leg present: <code>COMPLETED</code> (a lost response), but only if <code>session_recorded_at</code> is set. Session totals are counters with no per-invoice row, so otherwise <code>INCOMPLETE(SESSION)</code>.</li>
+      </ul></li>
+    <li><b>Client timeouts</b> are not server events. The attempt stays IN_PROGRESS and the replay answers <code>CHECKOUT_IN_PROGRESS</code>.</li>
+  </ol>
+  <p><span class="pill p-warn">Reproduce</span> Whether a transaction timeout reliably interrupts a pessimistic-lock wait on PostgreSQL with Hibernate is unproven (T19). If it does not, set <code>jakarta.persistence.lock.timeout</code> on the lock queries too.</p>
+</section>
+
+<!-- 11 -->
+<section id="s11">
+  <h2><span class="num">11</span>Payment-leg idempotency design</h2>
+  <ul class="tight">
+    <li><b>Key</b>: <code>allocationKey = checkoutKey + "#" + legIndex</code>, where <code>legIndex</code> is the position in <code>PosPaymentPlan.getAllocations()</code>, counting legs trimmed to zero (<code>:436</code>), so the index is stable for a given request hash. CREDIT legs get a key in the journal but write no Payment.</li>
+    <li><b>Write path</b>: the new <code>SalesInvoiceService.recordPayment(id, amount, mode, ref, date, bank, cheque, splitGroupId, combinedMode, posSessionId, posAllocationKey)</code> calls <code>createSalesPaymentForInvoice</code>, which sets <code>Payment.posAllocationKey</code>, then <code>PaymentService.savePayment</code>.</li>
+    <li><b>Idempotent check</b> in <code>savePayment</code>, before numbering: <code>findByPosAllocationKey(key)</code>.
+      <ul class="tight">
+        <li>Found with the same linked invoice and amount: return the existing Payment. No new number, receipt voucher or GL entry.</li>
+        <li>Found with a different invoice or amount: 409 <code>ALLOCATION_KEY_CONFLICT</code>.</li>
+        <li>Not found: proceed. The unique index catches a concurrent insert (mapped in B9).</li>
+      </ul></li>
+    <li><b>Splits</b>: <code>splitGroupId</code> stays random per execution (<code>:429</code>). For traceability the plan stores it in <code>resolved_plan</code>. A supervisor recording a missing leg reuses the stored <code>splitGroupId</code>.</li>
+    <li><b>Vouchers</b>: unchanged. <code>CreditVoucherService.redeem</code> stays idempotent on the invoice number and voucher id (<code>:301-314</code>). The voucher's Payment leg also carries an allocation key.</li>
+    <li><b>Compatibility</b>: back-office <code>PaymentController</code> (<code>:166</code>), receipt-voucher-first flows, <code>PosDeliverySettlementService</code> and all historical rows keep a NULL key, and the partial index ignores them. The JSON field is <code>READ_ONLY</code>, so a client cannot set it. An edit (<code>savePayment</code> on an existing id) keeps the original key.</li>
+    <li><b>No automatic continuation</b>: no code path resumes the missing legs of an INCOMPLETE attempt. Only the supervisor action in §12 calls <code>recordPayment</code> with the stored key, after confirming the money was collected.</li>
+  </ul>
+</section>
+
+<!-- 12 -->
+<section id="s12">
+  <h2><span class="num">12</span>Manual resolution UI and authorization</h2>
+  <p><b>Where it lives</b>: a new tab, "Incomplete checkouts", in <code>src/pages/Enterprise/PosAdministration.jsx</code>, backed by <code>/api/pos/admin/incomplete-checkouts</code>. Following <code>PosAdminController</code>, every request is checked server-side with <code>ModulePermissionService.requireCanView / requireCanCreate</code> and branch scope.</p>
+  <div class="two">
+    <div class="box"><h4>List columns</h4>
+      <p class="small">Branch, terminal, session (with status), cashier, started at, checkout key, invoice id and number, invoice status, intended total against recorded total, failed step and reason, attempt status, age. Filters: branch, date, status.</p></div>
+    <div class="box"><h4>Evidence panel (read-only)</h4>
+      <p class="small">Intended legs against recorded legs (by allocation key), and the missing legs. Invoice history (<code>historyService</code>). Delivery Note and stock movements (<code>StockMovement</code> rows by DN source). Journal entries for the invoice and its receipt vouchers. Voucher transactions. Session totals against <code>sales_payments</code> for the session (<code>PosCashReconciliationService</code>). POS audit trail for the key.</p></div>
+  </div>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Action</th><th>Allowed when</th><th>Does</th><th>Authorization</th></tr></thead>
+    <tbody>
+      <tr><td>Record missing leg</td><td>Leg missing; the session that collected it is identified</td><td>Supervisor states how the money was verified (counted cash, card slip reference). Calls <code>recordPayment</code> with the stored allocation key and the original collection session. If that session is now CLOSED, the request goes to approval with a business rule (<a href="#s18">B6</a>), because <code>requireOpenDrawerSession</code> refuses closed sessions.</td><td><code>pos.admin.checkout.resolve</code>; a second approver if the session is closed or the amount is over a threshold</td></tr>
+      <tr><td>Confirm genuine credit</td><td>A real customer (not walk-in) who actually owes the amount</td><td>Records the decision. No financial write: the receivable already exists.</td><td>resolve, plus customer confirmation recorded</td></tr>
+      <tr><td>Mark serials sold</td><td>Sale posted, serial still AVAILABLE</td><td>Same update as <code>markSerialsSold</code></td><td>resolve</td></tr>
+      <tr><td>Resolve with note</td><td>Any state, after investigation</td><td>Closes the case with an explanation. No financial write.</td><td>resolve</td></tr>
+      <tr><td>Cancel sale</td><td>No payment recorded, and the goods are confirmed back or the sale never happened</td><td>Links to the existing invoice cancellation, <code>updateStatus(CANCELLED)</code>, which cancels the DN and reverses the journal (<code>doUpdateStatus</code>, cancellation branch)</td><td>Correction request with <b>maker-checker</b> (<code>CorrectionRequestService.approve</code>, self-approval off)</td></tr>
+    </tbody>
+  </table></div>
+  <p class="small">Never permitted: deleting a posted invoice, reversing stock or GL automatically, inventing a payment, turning unexplained cash into credit, or any action without a <code>FinancialAuditService</code> and <code>PosAuditLog</code> entry.</p>
+</section>
+
+<!-- 13 -->
+<section id="s13">
+  <h2><span class="num">13</span>Session closure and Day Close coordination</h2>
+  <ul class="tight">
+    <li><b>One lock, one rule.</b> Checkout's <code>begin</code> and every session transition take <code>pos_sessions … FOR UPDATE</code> on the same row. Either the transition sees the IN_PROGRESS attempt and refuses, or the checkout sees the new status and refuses. Once an attempt is IN_PROGRESS, the session cannot leave OPEN, so <code>requireOpenDrawerSession</code> and the <code>:1807</code> closure re-check pass for the rest of the checkout.</li>
+    <li><b>No deadlock by construction.</b> The session lock is taken and released inside <code>begin</code>'s own short transaction, which commits <em>before</em> TX1 takes the tenant invoice-number lock. No transaction holds both. Transitions hold only the session lock, and they read attempts without locking. <span class="pill p-warn">Reproduce</span> T05 and T06 under concurrency.</li>
+    <li><b>Throughput</b>: the lock is per session, not per tenant. Two checkouts on the <em>same</em> session (one terminal) serialize only for the milliseconds <code>begin</code> takes.</li>
+    <li><b>X-Report</b>: <code>generateXReport</code> and <code>beginClosure</code> refuse while IN_PROGRESS, and allow INCOMPLETE but list it on the report.</li>
+    <li><b>Session close</b>: refused while IN_PROGRESS. INCOMPLETE is allowed only with an acknowledgement that records the attempt ids in the close audit (<a href="#s18">B5</a>).</li>
+    <li><b>Z-Report and Day Close</b>: <code>closeDay</code> refuses while any IN_PROGRESS or INCOMPLETE attempt exists. Override with the existing close-day admin approval plus a reason; the override reference is written onto each attempt. <code>assertZReportPrintable</code> is unchanged, and the Z-Report shows a "checkouts unresolved at close" section.</li>
+    <li><b>"Force close"</b>: no separate endpoint exists. A back-office close goes through <code>closeSession</code> and gets the same check.</li>
+    <li><b>Idle and hard-limit suspension</b>: the conditional update (B13) skips sessions with an attempt in progress. <code>begin</code> also refreshes <code>lastActivityAt</code>.</li>
+    <li><b>Stuck IN_PROGRESS</b> blocks transitions only until its lease expires (at most about 45 s), after which the sweep classifies it. The UI shows the attempt and a countdown.</li>
+    <li>A pending count reported by the client is never used. Only server attempt rows count.</li>
+  </ul>
+</section>
+
+<!-- 14 -->
+<section id="s14">
+  <h2><span class="num">14</span>Feature flags and tenant rollout</h2>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Behaviour</th><th>Property</th><th>Default</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Refuse non-OPEN or missing sessions before writing</td><td><b>none</b></td><td>Always on</td><td>No flag can bring back the unsafe behaviour</td></tr>
+      <tr><td>Terminal, branch and terminal-status matching</td><td><code>pos.checkout.session-guard.binding</code> = <code>log</code> | <code>enforce</code></td><td><code>log</code></td><td>Observe mismatches from transfer and takeover first (<a href="#s18">B2</a>)</td></tr>
+      <tr><td>Attempt journal</td><td><code>pos.checkout.attempt-journal.mode</code> = <code>record</code> | <code>enforce</code></td><td><code>record</code></td><td><code>record</code> writes the journal, leg keys and session coordination, keeps today's 200 replay, and logs the outcome <code>enforce</code> would give. <code>enforce</code> switches to the new replay outcomes. There is deliberately no <code>off</code>, because session coordination depends on the journal.</td></tr>
+      <tr><td>Single-transaction settlement (M5)</td><td><code>pos.checkout.atomic-settlement.enabled</code></td><td><code>false</code></td><td>Per tenant, after parity</td></tr>
+      <tr><td>Day Close blocker</td><td><code>pos.dayclose.block-unresolved-checkouts</code></td><td><code>true</code> once mode is <code>enforce</code></td><td>The override is always available to admins</td></tr>
+      <tr><td>Timeouts</td><td><code>pos.checkout.step-timeout-seconds</code>, <code>pos.checkout.lease-seconds</code></td><td>30 / 45</td><td>Tune with metrics</td></tr>
+    </tbody>
+  </table></div>
+  <h4>Rollout order</h4>
+  <ol class="steps">
+    <li>M0 and M1 to every tenant: the interim status guard. It is the safety fix and needs no migration.</li>
+    <li>Run the B18 legacy report on every tenant, using a clone or a read replica. Finance triages the results.</li>
+    <li>Migration, journal and leg keys in <code>record</code> mode, demo or qa tenant first, then the pilot, then all.</li>
+    <li>Frontend F1–F4 and F9. The new client works against both modes.</li>
+    <li>Switch to <code>enforce</code> per tenant after a week of clean <code>record</code> logs (no unexpected KEY_REUSED).</li>
+    <li>Back-office queue, then the Day Close blocker.</li>
+    <li>M5 per tenant after parity and performance pass.</li>
+    <li>Binding <code>enforce</code> once the mismatch logs are clean.</li>
+  </ol>
+  <p><b>Old cached clients</b>: the 200 body is unchanged. New 409s carry a readable <code>message</code>, so the old generic banner shows it and the cart stays intact. A re-press sends the same key, which hits the same outcome and never a duplicate. <b>Keyless clients</b> are refused. <span class="pill p-info">M2.2.1</span> Every <code>POST /api/pos/checkout</code> must carry a caller-supplied <code>checkoutKey</code>, PI-Flow delivery orders included, with or without a session. A missing or blank key gets 409 <code>CHECKOUT_KEY_REQUIRED</code> (<code>recorded: false</code>) before anything but the audit logs is written. The server no longer mints <code>srv-</code> keys; <code>key_source = SERVER</code> appears only on older journal rows. <code>GET /api/pos/checkout/capabilities</code> advertises the rule as <code>checkoutKeyRequired: true</code> with <code>checkoutApiVersion: 3</code>.</p>
+  <p><b>Contract for external API clients</b> (M2.2.1). An older client that omits the key is <b>not</b> compatible: every checkout it sends is refused, and nothing is recorded.</p>
+  <ul class="tight">
+    <li>Create the key before the first request for a sale. Any unique string works; the till uses a UUID.</li>
+    <li>Send the same key on every retry of that sale, including after a network error, a timeout, a 5xx, a 408, or a 409 <code>CHECKOUT_IN_PROGRESS</code>, <code>CHECKOUT_STALLED</code> or <code>CHECKOUT_ATTEMPT_SUPERSEDED</code>. Never create a new key after an uncertain response. The server answers with the sale it already recorded.</li>
+    <li>A new key means a new sale. A changed request under a used key gets 409 <code>CHECKOUT_KEY_REUSED</code>; that key is spent.</li>
+    <li>Treat the key as resolved only after a 2xx, a <code>CHECKOUT_KEY_REUSED</code>, or another definite 4xx refusal.</li>
+  </ul>
+  <p><b>Known limitation (M2.2.1).</b> The till keeps the pending key in memory (<code>features/checkout/checkoutKey.js</code>). It also does not persist the cart. A page reload while an outcome is unknown therefore loses the key, and ringing the order again is a new sale. The same applies to counter sales (<code>useCheckout.js</code>). For a PI-Flow delivery order, the duplicate this can cause is a second draft Pro-forma Invoice with its own stock reservation. Whether a serial the first PI already marked sold would be refused on the second was not tested. Neither PI posts GL, stock movement or payment. Durable pending-checkout persistence (for example in <code>sessionStorage</code>) should be decided for all checkouts together. It is not specific to PI delivery.</p>
+  <p><b>Observability</b> through the actuator (Micrometer):</p>
+  <ul class="tight">
+    <li>Timers: <code>pos.checkout.duration</code>, tagged with journal mode and outcome; <code>pos.checkout.journal.overhead</code>.</li>
+    <li>Counters: <code>pos.checkout.outcome{code}</code>, <code>pos.checkout.incomplete{step}</code>, <code>pos.checkout.fenced</code>, <code>pos.session.transition.blocked</code>.</li>
+    <li>Gauge: <code>pos.checkout.inprogress</code>.</li>
+    <li>Every log line carries the attempt id and key (<code>LogContext</code>).</li>
+  </ul>
+  <p><span class="pill p-nv">Not verified</span> Whether a metrics registry is exported in production.</p>
+  <p><b>Rollback</b>: setting <code>record</code> restores today's replay behaviour. Turning M5 off restores separate transactions. The status guard is not rolled back. Code revert leaves the schema unused.</p>
+</section>
+
+<!-- 15 -->
+<section id="s15">
+  <h2><span class="num">15</span>Exact test cases and expected outcomes</h2>
+  <p class="small">Levels: <b>U</b> is a Mockito unit test. <b>DB</b> is a database-backed <code>*Test</code> run against a <em>clone</em> of testdb, by name, with <code>-Dtest=…</code> and <code>-Dspring.datasource.url=</code> pointing at the clone; never a bare <code>mvn test</code>, which writes to testdb. <b>FE</b> is Vitest. <b>P</b> is the <code>tools/pos-parity</code> harness on a disposable 8081 backend. Faults are injected through <code>PosCheckoutStepHook</code>. Each DB test runs a negative control with the change disabled or reverted. Nothing here has been run yet.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>#</th><th>Case</th><th>Level, class</th><th>Expected</th></tr></thead>
+    <tbody>
+      <tr><td class="id">T01</td><td>Checkout on a CLOSED session</td><td>DB <code>PosCheckoutSessionGuardDbTest</code></td><td>409 SESSION_NOT_OPEN. Row counts unchanged for invoices, items, DNs, stock movements, journal entries, payments, receipt vouchers and session totals. Negative control on HEAD reproduces the partial post (M0).</td></tr>
+      <tr><td class="id">T02</td><td>SUSPENDED session</td><td>same</td><td>Same as T01</td></tr>
+      <tr><td class="id">T03</td><td>OPEN session, other terminal</td><td>U and DB</td><td>Log mode: proceeds and logs. Enforce: 409 SESSION_MISMATCH, nothing written.</td></tr>
+      <tr><td class="id">T04</td><td>Wrong branch</td><td>U and DB</td><td>403 BRANCH_MISMATCH, nothing written</td></tr>
+      <tr><td class="id">T05</td><td>Close requested during a checkout</td><td>DB, two threads, hook blocks at POSTED</td><td>Close gets 409 SESSION_HAS_ACTIVE_CHECKOUT. Checkout completes. Close succeeds after.</td></tr>
+      <tr><td class="id">T06</td><td>X-Report during a checkout</td><td>DB, two threads</td><td>X-Report refused until COMPLETED. No closure 409 after the money is committed.</td></tr>
+      <tr><td class="id">T07</td><td>Crash after invoice creation</td><td>DB, hook kills the step after TX1; sweep with an expired lease and a foreign instance</td><td>INCOMPLETE(INVOICE_DRAFT). Replay gives 409 INCOMPLETE. Day Close blocked.</td></tr>
+      <tr><td class="id">T08</td><td>Failure in stock or GL posting</td><td>DB, batch shortfall</td><td>TX2 rolled back, DRAFT deleted, ROLLED_BACK with the number recorded. The same key may retry.</td></tr>
+      <tr><td class="id">T09</td><td>Leg 1 fails</td><td>DB</td><td>INCOMPLETE(PAYMENT), no payment rows. With M5: ROLLED_BACK, nothing posted.</td></tr>
+      <tr><td class="id">T10</td><td>Leg 2 of 3 fails</td><td>DB</td><td>INCOMPLETE with LEG_0 only. The resolution records LEG_1 once; a second attempt is refused or returns the existing row. With M5: ROLLED_BACK.</td></tr>
+      <tr><td class="id">T11</td><td>Voucher redeemed, leg missing</td><td>DB</td><td>INCOMPLETE. The resolution calls redeem again, which returns the existing transaction, and the voucher is drawn once.</td></tr>
+      <tr><td class="id">T12</td><td>Failure after all payments, before session totals</td><td>DB, hook throws before TX4</td><td>INCOMPLETE(SESSION), <code>doNotRering</code>, expected cash correct. With M5: ROLLED_BACK.</td></tr>
+      <tr><td class="id">T13</td><td>Serial marking fails</td><td>U and DB</td><td>Without M5: INCOMPLETE(SERIALS) with <code>doNotRering</code>. With M5: ROLLED_BACK.</td></tr>
+      <tr><td class="id">T14</td><td>Activity logging fails</td><td>U</td><td>COMPLETED, 200, warning logged</td></tr>
+      <tr><td class="id">T15</td><td>Same key, same payload</td><td>U</td><td>200 with the same invoice id</td></tr>
+      <tr><td class="id">T16</td><td>Same key, different payload</td><td>U</td><td>409 KEY_REUSED, no write</td></tr>
+      <tr><td class="id">T17</td><td>Two simultaneous requests, same key</td><td>DB, two threads with a latch</td><td>One invoice. The other gets IN_PROGRESS, or 200 if the first finished. Never the generic 409.</td></tr>
+      <tr><td class="id">T18</td><td>Replay while still running</td><td>DB, hook blocks</td><td>409 IN_PROGRESS with <code>Retry-After</code></td></tr>
+      <tr><td class="id">T19</td><td>Stale detection</td><td>U (fixed clock) and DB</td><td>Live attempt in this JVM: not marked. Expired lease with a foreign instance: classified from evidence. A fenced thread cannot claim its next step. The transaction timeout ends a blocked lock wait <span class="pill p-warn">Reproduce</span>.</td></tr>
+      <tr><td class="id">T20</td><td>Refresh before the POST</td><td>FE</td><td>Store entry found, status NOT_FOUND, resend with the same key</td></tr>
+      <tr><td class="id">T21</td><td>Refresh after the POST, before the response</td><td>FE and DB</td><td>Status COMPLETED or IN_PROGRESS shown correctly; one invoice</td></tr>
+      <tr><td class="id">T22</td><td>Timeout with an unknown outcome</td><td>FE</td><td>Same key kept; no new key generated; Settle blocked until resolved</td></tr>
+      <tr><td class="id">T23</td><td>Legacy invoice with no attempt row</td><td>U</td><td>Rules in §10 (DRAFT, PI DRAFT, PAID with a balance, normal)</td></tr>
+      <tr><td class="id">T24</td><td>Day Close with INCOMPLETE attempts</td><td>U next to the existing <code>closeDay</code> tests</td><td>409 with the list. The override with a grant and a reason succeeds and is audited.</td></tr>
+      <tr><td class="id">T25</td><td>Session close with an active attempt</td><td>DB</td><td>409, then success after completion. The scheduler skips the session.</td></tr>
+      <tr><td class="id">T26</td><td>Online parity</td><td>P on a clone</td><td>Identical requests, database effects, GL and session totals for the scripted scenario, with the flags in each mode</td></tr>
+      <tr><td class="id">T27</td><td>Split allocation idempotency</td><td>DB</td><td>3 legs give 3 keys and 3 payments. A replayed recordPayment creates none. Back-office payment creation is unchanged (NULL key).</td></tr>
+      <tr><td class="id">T28</td><td>Existing voucher behaviour</td><td>Existing tests plus U</td><td>Unchanged: a stale balance gets 409, a double redeem returns the existing transaction</td></tr>
+      <tr><td class="id">T29</td><td>Pricing and negotiated prices</td><td>Existing <code>PosCheckoutControllerTest</code> and pricing tests</td><td>Unchanged</td></tr>
+      <tr><td class="id">T30</td><td>Stock and branch inventory</td><td>Existing tests plus DB</td><td>Same stock movements, bins and negative-override flags as before</td></tr>
+      <tr><td class="id">T31</td><td>Keyless delivery checkout</td><td>U and FE</td><td>Server key assigned and journaled; the client now sends a key</td></tr>
+      <tr><td class="id">T32</td><td>Cart draft restore</td><td>FE</td><td>Restored after a refresh for the same terminal and session; cleared after a sale and on session change; no credentials stored</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 16 -->
+<section id="s16">
+  <h2><span class="num">16</span>Performance impact</h2>
+  <ul class="tight">
+    <li><b>Added work per checkout</b>:
+      <ul class="tight">
+        <li><code>begin</code>: one row lock plus one insert, in its own transaction.</li>
+        <li>About 6 to 10 small conditional updates (a claim and a record for each step, fewer if claim and record are merged).</li>
+        <li>One indexed lookup per payment leg.</li>
+      </ul>
+      Estimated at 1 to 3 ms each on a local Postgres. <span class="pill p-nv">Not verified</span></li>
+    <li><b>Target</b>: added p95 latency of <b>25 ms or less</b> for a 3-line, 2-tender checkout. Hard ceiling 50 ms.</li>
+    <li><b>Measurement</b>: on a testdb clone with a disposable 8081 backend, run 200 scripted checkouts each in <code>record</code> mode and with the journal code reverted, same cart and tenders, through the parity harness. Compare the <code>pos.checkout.duration</code> histograms. Repeat with M5 on: its effect on lock hold time is that the payment-number lock is held from the first leg until commit.</li>
+    <li><b>Contention</b>: the new lock is per session, so there is no new tenant-wide serialization. The invoice-number lock is unchanged (TX1 only).</li>
+  </ul>
+</section>
+
+<!-- 17 -->
+<section id="s17">
+  <h2><span class="num">17</span>Security and audit implications</h2>
+  <ul class="tight">
+    <li>Server-resolved identity: branch from <code>BranchScope</code> / <code>BranchAccessService.getRequiredCurrentUserBranch</code>, user from the JWT, terminal from <code>PosTerminalRepository.findByTerminalId</code>. Request fields are only compared against these, never trusted.</li>
+    <li>The status endpoint requires till permission and the same branch. It reveals only the outcome and the invoice reference. Keys are random UUIDs.</li>
+    <li>PII is kept to a minimum. No full request body is stored: only the hash, amounts and masked references (last 4 characters). No supervisor PIN or password ever reaches the journal, logs or IndexedDB.</li>
+    <li>New <code>PosAuditAction</code> values:
+      <ul class="tight">
+        <li><code>CHECKOUT_SESSION_REFUSED</code></li>
+        <li><code>CHECKOUT_REPLAY_REFUSED</code></li>
+        <li><code>CHECKOUT_INCOMPLETE</code></li>
+        <li><code>CHECKOUT_FENCED</code></li>
+        <li><code>SESSION_TRANSITION_BLOCKED</code></li>
+        <li><code>DAY_CLOSE_UNRESOLVED_OVERRIDE</code></li>
+        <li><code>CHECKOUT_RESOLUTION_REQUESTED/APPLIED</code></li>
+      </ul>
+      Resolution writes also go to <code>FinancialAuditService</code>, as the correction framework already does.</li>
+    <li>Permissions are registered in <code>RolePermissionInitializer</code>, never as runtime data: <code>pos.admin.checkout.view</code> and <code>pos.admin.checkout.resolve</code>, with cancellation through correction approval.</li>
+    <li>Retention: attempts are financial evidence and are never purged by <code>AuditLogRetentionJob</code> (<a href="#s18">B11</a>).</li>
+  </ul>
+</section>
+
+<!-- 18 -->
+<section id="s18">
+  <h2><span class="num">18</span>Risks and unresolved business decisions</h2>
+  <div class="tbl wide"><table>
+    <thead><tr><th>ID</th><th>Decision or risk</th><th>Recommendation</th></tr></thead>
+    <tbody>
+      <tr><td class="id">B1</td><td><span class="pill p-dec">Decision</span> Refuse checkouts on non-OPEN sessions permanently</td><td>Approve</td></tr>
+      <tr><td class="id">B2</td><td><span class="pill p-dec">Decision</span> Terminal-match strictness after session transfer or takeover. <span class="pill p-nv">Not verified</span> whether <code>transferSession</code> rewrites <code>PosSession.terminalId</code>.</td><td>Log first; enforce after review</td></tr>
+      <tr><td class="id">B3</td><td><span class="pill p-dec">Decision</span> Any till user in the branch may post to a session (true today; <code>PosSessionOwnershipService</code> is not wired into checkout)</td><td>Keep for Phase 0</td></tr>
+      <tr><td class="id">B4</td><td><span class="pill p-dec">Decision</span> Day Close blocked by unresolved attempts; who may override</td><td>Block; admin override with a reason</td></tr>
+      <tr><td class="id">B5</td><td><span class="pill p-dec">Decision</span> Session close with INCOMPLETE attempts</td><td>Allow with an acknowledgement</td></tr>
+      <tr><td class="id">B6</td><td><span class="pill p-dec">Decision</span> Recording a missing cash leg when the collecting session is already closed (the drawer was counted without it)</td><td>Finance rule: record against the original session as a correction with second approval, and adjust the close variance</td></tr>
+      <tr><td class="id">B7</td><td><span class="pill p-dec">Decision</span> Adopt single-transaction settlement (M5)</td><td>Yes, per tenant after parity</td></tr>
+      <tr><td class="id">B8</td><td><span class="pill p-dec">Decision</span> Refuse checkouts from BLOCKED, ARCHIVED or DECOMMISSIONED terminals</td><td>Yes</td></tr>
+      <tr><td class="id">B9</td><td><span class="pill p-dec">Decision</span> Invoice-number gaps after rollback (existing behaviour)</td><td>Accept and document; the journal records each gap</td></tr>
+      <tr><td class="id">B10</td><td><span class="pill p-dec">Decision</span> Treatment of legacy suspects found by B18</td><td>Finance triage before <code>enforce</code></td></tr>
+      <tr><td class="id">B11</td><td><span class="pill p-dec">Decision</span> Retention of attempt rows</td><td>Keep for the statutory record period</td></tr>
+      <tr><td class="id">B12</td><td><span class="pill p-dec">Decision</span> Make <code>checkoutKey</code> mandatory once all clients send it</td><td>Done in M2.2 / M2.2.1: mandatory on every checkout, with no keyless exception</td></tr>
+      <tr><td class="id">B13</td><td><span class="pill p-dec">Decision</span> Require <code>sessionId</code> on every POS sale checkout (today it is optional at <code>:261</code>)</td><td>Yes</td></tr>
+      <tr><td class="id">R1</td><td>Shared endpoint: a defect hits Retail and standalone at once</td><td>Flags, parity in both apps, tenant-by-tenant rollout</td></tr>
+      <tr><td class="id">R2</td><td>Lock timeout behaviour unproven</td><td>T19 before M2 merges</td></tr>
+      <tr><td class="id">R3</td><td>Under M5, an inner component that swallows an exception after marking rollback-only causes an <code>UnexpectedRollbackException</code></td><td>Desired (everything rolls back), but map it to ROLLED_BACK explicitly. Reproduce in T09–T13.</td></tr>
+      <tr><td class="id">R4</td><td>Line-pinned tests in <code>POSSales.jsx</code></td><td>Keep edits minimal; bump pins in the same commit</td></tr>
+      <tr><td class="id">R5</td><td>A merge with another branch that also adds V138</td><td>Renumber upward at merge</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 19 -->
+<section id="s19">
+  <h2><span class="num">19</span>Implementation milestones and dependencies</h2>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Milestone</th><th>Contents</th><th>Depends on</th><th>Exit criterion</th></tr></thead>
+    <tbody>
+      <tr><td class="id">M0</td><td>Disposable testdb clone and 8081 backend. A failing DB <code>*Test</code> that reproduces the CLOSED and SUSPENDED partial commit (T01, T02 negative controls). The B18 legacy report on the clone.</td><td>—</td><td>Defect proven with row counts; report results shared with finance</td></tr>
+      <tr><td class="id">M1</td><td>B1 interim status guard (no migration)</td><td>M0</td><td>T01 and T02 green; parity unchanged</td></tr>
+      <tr><td class="id">M2</td><td>B2, B3, B4, B12, B13: migration, journal, <code>begin</code> claim, session coordination, scheduler. <code>record</code> mode.</td><td>M1, B2/B8 decisions</td><td>T03–T06, T17, T25 green; performance within target</td></tr>
+      <tr><td class="id">M3</td><td>B8, B9: allocation keys</td><td>M2</td><td>T10, T27 green; back-office payments unchanged</td></tr>
+      <tr><td class="id">M4</td><td>B5, B6, B7, B10, B11: steps, replay <code>enforce</code>, status endpoint, sweep</td><td>M3</td><td>T07–T16, T18, T19, T23 green</td></tr>
+      <tr><td class="id">M5</td><td>B15: single-transaction settlement behind its flag</td><td>M4, B7 decision</td><td>T09–T13 give ROLLED_BACK; parity; performance</td></tr>
+      <tr><td class="id">M6</td><td>F1–F5, F9: persisted attempt, recovery, delivery key, close and Day Close messages</td><td>M4</td><td>T20–T22, T31 green; characterization tests updated and reviewed</td></tr>
+      <tr><td class="id">M7</td><td>F6–F8: cart draft, network tagging, badge</td><td>—</td><td>T32 green; boundary test green</td></tr>
+      <tr><td class="id">M8</td><td>B14, B16, B17, F10: Day Close blocker, audit, review queue, resolution</td><td>M4, decisions B4–B6</td><td>T24 and resolution tests green; QA script signed</td></tr>
+      <tr><td class="id">M9</td><td>Rollout (§14), metrics review, binding <code>enforce</code></td><td>All</td><td>§20 checklist complete</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 20 -->
+<section id="s20">
+  <h2><span class="num">20</span>Final Phase 0 acceptance checklist</h2>
+  <ol class="steps">
+    <li>A checkout on a missing, CLOSED or SUSPENDED session writes no invoice, item, DN, stock movement, journal entry, payment, receipt voucher or session-total change. No flag can disable this.</li>
+    <li>No session transition (close, begin-closure, X-Report, suspend, transfer, scheduler) can happen while a checkout on that session is IN_PROGRESS.</li>
+    <li>Every checkout has exactly one attempt row, written before the invoice transaction, with the request hash and, after resolution, the plan and allocation keys.</li>
+    <li>Replay never returns 200 for a DRAFT, partial, running or different-payload sale.</li>
+    <li>Simultaneous duplicates produce one invoice and a specific outcome code, never the generic 409.</li>
+    <li>No payment leg can be recorded twice. Historical and back-office payments still work.</li>
+    <li>Stale attempts are classified from evidence and fenced. A live request is never marked dead.</li>
+    <li>A sale whose money is committed is never shown to the cashier as an ordinary failure.</li>
+    <li>Supervisors can see every INCOMPLETE attempt with its evidence and resolve it only through audited actions, with maker-checker for cancellation. Nothing is automatic.</li>
+    <li>Day Close is blocked by unresolved attempts unless an audited override is given.</li>
+    <li>The till persists its in-flight attempt and draft cart, recovers after a refresh by asking the server, and never mints a new key while an attempt is unresolved.</li>
+    <li>Network errors are tagged. The standalone rail shows read-only connectivity. The embedded POS shows no badge.</li>
+    <li>All existing unit and characterization tests pass, except reviewed updates. Parity shows no difference in success paths. p95 overhead is 25 ms or less.</li>
+    <li>The legacy-suspects report has run on every tenant, and finance has triaged it.</li>
+    <li>No Phase 1+ code exists: no service worker, outbox, catalog, lease, enrollment or signing.</li>
+  </ol>
+</section>
+
+<section id="final">
+  <div class="final">
+    <div class="eyebrow">Go / no-go</div>
+    <div class="v">A. Phase 0 can safely begin</div>
+    <p>It can begin as long as M0 comes first, so the defect is proven with real row counts before any fix, and the session-status guard (M1) ships without a disable flag.</p>
+    <h4>B. Recommended order</h4>
+    <p>M0 → M1 → M2 → M3 → M4 → M6 → M8 → M5 → M7 → M9. M7 can run in parallel from the start, because it touches no financial path.</p>
+    <h4>C. Approve before work starts</h4>
+    <ul class="tight">
+      <li>Engineering: B2, B7, B8, B13, and the timeout defaults.</li>
+      <li>Finance: B1, B4, B5, B6, B9, B10, B11.</li>
+      <li>B1 and B13 are needed before M1. The rest are needed before M2 or M8.</li>
+    </ul>
+    <h4>D. First milestone (M0)</h4>
+    <p>Clone testdb, start a disposable backend on 8081, and add a database-backed <code>PosCheckoutClosedSessionDefectTest</code> that rings a cash sale against a CLOSED session and against a SUSPENDED one. It asserts the current partial commit, with invoice, DN, stock movement and journal rows present and no payment, and that the same-key retry returns 200. Then run the read-only B18 report on the clone. No production code changes in M0.</p>
+  </div>
+</section>
+</main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true,theme:window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"default"});</script>
+</body>
+</html>

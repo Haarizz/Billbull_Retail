@@ -6,20 +6,26 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.billbull.backend.pos.counter.PosCounter;
 import com.billbull.backend.pos.counter.PosCounterRepository;
+import com.billbull.backend.pos.counter.PosCounterStatus;
 import com.billbull.backend.pos.settings.PosSettings;
 import com.billbull.backend.pos.settings.PosSettingsRepository;
 import com.billbull.backend.settings.branch.BranchAccessService;
@@ -45,6 +51,104 @@ class PosTerminalServiceTest {
         service = new PosTerminalService(repo, settingsRepo, counterRepo, branchAccessService,
                 new PosTerminalLimitPolicy(""));
         lenient().when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(counterRepo.save(any())).thenAnswer(inv -> {
+            PosCounter c = inv.getArgument(0);
+            if (c.getId() == null) c.setId(900L);
+            return c;
+        });
+    }
+
+    private PosCounter counter(Long id, String name) {
+        PosCounter c = new PosCounter();
+        c.setId(id);
+        c.setBranchId(1L);
+        c.setCounterCode(String.format("CTR-%03d", id));
+        c.setCounterName(name);
+        c.setStatus(PosCounterStatus.ACTIVE);
+        return c;
+    }
+
+    private void newDeviceInBranch1() {
+        when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(1L));
+        when(repo.findByDeviceFingerprintAndBranchId("new-device-fp", 1L)).thenReturn(Optional.empty());
+        when(settingsRepo.findByBranchId(1L)).thenReturn(Optional.of(new PosSettings()));
+        when(repo.countActiveLimitByBranchId(1L)).thenReturn(1L);
+    }
+
+    // ── counter linking ────────────────────────────────────────────────────
+
+    @Test
+    void newTerminalTakesTheCounterAnArchivedTerminalFreed() {
+        newDeviceInBranch1();
+        PosCounter busy = counter(5L, "Counter 1");
+        PosCounter free = counter(6L, "Counter 2");
+        when(counterRepo.findByBranchIdAndStatusAndIsActiveTrueOrderByDisplayOrderAsc(1L, PosCounterStatus.ACTIVE))
+                .thenReturn(List.of(busy, free));
+        when(repo.countLiveByCounterIdExcluding(5L, -1L)).thenReturn(1L);
+        when(repo.countLiveByCounterIdExcluding(6L, -1L)).thenReturn(0L);
+
+        PosTerminal t = (PosTerminal) service.registerOrRefresh(null, "new-device-fp", null, null, null, null, null, null)
+                .get("terminal");
+
+        assertEquals(6L, t.getCounterId());
+        assertEquals("Counter 2", t.getCounterName());
+        verify(counterRepo, never()).save(any());
+    }
+
+    @Test
+    void newTerminalCreatesARealCounterWhenAllAreTaken() {
+        newDeviceInBranch1();
+        PosCounter busy = counter(5L, "Counter 1");
+        when(counterRepo.findByBranchIdAndStatusAndIsActiveTrueOrderByDisplayOrderAsc(1L, PosCounterStatus.ACTIVE))
+                .thenReturn(List.of(busy));
+        when(counterRepo.findByBranchIdAndIsActiveTrueOrderByDisplayOrderAscCounterNameAsc(1L)).thenReturn(List.of(busy));
+        when(repo.countLiveByCounterIdExcluding(5L, -1L)).thenReturn(1L);
+        when(counterRepo.findMaxCounterCodeByBranchId(1L)).thenReturn("CTR-001");
+
+        PosTerminal t = (PosTerminal) service.registerOrRefresh(null, "new-device-fp", null, null, null, null, null, null)
+                .get("terminal");
+
+        ArgumentCaptor<PosCounter> created = ArgumentCaptor.forClass(PosCounter.class);
+        verify(counterRepo).save(created.capture());
+        assertEquals("Counter 2", created.getValue().getCounterName());
+        assertEquals("CTR-002", created.getValue().getCounterCode());
+        assertEquals(900L, t.getCounterId());
+        assertEquals("Counter 2", t.getCounterName());
+    }
+
+    @Test
+    void renamingTheCounterMovesTheLinkNotJustTheText() {
+        PosTerminal t = terminal(1L, PosTerminalStatus.ACTIVE);
+        t.setCounterId(5L);
+        t.setCounterName("Counter 1");
+        when(repo.findByTerminalId("T001-AAAA")).thenReturn(Optional.of(t));
+        when(counterRepo.findFirstByBranchIdAndCounterNameIgnoreCaseAndIsActiveTrueOrderByIdAsc(1L, "counter 2"))
+                .thenReturn(Optional.of(counter(6L, "Counter 2")));
+
+        PosTerminal result = service.rename("T001-AAAA", null, " counter 2 ");
+
+        assertEquals(6L, result.getCounterId());
+        assertEquals("Counter 2", result.getCounterName());
+    }
+
+    @Test
+    void restoreRelinksWhenTheOldCounterWasDeleted() {
+        PosTerminal t = terminal(1L, PosTerminalStatus.ARCHIVED);
+        t.setCounterId(5L);
+        when(repo.findById(1L)).thenReturn(Optional.of(t));
+        when(settingsRepo.findByBranchId(1L)).thenReturn(Optional.of(new PosSettings()));
+        when(repo.countActiveLimitByBranchId(1L)).thenReturn(1L);
+        PosCounter deleted = counter(5L, "Old");
+        deleted.setActive(false);
+        when(counterRepo.findById(5L)).thenReturn(Optional.of(deleted));
+        when(counterRepo.findByBranchIdAndStatusAndIsActiveTrueOrderByDisplayOrderAsc(1L, PosCounterStatus.ACTIVE))
+                .thenReturn(List.of(counter(6L, "Counter 2")));
+        when(repo.countLiveByCounterIdExcluding(6L, 1L)).thenReturn(0L);
+
+        PosTerminal result = service.restore(1L);
+
+        assertEquals(6L, result.getCounterId());
+        assertEquals("Counter 2", result.getCounterName());
     }
 
     private PosTerminal terminal(Long id, PosTerminalStatus status) {

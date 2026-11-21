@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { getBranches, getDefaultBranch, switchBranchSession, getInventoryBranchScopeStatus } from '../api/branchApi';
-import { getUserProfile, getRoles } from '../api/auth';
+import { getUserProfile, getRoles, hasSessionCredentials } from '../api/auth';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 
@@ -162,7 +162,7 @@ export const BranchProvider = ({ children }) => {
         const parsed = Number(stored);
         return Number.isFinite(parsed) ? parsed : null;
     });
-    const [isLoading, setIsLoading] = useState(() => Boolean(sessionStorage.getItem("token")));
+    const [isLoading, setIsLoading] = useState(() => hasSessionCredentials());
     // Phase 11 — whether inventory branch-scoping is enabled for this tenant. Gates branch labels/
     // badges so the UI stays unchanged when the backend toggle is off (no cosmetic drift).
     const [branchScopeEnabled, setBranchScopeEnabled] = useState(false);
@@ -191,7 +191,7 @@ export const BranchProvider = ({ children }) => {
     };
 
     const load = async () => {
-        if (!sessionStorage.getItem("token")) {
+        if (!hasSessionCredentials()) {
             setDefaultBranch(null);
             setBranches([]);
             setIsLoading(false);

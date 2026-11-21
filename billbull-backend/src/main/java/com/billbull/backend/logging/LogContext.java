@@ -61,6 +61,16 @@ public final class LogContext {
         }
     }
 
+    /**
+     * Names the user a pre-authentication request (a sign-in) turned out to be, so that its
+     * audit row — written by RequestLoggingFilter after the response — says who signed in
+     * instead of "SYSTEM". Call only after the credentials were verified.
+     */
+    public static void attributeTo(String username, Long userId) {
+        put(USERNAME, username);
+        put(USER_ID, userId);
+    }
+
     public static void clearRequestContext() {
         for (String key : KEYS) {
             MDC.remove(key);

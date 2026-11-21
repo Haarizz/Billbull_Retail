@@ -393,10 +393,12 @@ export const ImageUploadBox = ({ label, value, onChange, hint }) => {
   );
 };
 
-export function A4ScaledPreview({ src, fillWidth = false }) {
+// pageWidth/pageHeight default to the A4 frame; A5 / A5 Landscape / pre-printed sheets
+// pass their own CSS-pixel page box (posSheetTemplates.sheetPixelSize).
+export function A4ScaledPreview({ src, fillWidth = false, pageWidth = 794, pageHeight = 1055 }) {
   const containerRef = React.useRef(null);
   const [scale, setScale] = React.useState(1);
-  const [containerSize, setContainerSize] = React.useState({ w: 794, h: 1055 });
+  const [containerSize, setContainerSize] = React.useState({ w: pageWidth, h: pageHeight });
 
   React.useEffect(() => {
     const el = containerRef.current;
@@ -404,17 +406,31 @@ export function A4ScaledPreview({ src, fillWidth = false }) {
     const ro = new ResizeObserver(([entry]) => {
       const w = entry.contentRect.width;
       const h = entry.contentRect.height;
-      const scaleW = w / 794;
-      const scaleH = h / 1055;
+      const scaleW = w / pageWidth;
+      const scaleH = h / pageHeight;
       setScale(fillWidth ? scaleW : Math.min(scaleW, scaleH));
       setContainerSize({ w, h });
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [fillWidth]);
+  }, [fillWidth, pageWidth, pageHeight]);
 
-  const scaledH = 1055 * scale;
-  const leftOffset = fillWidth ? 0 : (containerSize.w - 794 * scale) / 2;
+  // fillWidth: the frame grows to the document's full height once it loads, so a multi-page
+  // invoice scrolls in this container only — never a second scrollbar inside the iframe.
+  // Keyed on src so a new document starts from one page again before it is measured.
+  const [measured, setMeasured] = React.useState({ src: null, h: 0 });
+  const frameH = fillWidth && measured.src === src ? Math.max(pageHeight, measured.h) : pageHeight;
+  const measureDoc = (e) => {
+    if (!fillWidth) return;
+    try {
+      const doc = e.currentTarget.contentDocument;
+      const h = Math.max(doc?.body?.scrollHeight || 0, doc?.documentElement?.scrollHeight || 0);
+      if (h) setMeasured({ src, h });
+    } catch { /* cross-origin document: keep the one-page frame */ }
+  };
+
+  const scaledH = frameH * scale;
+  const leftOffset = fillWidth ? 0 : (containerSize.w - pageWidth * scale) / 2;
   const topOffset = fillWidth ? 0 : (containerSize.h - scaledH) / 2;
 
   return (
@@ -424,17 +440,23 @@ export function A4ScaledPreview({ src, fillWidth = false }) {
     >
       <div
         style={{
-          width: 794,
-          height: 1055,
+          width: pageWidth,
+          height: frameH,
           transformOrigin: 'top left',
           transform: `scale(${scale})`,
           position: fillWidth ? 'relative' : 'absolute',
           top: topOffset,
           left: leftOffset,
-          marginBottom: fillWidth ? `${scaledH - 1055}px` : 0,
+          marginBottom: fillWidth ? `${scaledH - frameH}px` : 0,
         }}
       >
-        <iframe src={src} style={{ width: 794, height: 1055, border: 'none', display: 'block' }} title="Invoice Preview" />
+        <iframe
+          src={src}
+          onLoad={measureDoc}
+          scrolling={fillWidth ? 'no' : undefined}
+          style={{ width: pageWidth, height: frameH, border: 'none', display: 'block' }}
+          title="Invoice Preview"
+        />
       </div>
     </div>
   );

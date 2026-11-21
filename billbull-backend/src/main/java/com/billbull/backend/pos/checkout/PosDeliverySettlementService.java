@@ -118,7 +118,7 @@ public class PosDeliverySettlementService {
         boolean isAuthorized = isOwner;
         if (!isOwner) {
             if (verifySupervisorCredentials(req.getSupervisorOverrideEmail(), req.getSupervisorOverridePassword(),
-                    req.getSupervisorOverridePin(), req.getTerminalId())) {
+                    req.getSupervisorOverridePin(), req.getSupervisorOverrideEmployeeId(), req.getTerminalId())) {
                 isAuthorized = true;
                 auditService.logDeliverySettlementAuthorized(req.getSessionId(), req.getTerminalId(),
                         req.getBranchId() != null ? req.getBranchId() : invoice.getBranchId(),
@@ -137,7 +137,10 @@ public class PosDeliverySettlementService {
         // any session's cash reconciliation — the same class of "lost cash" bug this
         // whole fix closes, via a different trigger.
         if (req.getSessionId() != null) {
-            PosSession settlingSession = sessionService.getById(req.getSessionId());
+            // Locked (Phase 0 / M2): this whole settlement is one transaction, so holding the session
+            // row lock here serialises it with close and suspend. A close that won the lock first is
+            // seen as CLOSED below; one that comes after waits until this collection is committed.
+            PosSession settlingSession = sessionService.lockById(req.getSessionId());
             businessDayContinuationGate.assertMayContinue(settlingSession);
             closureWorkflowGate.assertMayOperate(settlingSession);
             if (settlingSession.getStatus() != PosSessionStatus.OPEN) {
@@ -278,13 +281,18 @@ public class PosDeliverySettlementService {
         return a;
     }
 
-    private boolean verifySupervisorCredentials(String email, String password, String pin, String terminalId) {
+    private boolean verifySupervisorCredentials(String email, String password, String pin, Long employeeId,
+                                                String terminalId) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String cashier = auth != null ? auth.getName() : null;
+        // Personal PIN: the PIN belongs to the named approver, never compared with the branch PIN.
+        if (employeeId != null && pin != null && !pin.isBlank()) {
+            return posSettingsService.verifySupervisorPersonalPin(employeeId, pin, terminalId, cashier).isValid();
+        }
         if (pin != null && !pin.isBlank()) {
             return posSettingsService.verifyPin(pin);
         }
         if (email != null && !email.isBlank() && password != null && !password.isBlank()) {
-            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-            String cashier = auth != null ? auth.getName() : null;
             return posSettingsService.verifySupervisorCredentials(email, password, terminalId, cashier).isValid();
         }
         return false;

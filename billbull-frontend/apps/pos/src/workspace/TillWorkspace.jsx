@@ -6,6 +6,7 @@ import { PosHostContext, STANDALONE_POS_HOST } from '@billbull/shared/pages/Sale
 import { useBranch } from '@billbull/shared/context/BranchContext';
 import { signOutOfTill } from '../shell/signOut';
 import PinSignInDialog from '../shell/PinSignInDialog';
+import OfflineStatusPanel from '@billbull/shared/pages/Sales/POS/offline/OfflineStatusPanel';
 
 // Who may turn PIN sign-in on or off for a till (mirrors PosPinDeviceController).
 const PIN_ADMIN_ROLES = ['ADMIN', 'SUPER_ADMIN', 'BRANCH_ADMIN'];
@@ -49,6 +50,7 @@ function TillRail() {
         )}
       </div>
       <div className="flex flex-col items-center gap-3">
+        <OfflineStatusPanel />
         <div className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-[#E2E8F0] bg-[#F5C742] text-xs font-bold text-[#1E1E1E]" title={fullName}>
           {initials(fullName)}
         </div>

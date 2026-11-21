@@ -2,9 +2,80 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { describeLoginError, login, persistLoginSession } from "@billbull/shared/api/auth";
 import { useCompany } from "@billbull/shared/context/CompanyContext";
-import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
+import { Eye, EyeOff, ArrowRight, Loader2, CheckCircle2, X } from "lucide-react";
+import toast from "react-hot-toast";
 import billBullLogo from "@billbull/shared/assets/billBullLogo.png";
 import { clientConfig } from "../config/clientConfig";
+
+const greetingForNow = () => {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+};
+
+// Bottom-right welcome card shown once after a successful sign-in. The Toaster
+// lives in App.jsx outside <Routes>, so it survives the redirect to the landing page.
+const showLoginSuccessToast = (name) => {
+  const displayName = String(name || "").trim() || "there";
+  toast.custom(
+    (t) => (
+      <div
+        role="status"
+        data-login-toast
+        className={`pointer-events-auto flex w-90 max-w-[calc(100vw-32px)] items-start gap-3 rounded-2xl border border-[#FDE6A9] bg-white p-4 shadow-xl`}
+        style={{
+          opacity: t.visible ? 1 : 0,
+          animation: t.visible
+            ? "bbLoginToastPopIn 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both"
+            : "bbLoginToastPopOut 220ms ease-in both",
+        }}
+      >
+        <style>{`
+          @keyframes bbLoginToastPopIn {
+            0%   { opacity: 0; transform: translateY(24px) scale(0.85); }
+            60%  { opacity: 1; transform: translateY(-4px) scale(1.03); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+          }
+          @keyframes bbLoginToastPopOut {
+            0%   { opacity: 1; transform: translateY(0) scale(1); }
+            100% { opacity: 0; transform: translateY(16px) scale(0.9); }
+          }
+          @keyframes bbLoginToastCheck {
+            0%   { transform: scale(0) rotate(-45deg); }
+            70%  { transform: scale(1.25) rotate(8deg); }
+            100% { transform: scale(1) rotate(0); }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            [data-login-toast], [data-login-toast] * { animation-duration: 1ms !important; }
+          }
+        `}</style>
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50">
+          <CheckCircle2
+            className="h-6 w-6 text-emerald-600"
+            style={{ animation: "bbLoginToastCheck 480ms cubic-bezier(0.34, 1.56, 0.64, 1) 180ms both" }}
+          />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-[#1C2838]">Login successful</p>
+          <p className="mt-0.5 text-sm leading-snug text-[#66737F] [overflow-wrap:anywhere]">
+            {greetingForNow()}, welcome back{" "}
+            <span className="font-medium text-[#1C2838]">{displayName}</span> 👋
+          </p>
+        </div>
+        <button
+          type="button"
+          aria-label="Dismiss"
+          onClick={() => toast.dismiss(t.id)}
+          className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    ),
+    { id: "login-success", position: "bottom-right", duration: 4000 },
+  );
+};
 
 const Login = () => {
   const navigate = useNavigate();
@@ -61,6 +132,7 @@ const Login = () => {
         ADMIN:             "/dashboard",
       };
       const primaryRole = data.primaryRole || data.role;
+      showLoginSuccessToast(data.fullName || data.username);
       navigate(clientConfig.landing.defaultRoute || roleRedirects[primaryRole] || "/");
     } catch (err) {
       console.error(err);

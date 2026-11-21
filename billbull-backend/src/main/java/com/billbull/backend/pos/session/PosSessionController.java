@@ -53,6 +53,10 @@ public class PosSessionController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private PosCloseApprovalService closeApprovalService;
 
+    /** Personal PIN approvals for authorize-closure. Field-injected for the same reason as above. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.billbull.backend.pos.pinlogin.PosApproverPinService approverPinService;
+
     public PosSessionController(PosSessionService service, PosSessionSyncService syncService, ObjectMapper objectMapper,
                                  PosDayStatusService dayStatusService,
                                  PosPendingDayCloseResolver pendingDayCloseResolver,
@@ -350,21 +354,36 @@ public class PosSessionController {
         // against a session outside the caller's branch.
         requireSessionInScope(id);
         PosSession session = service.getById(id);
-        
-        CredentialVerificationResult cred = credentialVerificationService.verifyCredentials(
-                request.getUsernameOrEmail(), request.getPassword());
-                
-        if (!cred.valid()) {
-            return ResponseEntity.ok(AuthorizationResult.unauthorized("INVALID_CREDENTIALS", cred.message()));
+
+        com.billbull.backend.user.User verifiedUser;
+        if (request.getEmployeeId() != null) {
+            // Approval Credential = Personal PIN: the chosen person's own till PIN, checked
+            // against the session's branch with the PIN sign-in lockout.
+            if (approverPinService == null) {
+                return ResponseEntity.ok(AuthorizationResult.unauthorized("INVALID_CREDENTIALS",
+                        "Approval by personal PIN is not available."));
+            }
+            var pinResult = approverPinService.verify(session.getBranchId(), request.getEmployeeId(), request.getPin());
+            if (!pinResult.valid()) {
+                return ResponseEntity.ok(AuthorizationResult.unauthorized("INVALID_CREDENTIALS", pinResult.message()));
+            }
+            verifiedUser = pinResult.user();
+        } else {
+            CredentialVerificationResult cred = credentialVerificationService.verifyCredentials(
+                    request.getUsernameOrEmail(), request.getPassword());
+            if (!cred.valid()) {
+                return ResponseEntity.ok(AuthorizationResult.unauthorized("INVALID_CREDENTIALS", cred.message()));
+            }
+            verifiedUser = cred.user();
         }
-        
-        AuthorizationResult auth = sessionAuthorizationService.authorizeSessionClose(session, cred.user());
+
+        AuthorizationResult auth = sessionAuthorizationService.authorizeSessionClose(session, verifiedUser);
         if (!auth.authorized()) {
             return ResponseEntity.ok(auth);
         }
         // Hand back a single-use grant so the close call that follows can prove this
         // verification happened, without the client re-sending the owner's password.
-        return ResponseEntity.ok(auth.withToken(closureAuthorizationRegistry.issue(id, cred.user().getId())));
+        return ResponseEntity.ok(auth.withToken(closureAuthorizationRegistry.issue(id, verifiedUser.getId())));
     }
 
     private String toJson(Object value) {

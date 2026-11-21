@@ -35,7 +35,9 @@ import { useCallback, useState } from 'react';
 import {
   verifyPosSupervisorPin,
   verifySessionClosurePermission,
+  verifySessionClosurePermissionByPin,
   verifySupervisorAuth,
+  verifySupervisorPersonalPin,
 } from '../../../../../api/posApi';
 
 /**
@@ -51,6 +53,9 @@ export function useSupervisorApproval() {
   // Only used when supervisorApprovalMode === 'PASSWORD' — identifies who is authorizing,
   // since verifySupervisorAuth (unlike verifyPosSupervisorPin) checks a specific account.
   const [supervisorPinEmail, setSupervisorPinEmail] = useState('');
+  // Only used when supervisorApprovalMode === 'PERSONAL_PIN': the supervisor picked in the
+  // dialog ({ employeeId, name, … } from getPosPinApprovers), whose own till PIN is entered.
+  const [supervisorApprover, setSupervisorApprover] = useState(null);
   const [supervisorPinError, setSupervisorPinError] = useState('');
   const [pendingVoidItemId, setPendingVoidItemId] = useState(null);
   // Price-override approval pending supervisor sign-off. Serializable request object
@@ -83,6 +88,7 @@ export function useSupervisorApproval() {
     if (unlockAdvancedRange !== undefined) setPendingUnlockAdvancedRange(unlockAdvancedRange);
     setSupervisorPinValue('');
     if (resetEmail) setSupervisorPinEmail('');
+    setSupervisorApprover(null);
     setSupervisorPinError('');
     setShowSupervisorPin(true);
   }, []);
@@ -93,6 +99,7 @@ export function useSupervisorApproval() {
     setPendingLayawayAbortAction(() => action);
     setPendingLayawayAbortIsFullClear(isFullClear);
     setSupervisorPinValue('');
+    setSupervisorApprover(null);
     setSupervisorPinError('');
     setShowSupervisorPin(true);
   }, []);
@@ -108,6 +115,7 @@ export function useSupervisorApproval() {
     setPendingPriceOverride(null);
     setSupervisorPinValue('');
     setSupervisorPinEmail('');
+    setSupervisorApprover(null);
     setSupervisorPinError('');
   }, []);
 
@@ -143,9 +151,20 @@ export function useSupervisorApproval() {
       processPayment, clearLayawayConversion, handleCloseDay,
     } = ctx;
 
+    // Personal PIN mode identifies the approver by the picked supervisor + their own PIN.
+    const usesPersonalPin = supervisorApprovalMode === 'PERSONAL_PIN';
+
     if (pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION') {
       try {
-        if (!supervisorPinEmail || !supervisorPinValue) {
+        // Force Close must name the approver, so the shared Branch PIN is never enough: Branch
+        // PIN and Password modes both ask for the supervisor's username + password (the dialog
+        // shows those fields for Force Close in either mode); Personal PIN asks for the person.
+        if (usesPersonalPin) {
+          if (!supervisorApprover?.employeeId || !supervisorPinValue) {
+            setSupervisorPinError('Choose the supervisor and enter their PIN.');
+            return;
+          }
+        } else if (!supervisorPinEmail || !supervisorPinValue) {
           setSupervisorPinError('Enter supervisor email/username and password.');
           return;
         }
@@ -158,18 +177,25 @@ export function useSupervisorApproval() {
           return;
         }
         const targetSession = sessionToClose || currentSession;
-        const response = await verifySessionClosurePermission(targetSession.id, supervisorPinEmail, supervisorPinValue);
+        const response = usesPersonalPin
+          ? await verifySessionClosurePermissionByPin(targetSession.id, supervisorApprover.employeeId, supervisorPinValue)
+          : await verifySessionClosurePermission(targetSession.id, supervisorPinEmail, supervisorPinValue);
         if (response.authorized) {
           // Same shape as the normal-close flow: the verified supervisor's grant
           // authorizes the eventual close, so the logged-in cashier can perform it.
           closureAuthGrantRef.current = response.authorizationToken
             ? { sessionId: targetSession.id, token: response.authorizationToken }
             : null;
-          forceCloseContextRef.current = { sessionId: targetSession.id, reason: forceCloseReason, supervisor: supervisorPinEmail };
+          forceCloseContextRef.current = {
+            sessionId: targetSession.id,
+            reason: forceCloseReason,
+            supervisor: usesPersonalPin ? (supervisorApprover.name || `employee #${supervisorApprover.employeeId}`) : supervisorPinEmail,
+          };
           setShowSupervisorPin(false);
           setPendingSupervisorAction(null);
           setSupervisorPinValue('');
           setSupervisorPinEmail('');
+          setSupervisorApprover(null);
           setSupervisorPinError('');
           // Land on the X-Report for the target session — identical to Normal Close.
           // The supervisor authorizes here; the count/settlement and the actual
@@ -203,6 +229,19 @@ export function useSupervisorApproval() {
         });
         valid = !!result?.valid;
         failureReason = result?.reason || null;
+      } else if (usesPersonalPin) {
+        if (!supervisorApprover?.employeeId || !supervisorPinValue) {
+          setSupervisorPinError('Choose the supervisor and enter their PIN.');
+          return;
+        }
+        const result = await verifySupervisorPersonalPin({
+          employeeId: supervisorApprover.employeeId,
+          pin: supervisorPinValue,
+          terminalId: currentTerminal?.terminalId || '',
+          lockedBy: cashierDisplayName || '',
+        });
+        valid = !!result?.valid;
+        failureReason = result?.reason || null;
       } else {
         valid = supervisorPinValue ? await verifyPosSupervisorPin(supervisorPinValue) : false;
       }
@@ -210,6 +249,12 @@ export function useSupervisorApproval() {
       setSupervisorPinError('Could not verify approval. Please try again.');
       return;
     }
+    // What a money-moving continuation re-sends so the server can verify it again.
+    const approvalCredentials = supervisorApprovalMode === 'PASSWORD'
+      ? { email: supervisorPinEmail, password: supervisorPinValue }
+      : usesPersonalPin
+        ? { pin: supervisorPinValue, employeeId: supervisorApprover?.employeeId }
+        : { pin: supervisorPinValue };
     if (valid) {
       setShowSupervisorPin(false);
       if (pendingUnlockAdvancedRange) {
@@ -236,11 +281,7 @@ export function useSupervisorApproval() {
           // Re-run checkout with the just-verified credentials attached so the backend's
           // §2.4 gate (PosCheckoutController) can independently confirm and bypass it —
           // never trust the client-side verify above alone for a money-moving action.
-          processPayment(
-            supervisorApprovalMode === 'PASSWORD'
-              ? { email: supervisorPinEmail, password: supervisorPinValue }
-              : { pin: supervisorPinValue }
-          );
+          processPayment(approvalCredentials);
         }
       }
       if (pendingLayawayAbortAction) {
@@ -267,15 +308,12 @@ export function useSupervisorApproval() {
           // still apply their own checks.
           action.run?.();
         } else if (action.type === 'DELIVERY_SETTLEMENT') {
-          action.retry(
-            supervisorApprovalMode === 'PASSWORD'
-              ? { email: supervisorPinEmail, password: supervisorPinValue }
-              : { pin: supervisorPinValue }
-          );
+          action.retry(approvalCredentials);
         }
       }
       setSupervisorPinValue('');
       setSupervisorPinEmail('');
+      setSupervisorApprover(null);
       setSupervisorPinError('');
     } else {
       setSupervisorPinError(failureReason || (
@@ -285,7 +323,7 @@ export function useSupervisorApproval() {
       ));
     }
   }, [
-    supervisorPinEmail, supervisorPinValue,
+    supervisorPinEmail, supervisorPinValue, supervisorApprover,
     pendingSupervisorAction, pendingUnlockAdvancedRange, pendingVoidItemId,
     pendingPriceOverride, pendingLayawayAbortAction, pendingLayawayAbortIsFullClear,
   ]);
@@ -294,6 +332,7 @@ export function useSupervisorApproval() {
     showSupervisorPin, setShowSupervisorPin,
     supervisorPinValue, setSupervisorPinValue,
     supervisorPinEmail, setSupervisorPinEmail,
+    supervisorApprover, setSupervisorApprover,
     supervisorPinError, setSupervisorPinError,
     pendingVoidItemId,
     pendingPriceOverride,

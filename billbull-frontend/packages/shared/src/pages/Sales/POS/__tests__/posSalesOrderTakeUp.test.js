@@ -19,12 +19,14 @@ describe('mapSalesOrderItemsToCart', () => {
   it('projects order lines into cart lines that keep their order line id and ordered unit', () => {
     const lines = mapSalesOrderItemsToCart(ORDER);
     expect(lines).toHaveLength(2); // the zero-quantity line is dropped
-    expect(lines[0]).toMatchObject({
+    // Loaded newest-first like a scanned cart, so the order's first line is the cart's last.
+    expect(lines.map(l => l.code)).toEqual(['BCAA', 'WHEY2']);
+    expect(lines[1]).toMatchObject({
       code: 'WHEY2', name: 'Whey Protein 2kg', quantity: 5, price: 149, taxRate: 5,
       unit: 'BOX', salesOrderItemId: 71, total: 745,
     });
-    expect(lines[1]).toMatchObject({ code: 'BCAA', discount: 5, unit: null, salesOrderItemId: 72 });
-    expect(lines[1].total).toBeCloseTo(225.15, 2);
+    expect(lines[0]).toMatchObject({ code: 'BCAA', discount: 5, unit: null, salesOrderItemId: 72 });
+    expect(lines[0].total).toBeCloseTo(225.15, 2);
   });
 
   it('falls back to the branch VAT rate for a line with no rate', () => {
@@ -36,11 +38,25 @@ describe('mapSalesOrderItemsToCart', () => {
   });
 });
 
+describe('scan order — cart is newest-first, documents are oldest-first', () => {
+  it('a Sales Order loaded into the cart and checked out keeps its line order', () => {
+    const cart = mapSalesOrderItemsToCart(ORDER);
+    expect(buildPosCheckoutItems(cart).map(l => l.itemCode)).toEqual(['WHEY2', 'BCAA']);
+  });
+
+  it('the first item scanned is the first invoice line', () => {
+    // Two scans: A then B. The cart prepends, so it holds [B, A].
+    const cart = [{ code: 'B', name: 'B', quantity: 1, price: 1 }, { code: 'A', name: 'A', quantity: 1, price: 1 }];
+    expect(buildPosCheckoutItems(cart).map(l => l.itemCode)).toEqual(['A', 'B']);
+  });
+});
+
 describe('checkout payload — the Sales Order line link', () => {
   it('adds the line link and ordered unit only to a line that came from an order', () => {
+    // Cart order is newest-first; the payload comes out in scan order.
     const [fromOrder, ordinary] = buildPosCheckoutItems([
-      { code: 'WHEY2', name: 'Whey', quantity: 5, price: 149, salesOrderItemId: 71, unit: 'BOX' },
       { code: 'PEN', name: 'Pen', quantity: 1, price: 2 },
+      { code: 'WHEY2', name: 'Whey', quantity: 5, price: 149, salesOrderItemId: 71, unit: 'BOX' },
     ]);
     expect(fromOrder).toMatchObject({ salesOrderItemId: 71, unit: 'BOX' });
     // An ordinary sale's line is byte-for-byte what it always was.

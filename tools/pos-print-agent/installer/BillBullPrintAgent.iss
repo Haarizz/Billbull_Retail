@@ -31,7 +31,7 @@
 ; Add/Remove-Programs entry and /health agree on which build is deployed. Bump
 ; both together on every agent change. (Was hardcoded 0.1.0 while the agent was
 ; already 0.4.0, so installed tills reported a version that matched nothing.)
-#define MyAppVersion "0.7.0"
+#define MyAppVersion "0.7.1"
 #define MyAppPublisher "BillBull"
 #define MyAppExeName "BillBullPrintAgent.exe"
 

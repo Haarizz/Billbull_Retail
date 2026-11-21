@@ -106,12 +106,15 @@ export function usePosPrinting({
    * Overlay (pre-printed) templates are fixed-position forms, not column-driven, so
    * they go through the overlay renderer and are not made tax-aware — the same rule
    * Back Office's SalesInvoice print applies.
+   *
+   * `quiet` skips the "no template is set up" toast: the checkout preview rebuilds on
+   * every cart change and must not nag. The real print still warns.
    */
-  const buildInvoiceSheetHtml = useCallback(async (doc, data, options, format = paperForSale(doc)) => {
+  const buildInvoiceSheetHtml = useCallback(async (doc, data, options, format = paperForSale(doc), { quiet = false } = {}) => {
     let template = null;
     if (format && format !== 'A4') {
       template = pickSheetTemplate(posInvoiceTemplateFamily, format, branchId);
-      if (!template) {
+      if (!template && !quiet) {
         setPrintFeedback({
           type: 'warning',
           message: `No ${sheetFormatLabel(format)} Sales Invoice template is set up, so this printed with the default template. Create one under Sales → Print & Email Templates.`,

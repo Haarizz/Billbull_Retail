@@ -209,6 +209,23 @@ public class GlobalExceptionHandler {
         return message.substring(open + 1, close);
     }
 
+    /**
+     * A lookup that expects one row found several — typically an item code shared by more than one
+     * active product (branch-level inventory allows one per branch) reaching a branch-blind
+     * {@code findBy...} call. Without this the user sees Hibernate's "Query did not return a unique
+     * result: 2 results were returned". Logged with the stack so the call site can be found.
+     */
+    @ExceptionHandler(org.springframework.dao.IncorrectResultSizeDataAccessException.class)
+    public ResponseEntity<Map<String, String>> handleIncorrectResultSize(
+            org.springframework.dao.IncorrectResultSizeDataAccessException ex) {
+        log.error("IncorrectResultSizeDataAccessException requestId={}: {}", requestId(), ex.getMessage(), ex);
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(errorBody("More than one record matched where only one was expected — for example, an item "
+                        + "code used by more than one active product. Nothing was saved. Ask an administrator to "
+                        + "check for items sharing the same code, then try again."));
+    }
+
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Map<String, String>> handleRuntime(RuntimeException ex) {
         log.error("RuntimeException caught requestId={}: {}", requestId(), ex.getMessage(), ex);

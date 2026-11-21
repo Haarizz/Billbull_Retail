@@ -97,7 +97,10 @@ public class PosSettingsController {
     /**
      * Verify supervisor identity by user credentials (email/username + password).
      * Returns the supervisor's display name on success for the audit trail shown to the cashier.
-     * Roles that qualify: ADMIN, BRANCH_ADMIN, MANAGER.
+     * Roles that qualify: ADMIN, BRANCH_ADMIN, MANAGER, SUPERVISOR.
+     *
+     * <p>Authorization only (Phase 0 / M2.2): a successful check never changes who owns the
+     * terminal's session. A shift handover uses {@link #supervisorHandover}.
      */
     @PostMapping("/supervisor-auth")
     @PreAuthorize("isAuthenticated()")
@@ -106,9 +109,48 @@ public class PosSettingsController {
         if (request == null) {
             return ResponseEntity.ok(Map.of("valid", false, "reason", "Invalid request."));
         }
-        PosSettingsService.SupervisorAuthResult result = service.verifySupervisorCredentials(
+        if (request.getEmployeeId() != null) {
+            // Approval Credential = Personal PIN: the chosen approver's own till PIN.
+            return answer(service.verifySupervisorPersonalPin(
+                    request.getEmployeeId(), request.getPin(),
+                    request.getTerminalId(), request.getLockedBy()));
+        }
+        return answer(service.verifySupervisorCredentials(
                 request.getEmail(), request.getPassword(),
-                request.getTerminalId(), request.getLockedBy());
+                request.getTerminalId(), request.getLockedBy()));
+    }
+
+    /**
+     * Who can approve with their own PIN at the active branch: Active, POS access on, a PIN set,
+     * a login reaching the branch, and a supervisor role. Names only — the picker in the till's
+     * approval dialog when Approval Credential is Personal PIN.
+     */
+    @GetMapping("/pin-approvers")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<java.util.List<com.billbull.backend.pos.pinlogin.PosPinLoginService.StaffMember>> pinApprovers() {
+        modulePermissionService.requireCanView(PosTillPermission.MODULE);
+        return ResponseEntity.ok(service.listPinApprovers());
+    }
+
+    /**
+     * Explicit shift handover on a terminal locked by another cashier: verifies the supervisor, then
+     * hands the terminal's open session to the signed-in user. Same body and answer as
+     * {@link #supervisorAuth}. Refused with 409 {@code SESSION_CHECKOUT_IN_PROGRESS}, changing
+     * nothing, while a checkout attempt is ACTIVE or STALLED on that session.
+     */
+    @PostMapping("/supervisor-handover")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> supervisorHandover(@RequestBody SupervisorAuthRequest request) {
+        modulePermissionService.requireCanView(PosTillPermission.MODULE);
+        if (request == null) {
+            return ResponseEntity.ok(Map.of("valid", false, "reason", "Invalid request."));
+        }
+        return answer(service.authorizeShiftHandover(
+                request.getEmail(), request.getPassword(),
+                request.getTerminalId(), request.getLockedBy()));
+    }
+
+    private static ResponseEntity<Map<String, Object>> answer(PosSettingsService.SupervisorAuthResult result) {
         if (result.isValid()) {
             return ResponseEntity.ok(Map.of(
                     "valid", true,
@@ -131,7 +173,14 @@ public class PosSettingsController {
         private String password;
         private String terminalId;
         private String lockedBy;
+        // Personal PIN approvals: who is approving, and their own till PIN.
+        private Long employeeId;
+        private String pin;
 
+        public Long getEmployeeId() { return employeeId; }
+        public void setEmployeeId(Long employeeId) { this.employeeId = employeeId; }
+        public String getPin() { return pin; }
+        public void setPin(String pin) { this.pin = pin; }
         public String getEmail() { return email; }
         public void setEmail(String email) { this.email = email; }
         public String getPassword() { return password; }

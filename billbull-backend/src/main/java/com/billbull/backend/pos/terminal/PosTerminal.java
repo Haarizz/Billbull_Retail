@@ -139,7 +139,53 @@ public class PosTerminal extends BaseEntity {
     @Column(name = "locked_session_id")
     private Long lockedSessionId;
 
+    // Username of whoever last registered/heartbeated from this terminal — i.e. the user signed
+    // in on it right now while it is online (a till PIN sign-in swaps the JWT, so this follows
+    // the cashier, not the device owner). See V141.
+    @Column(name = "last_user", length = 100)
+    private String lastUser;
+
+    @Column(name = "last_user_at")
+    private LocalDateTime lastUserAt;
+
+    // ── Read-only enrichment for the Console's Terminals & Counters tab ─────────────────
+    // Filled by PosTerminalInsightService on the listing endpoint only; never persisted.
+    @Transient private String lastUserDisplayName;
+    @Transient private String shiftOpenedBy;
+    @Transient private String shiftOpenedByDisplayName;
+    @Transient private java.time.ZonedDateTime shiftOpenedAt;
+    @Transient private Integer shiftInvoiceCount;
+    @Transient private java.math.BigDecimal shiftTotalSales;
+    @Transient private Boolean shiftClosing;
+
     // Getters & Setters
+
+    public String getLastUser() { return lastUser; }
+    public void setLastUser(String lastUser) { this.lastUser = lastUser; }
+
+    public LocalDateTime getLastUserAt() { return lastUserAt; }
+    public void setLastUserAt(LocalDateTime lastUserAt) { this.lastUserAt = lastUserAt; }
+
+    public String getLastUserDisplayName() { return lastUserDisplayName; }
+    public void setLastUserDisplayName(String v) { this.lastUserDisplayName = v; }
+
+    public String getShiftOpenedBy() { return shiftOpenedBy; }
+    public void setShiftOpenedBy(String v) { this.shiftOpenedBy = v; }
+
+    public String getShiftOpenedByDisplayName() { return shiftOpenedByDisplayName; }
+    public void setShiftOpenedByDisplayName(String v) { this.shiftOpenedByDisplayName = v; }
+
+    public java.time.ZonedDateTime getShiftOpenedAt() { return shiftOpenedAt; }
+    public void setShiftOpenedAt(java.time.ZonedDateTime v) { this.shiftOpenedAt = v; }
+
+    public Integer getShiftInvoiceCount() { return shiftInvoiceCount; }
+    public void setShiftInvoiceCount(Integer v) { this.shiftInvoiceCount = v; }
+
+    public java.math.BigDecimal getShiftTotalSales() { return shiftTotalSales; }
+    public void setShiftTotalSales(java.math.BigDecimal v) { this.shiftTotalSales = v; }
+
+    public Boolean getShiftClosing() { return shiftClosing; }
+    public void setShiftClosing(Boolean v) { this.shiftClosing = v; }
 
     public Long getBranchId() { return branchId; }
     public void setBranchId(Long branchId) { this.branchId = branchId; }

@@ -24,6 +24,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { buildDestinations, hasDuplicateKeys } = require("./destinations");
+const { isBuiltinOrigin } = require("./builtinOrigins");
 
 const DEFAULTS = Object.freeze({
   allowedOrigins: [],
@@ -93,7 +94,7 @@ const createConfig = ({ home = defaultHome(), env = process.env } = {}) => {
   const parse = (text) => {
     const problem = unusable(text);
     if (problem) {
-      console.warn(`[config] ${file} cannot be used, so no site is trusted and no printer is set up: ${problem}`);
+      console.warn(`[config] ${file} cannot be used, so only BillBull client sites are trusted and no printer is set up: ${problem}`);
       return {};
     }
     return text ? JSON.parse(text) : {};
@@ -115,6 +116,9 @@ const createConfig = ({ home = defaultHome(), env = process.env } = {}) => {
     for (const problem of destinations.problems) console.warn(`[config] printers: ${problem}`);
     return {
       allowedOrigins: origins,
+      // allowedOrigins holds what config.json/env add; BillBull client sites are
+      // trusted by rule on top (builtinOrigins.js), also when the file is damaged.
+      isTrusted: (origin) => origins.has(origin) || isBuiltinOrigin(origin),
       tokenTtlDays: Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULTS.tokenTtlDays,
       diagnostics: raw.diagnostics === true,
       maxBodyBytes: Number.isFinite(maxBody) && maxBody > 0 ? maxBody : DEFAULTS.maxBodyBytes,

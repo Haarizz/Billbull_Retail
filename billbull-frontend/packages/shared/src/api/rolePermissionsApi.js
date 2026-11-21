@@ -1,6 +1,15 @@
 import api from "./axiosConfig";
 
 /**
+ * Axios config carrying an access-change reason for the audit log. URL-encoded because HTTP
+ * header values must be Latin-1 — the backend decodes it, so Arabic reasons survive.
+ */
+export const reasonConfig = (reason) =>
+  reason && reason.trim()
+    ? { headers: { "X-Change-Reason": encodeURIComponent(reason.trim()) } }
+    : undefined;
+
+/**
  * Role permissions API.
  * getMyPermissions is available to all authenticated users (used by PermissionContext).
  * All other methods require ADMIN.
@@ -55,10 +64,20 @@ export const rolePermissionsApi = {
     api.post("/api/role-permissions/bulk", { roleName, permissions }).then((r) => r.data),
 
   /**
-   * Replace toRole's permissions with a copy of fromRole's — ADMIN only.
+   * Apply one staged edit atomically — ADMIN only. A reason (≥5 chars) is required and is
+   * stored on every resulting access-audit entry.
+   * upserts: [{ module, canView, ... }], resets: [module] (explicit rule removed → inherits)
+   * Returns the role's full permission rows after the change.
    */
-  copy: (fromRole, toRole) =>
-    api.post("/api/role-permissions/copy", { fromRole, toRole }).then((r) => r.data),
+  applyChangeSet: (roleName, { upserts = [], resets = [] }, reason) =>
+    api.post("/api/role-permissions/changeset", { roleName, upserts, resets, reason }).then((r) => r.data),
+
+  /**
+   * Replace toRole's permissions with a copy of fromRole's — ADMIN only.
+   * reason (optional) is recorded in the access audit log.
+   */
+  copy: (fromRole, toRole, reason) =>
+    api.post("/api/role-permissions/copy", { fromRole, toRole }, reasonConfig(reason)).then((r) => r.data),
 
   /**
    * The backend's canonical module catalog — ADMIN only.

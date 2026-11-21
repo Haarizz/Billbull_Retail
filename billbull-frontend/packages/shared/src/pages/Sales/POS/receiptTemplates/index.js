@@ -22,7 +22,10 @@
  *     buildHtml: (component kind) (data) => full HTML string for printHtml()
  *                            — used for Full Preview and as the browser-print
  *                            FALLBACK when no thermal printer is configured.
- *     mapData:   (component kind) (outlet, txn) => data for Preview/buildHtml
+ *     mapData:   (component kind) (outlet, txn, toggles) => data for Preview/buildHtml
+ *     mapInvoiceToTxn: (component kind) (invoice, opts) => txn for mapData, from a
+ *                            real checkout/persisted invoice (checkout preview,
+ *                            receipt PDF/email).
  *     buildEscPosBase64: (paperSize, invoice, opts) => Promise<string base64> —
  *                            SILENT thermal print path (58mm/80mm only), sent
  *                            straight to the configured printer via the local
@@ -37,8 +40,12 @@
  */
 import BillBullTaxInvoiceReceipt from "./BillBullTaxInvoiceReceipt";
 import { buildTemplate2Html } from "./buildTemplate2Html";
-import { mapToTemplate2Data } from "./billBullTaxInvoiceData";
+import { mapToTemplate2Data, mapInvoiceToTxn } from "./billBullTaxInvoiceData";
 import { buildTemplate2EscPosBase64 } from "./buildTemplate2EscPos";
+import Template3Receipt from "./Template3Receipt";
+import { buildTemplate3Html } from "./buildTemplate3Html";
+import { mapToTemplate3Data, mapInvoiceToTemplate3Txn } from "./template3Layout";
+import { buildTemplate3EscPosBase64 } from "./buildTemplate3EscPos";
 
 export const RECEIPT_TEMPLATES = [
   {
@@ -57,7 +64,22 @@ export const RECEIPT_TEMPLATES = [
     Preview: BillBullTaxInvoiceReceipt,
     buildHtml: buildTemplate2Html,
     mapData: mapToTemplate2Data,
+    mapInvoiceToTxn,
     buildEscPosBase64: buildTemplate2EscPosBase64,
+  },
+  {
+    // "BillBull Retail OS" 80mm design (Figma Make). Shares Template 2's data
+    // model and Show/Hide toggles; only the layout differs (template3Layout.js).
+    id: "billbull-retail-os",
+    label: "Template 3",
+    sublabel: "Retail OS",
+    kind: "component",
+    paper: "80mm",
+    Preview: Template3Receipt,
+    buildHtml: buildTemplate3Html,
+    mapData: mapToTemplate3Data,
+    mapInvoiceToTxn: mapInvoiceToTemplate3Txn,
+    buildEscPosBase64: buildTemplate3EscPosBase64,
   },
 ];
 

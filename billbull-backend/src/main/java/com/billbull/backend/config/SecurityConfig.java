@@ -50,6 +50,9 @@ public class SecurityConfig {
                         // RFQ vendor portal: no JWT; RfqPortalService checks the per-vendor link
                         // secret + emailed one-time code, then an X-Vendor-Session token.
                         .requestMatchers("/api/vendor-portal/**").permitAll()
+                        // Customer-facing document links sent on WhatsApp (/d/:token): the 256-bit
+                        // link token is the credential; DocumentShareLinkService checks it.
+                        .requestMatchers("/api/public/documents/**").permitAll()
                         .anyRequest().authenticated())
                 // Without an explicit entry point Spring falls back to Http403ForbiddenEntryPoint,
                 // so a missing/expired JWT came back as 403 — indistinguishable from a real

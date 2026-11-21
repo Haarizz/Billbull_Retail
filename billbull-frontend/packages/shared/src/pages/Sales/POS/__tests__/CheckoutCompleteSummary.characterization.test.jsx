@@ -561,7 +561,9 @@ describe('source — POSSales wiring (CheckoutCompleteSummary boundary)', () => 
       expect(POS_SALES, moved).not.toContain(moved);
     }
     for (const kept of ['<CheckoutCompleteActions\n', 'onNewSale={closeComplete}', 'onPrintReceipt={async () => {', "alert(`Print failed: ${err?.message || 'printer error'}.`)",
-      'onReprint={() => {\n                    closeComplete();\n                    setShowReprintModal(true);\n                  }}', 'onShare={(key) => setReceiptShareChannel(key)}', '<ReceiptShareModal']) {
+      'onReprint={() => {\n                    closeComplete();\n                    setShowReprintModal(true);\n                  }}',
+      // Indented as on the Payment Complete screen; the Last Receipt dialog has its own (shallower) copies.
+      '                  onShare={(key) => setReceiptShareChannel(key)}', '                <ReceiptShareModal']) {
       expect(count(POS_SALES, kept), kept).toBe(1);
     }
   });

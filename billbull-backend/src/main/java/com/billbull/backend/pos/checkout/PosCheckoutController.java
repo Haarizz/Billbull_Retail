@@ -134,6 +134,19 @@ public class PosCheckoutController {
         this.proformaDeliveryService = proformaDeliveryService;
     }
 
+    /**
+     * Phase 0 / M2 checkout attempt journal: the session claim, the fenced write steps and the
+     * same-key outcomes. Setter-injected and required, so Spring always wires it; it is null only
+     * in the hand-built unit-test controllers, which exercise pricing, tender and attribution rules
+     * and run each step directly. The journal itself is proven by the database-backed tests.
+     */
+    private com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService attemptService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAttemptService(com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService attemptService) {
+        this.attemptService = attemptService;
+    }
+
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
                                   PosAuditService auditService, BranchRepository branchRepository,
@@ -231,6 +244,10 @@ public class PosCheckoutController {
         // Till permission first, ahead of even the idempotent replay: a caller who may not
         // operate the till must not be able to read back a sale by its checkout key either.
         modulePermissionService.requireCanView(PosTillPermission.MODULE);
+        // Phase 0 / M2: the canonical request hash, computed once from the request exactly as it
+        // arrived, before anything below enriches it (Sales Order salesperson inheritance). The
+        // checkout key is bound to this hash for good. See PosCheckoutRequestHasher.
+        String requestHash = attemptService != null ? PosCheckoutRequestHasher.hash(request) : null;
         // Idempotency guard: if the frontend sends the same checkoutKey twice (network retry),
         // return the already-completed invoice instead of creating a duplicate.
         // Deliberately BEFORE the Business Day gate below: a sale that already
@@ -238,9 +255,35 @@ public class PosCheckoutController {
         // closed, or a network retry at 23:01 would look like a failed sale and
         // tempt the cashier into ringing it a second time.
         if (request.getCheckoutKey() != null && !request.getCheckoutKey().isBlank()) {
+            // M2: an attempt journal row answers first. It knows the exact request hash, so it also
+            // refuses a tender-only change under a used key, which M1's invoice comparison could not.
+            // No attempt row (a sale recorded before M2) falls through to M1's comparison below.
+            if (attemptService != null) {
+                ResponseEntity<?> journalAnswer = answerFromJournal(request, request.getCheckoutKey().trim(), requestHash);
+                if (journalAnswer != null) return journalAnswer;
+            }
             var existing = invoiceRepository.findByPosCheckoutKey(request.getCheckoutKey().trim());
             if (existing.isPresent()) {
                 SalesInvoice retried = invoiceService.getById(existing.get().getId());
+                // Phase 0 / M1: a key answers only for the sale it was first used for. A different
+                // sale under a stored key is refused rather than handed another sale's invoice.
+                // See PosCheckoutReplayMatcher for exactly what is (and is not yet) compared.
+                java.util.Optional<String> mismatch = PosCheckoutReplayMatcher.firstMismatch(request, retried);
+                if (mismatch.isPresent()) {
+                    auditService.logCheckoutRefused(request.getSessionId(), request.getTerminalId(),
+                            request.getBranchId(), "CHECKOUT_KEY_REUSED: invoice=" + retried.getInvoiceNumber()
+                                    + " differs in " + mismatch.get());
+                    Map<String, Object> body = new java.util.LinkedHashMap<>();
+                    body.put("code", "CHECKOUT_KEY_REUSED");
+                    body.put("message", "This checkout key already belongs to invoice " + retried.getInvoiceNumber()
+                            + ", which was a different sale. That invoice stands and this request was not recorded.");
+                    body.put("checkoutKey", request.getCheckoutKey().trim());
+                    body.put("invoiceId", retried.getId());
+                    body.put("invoiceNumber", retried.getInvoiceNumber());
+                    body.put("differsIn", mismatch.get());
+                    body.put("recorded", false);
+                    return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+                }
                 invoiceCustomerContactService.attach(retried);
                 return ResponseEntity.ok(retried);
             }
@@ -258,10 +301,64 @@ public class PosCheckoutController {
         // has already started closing. Kept separate from the Business Day gate above so
         // the two conditions report their own distinct 409s. The authoritative re-check
         // happens inside the transaction, in recordInvoiceOnSession.
+        //
+        // Phase 0 / M1 pre-write session guard (PosCheckoutSessionGuard). Before any write, the
+        // session must exist, belong to this branch and be OPEN, and a sale that takes payment
+        // must name one. Not a lock: these rules run again under the session row lock in the M2
+        // claim just before the first write, which is what closes the race. No switch for either.
         if (request.getSessionId() != null) {
-            var checkoutSession = sessionService.getById(request.getSessionId());
+            com.billbull.backend.pos.session.PosSession checkoutSession = findSessionOrNull(request.getSessionId());
+            if (checkoutSession == null) {
+                return refuseCheckout(request, PosCheckoutSessionGuard.missing(request.getSessionId()));
+            }
+            var branchRefusal = PosCheckoutSessionGuard.checkBranch(request, checkoutSession, resolvedBranchIdOrNull());
+            if (branchRefusal.isPresent()) return refuseCheckout(request, branchRefusal.get());
             businessDayContinuationGate.assertMayContinue(checkoutSession);
             closureWorkflowGate.assertMayOperate(checkoutSession);
+            var statusRefusal = PosCheckoutSessionGuard.checkOpen(checkoutSession);
+            if (statusRefusal.isPresent()) return refuseCheckout(request, statusRefusal.get());
+            if (request.getTerminalId() != null && checkoutSession.getTerminalId() != null
+                    && !request.getTerminalId().trim().equals(checkoutSession.getTerminalId().trim())) {
+                // Logged, not refused: session transfer and supervisor takeover legitimately move a
+                // session between terminals, and the terminal-match rule is a pending decision (B2).
+                log.warn("POS checkout terminal differs from its session's terminal: request={} session={} sessionId={}",
+                        request.getTerminalId(), checkoutSession.getTerminalId(), checkoutSession.getId());
+            }
+        } else {
+            var sessionlessRefusal = PosCheckoutSessionGuard.checkSessionless(request);
+            if (sessionlessRefusal.isPresent()) return refuseCheckout(request, sessionlessRefusal.get());
+        }
+
+        // PI Flow: a delivery order goes out as a Pro-forma Invoice and becomes a sale only at
+        // Delivery Settlement (see PosProformaDeliveryService). Decided once, here, so the key rule
+        // below and the settlement path further down agree on what this request is.
+        boolean proformaDelivery = isProformaDelivery(request);
+
+        // Phase 0 / M2.1 + M2.2 + M2.2.1: every request to this endpoint records an invoice, so every
+        // one must carry a stable, caller-supplied checkout key, whether or not it takes payment and
+        // whether or not it names a session. A tenderless credit sale or a Default-Settlement delivery
+        // order posts an invoice, stock and GL. A PI-Flow delivery order saves a draft Pro-forma
+        // Invoice, reserves its stock and marks its serials sold. Without a key, a retry after a lost
+        // response cannot find the sale it may already have recorded, and a key minted here would be
+        // different on every request. The till sends one on every sale (useCheckout.js
+        // checkoutKeyFor; POSSales.jsx handleOutForDelivery). There is no keyless exception: M2.2.1
+        // removed the one for tenderless PI-Flow delivery orders. Advertised to clients as
+        // checkoutKeyRequired in GET /capabilities.
+        boolean collectsTender = PosCheckoutSessionGuard.collectsTender(request);
+        if (!hasClientKey(request)) {
+            String what = collectsTender ? "tender" : proformaDelivery ? "pro-forma delivery" : "tenderless sale";
+            auditService.logCheckoutRefused(request.getSessionId(), request.getTerminalId(), request.getBranchId(),
+                    "CHECKOUT_KEY_REQUIRED: " + what + " without a checkout key");
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("code", "CHECKOUT_KEY_REQUIRED");
+            body.put("message", (collectsTender ? "A sale that takes payment"
+                            : proformaDelivery ? "A delivery order issued as a Pro-forma Invoice"
+                            : "A sale that records an invoice, even with no payment,")
+                    + " must carry a checkoutKey that stays the same on every retry "
+                    + "of that sale, so this sale was not recorded. Update the POS client, then settle the sale again.");
+            body.put("sessionId", request.getSessionId());
+            body.put("recorded", false);
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
         }
 
         // Business Day closure gate — the control that actually stops selling once
@@ -329,18 +426,66 @@ public class PosCheckoutController {
         if (linkedSalesOrder != null) {
             posSalesOrderService.assertCanTakeUp(linkedSalesOrder, request.getCustomerCode());
         }
-        // PI Flow: a delivery order goes out as a Pro-forma Invoice and becomes a sale only at
-        // Delivery Settlement (see PosProformaDeliveryService).
-        boolean proformaDelivery = isProformaDelivery(request);
-
         SalesInvoice invoice = buildInvoice(request);
         invoice.setLinkedSalesOrder(linkedSalesOrder);
 
+        // Phase 0 / M2 claim: the last thing before the first write. In one short transaction the
+        // session row is locked, re-checked (branch, close workflow, OPEN) as it is NOW, and the
+        // checkout key is claimed with an owner token and a lease. That transaction commits before
+        // any invoice work, so the session lock is never held through posting. From here a close,
+        // begin-closure or suspend of this session is refused until the attempt finishes, and if
+        // one of those won the lock first, the re-check below refuses this sale with nothing written.
+        //
+        // Since M2.2.1 every checkout reaching here carries a client key (see the key rule above),
+        // so every one is claimed, with or without a session: a sessionless PI-Flow delivery order is
+        // journaled under its own key like any other sale.
+        com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.PosCheckoutClaim claim = null;
+        if (attemptService != null) {
+            ResponseEntity<?> refused = null;
+            var outcome = attemptService.claim(claimRequest(request, requestHash),
+                    locked -> lockedSessionRecheck(request, locked));
+            if (outcome instanceof com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.Claimed c) {
+                claim = c.claim();
+            } else {
+                refused = answerClaimRefusal(request, outcome);
+            }
+            if (refused != null) return refused;
+        }
+
+        try {
+            return settle(request, invoice, linkedSalesOrder, proformaDelivery, claim);
+        } catch (com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.SupersededException ex) {
+            log.warn("POS checkout stopped: {}", ex.getMessage());
+            auditService.logCheckoutRefused(request.getSessionId(), request.getTerminalId(), request.getBranchId(),
+                    "CHECKOUT_ATTEMPT_SUPERSEDED: attempt=" + ex.getClaim().attemptId() + " step=" + ex.getStep());
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("code", "CHECKOUT_ATTEMPT_SUPERSEDED");
+            body.put("message", "This sale's checkout was taken over by another worker or released by a supervisor "
+                    + "before step " + ex.getStep() + ". This request stopped there. Check the sale before trying again.");
+            body.put("attemptId", ex.getClaim().attemptId());
+            body.put("checkoutKey", ex.getClaim().checkoutKey());
+            body.put("stoppedAtStep", ex.getStep());
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+        } catch (RuntimeException ex) {
+            if (claim != null) attemptService.fail(claim, ex);
+            throw ex;
+        }
+    }
+
+    /**
+     * Everything from the first write onward. With a claim, each write step runs fenced (see
+     * {@link #fenced}); without one (unit-test controllers with no attempt service; since M2.2.1 every
+     * real checkout is claimed) each step runs exactly as it always has.
+     */
+    private ResponseEntity<?> settle(PosCheckoutRequest request, SalesInvoice invoice, String linkedSalesOrder,
+                                     boolean proformaDelivery,
+                                     com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.PosCheckoutClaim claim) {
         // Step 1: save builds the invoice (number, totals, items) as DRAFT.
         // amountPaid is zero at this point — status/side-effects are deferred.
         // save() also defaults the branch warehouse onto every stock line that
         // arrived without one, so the auto-DN posting in Step 2 has a location.
-        SalesInvoice saved = invoiceService.save(invoice);
+        SalesInvoice saved = fenced(claim, "INVOICE_SAVE", () -> invoiceService.save(invoice),
+                s -> attemptService.evidenceInvoiceSaved(claim, s.getId(), s.getInvoiceNumber()));
 
         double invoiceTotal = saved.getInvoiceTotal() != null ? saved.getInvoiceTotal().doubleValue() : 0.0;
 
@@ -351,7 +496,7 @@ public class PosCheckoutController {
         try {
             plan = allocationResolver.resolve(request, invoiceTotal);
         } catch (RuntimeException ex) {
-            deleteQuietly(saved.getId());
+            compensate(claim, saved.getId());
             log.warn("POS settlement rejected invoice={} reason=invalid-allocations: {}",
                     saved.getInvoiceNumber(), ex.getMessage());
             throw ex;
@@ -363,22 +508,26 @@ public class PosCheckoutController {
             // Nothing is collected when a PI goes out: the money is taken at Delivery Settlement,
             // which is also what converts the PI. A tender here would have nothing to settle.
             if (paymentAmount > 0.001) {
-                deleteQuietly(saved.getId());
+                compensate(claim, saved.getId());
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "A Pro-forma Invoice is settled at Delivery Settlement — send it out for delivery without a payment.");
             }
             try {
-                proformaDeliveryService.issue(saved.getId());
+                fenced(claim, "PROFORMA_ISSUE", () -> { proformaDeliveryService.issue(saved.getId()); return null; },
+                        ignored -> attemptService.evidencePosted(claim, 0, false, hasLiveSerials(saved), false));
+            } catch (com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.SupersededException ex) {
+                throw ex; // not ours any more: the new owner decides what happens to the invoice
             } catch (RuntimeException ex) {
-                deleteQuietly(saved.getId());
+                compensate(claim, saved.getId());
                 throw ex;
             }
             // Serials leave with the driver, exactly as on a DEFAULT_SETTLEMENT delivery, so they
-            // are marked sold now; nothing else is posted until conversion.
-            markSerialsSold(saved);
+            // are marked sold now; nothing else is posted until conversion. Fenced (M2.1).
+            markSerialsSoldFenced(claim, saved);
             auditService.logCheckoutCompleted(request.getSessionId(), request.getTerminalId(),
                     request.getBranchId(), saved.getId(), saved.getInvoiceNumber());
             terminalActivityService.recordActivity(request.getTerminalId(), "CHECKOUT");
+            if (claim != null) attemptService.complete(claim);
             SalesInvoice issued = invoiceService.getById(saved.getId());
             invoiceCustomerContactService.attach(issued);
             return ResponseEntity.ok(issued);
@@ -390,7 +539,7 @@ public class PosCheckoutController {
         // mismatched card-leg total is rejected rather than silently truncated.
         if (plan.isUsesCardLegs() && !isCreditCheckout && invoiceTotal > 0
                 && Math.abs(plan.getTenderTotal() - invoiceTotal) > ROUNDING_TOLERANCE) {
-            deleteQuietly(saved.getId());
+            compensate(claim, saved.getId());
             log.warn("POS settlement rejected invoice={} reason=card-legs-do-not-total tender={} total={}",
                     saved.getInvoiceNumber(), String.format("%.2f", plan.getTenderTotal()),
                     String.format("%.2f", invoiceTotal));
@@ -410,10 +559,18 @@ public class PosCheckoutController {
                 (paymentAmount >= invoiceTotal - 0.001 && invoiceTotal > 0) ? SalesInvoiceStatus.PAID
               : (paymentAmount > 0)                                           ? SalesInvoiceStatus.PARTIALLY_PAID
               :                                                                  SalesInvoiceStatus.CONFIRMED;
+        // Evidence for recovery: how many payment legs this sale will write, and whether it has a
+        // session step. Recorded with the posting, in the same transaction.
+        final int expectedLegs = paymentAmount > 0 ? countWritingLegs(plan) : 0;
+        final boolean sessionStep = request.getSessionId() != null;
         try {
-            invoiceService.updateStatus(saved.getId(), intendedStatus);
+            fenced(claim, "POST", () -> { invoiceService.updateStatus(saved.getId(), intendedStatus); return null; },
+                    ignored -> attemptService.evidencePosted(claim, expectedLegs, sessionStep,
+                            hasLiveSerials(saved), linkedSalesOrder != null));
+        } catch (com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.SupersededException ex) {
+            throw ex; // not ours any more: the new owner decides what happens to the invoice
         } catch (RuntimeException ex) {
-            deleteQuietly(saved.getId());
+            compensate(claim, saved.getId());
             throw ex;
         }
 
@@ -432,30 +589,38 @@ public class PosCheckoutController {
             // call silently overwrites the invoice's displayed mode with just its own leg.
             String combinedMode = plan.getCombinedPaymentMode();
 
+            int legIndex = 0;
             for (ResolvedPaymentAllocation allocation : plan.getAllocations()) {
                 if (allocation.getAmount() <= 0.001) continue; // cash trimmed to zero by the balance cap
-
-                // A VOUCHER leg must draw the store credit down before it is recorded as settling
-                // the invoice. Doing it first means an invalid, expired or already-spent voucher
-                // fails the checkout rather than producing a Payment row backed by nothing.
-                if (allocation.getType() == PosPaymentAllocationType.VOUCHER) {
-                    redeemVoucherAllocation(saved, allocation, request);
-                }
-
-                if (allocation.isReceipt()) {
-                    // The COLLECTION session for every leg of this checkout is the session
-                    // that's actually open right now — request.getSessionId(). For an ordinary
-                    // checkout this equals the invoice's own posSessionId (set just above in
-                    // buildInvoice), so this is a no-op vs. prior behavior; it only starts to
-                    // matter once a payment is recorded in a *different* session than the sale
-                    // (delivery settlement — see settleDelivery).
-                    invoiceService.recordPayment(saved.getId(), allocation.getAmount(),
-                            allocation.getModeLabel(), allocation.getReference(), saved.getInvoiceDate(),
-                            allocation.getBankAccountName(), null, splitGroupId, combinedMode,
-                            request.getSessionId());
-                }
                 // CREDIT allocations intentionally record nothing: the amount stays outstanding
                 // on the customer's A/R ledger, which the invoice balance already represents.
+                if (!writesPaymentLeg(allocation)) continue;
+                legIndex++;
+
+                // One fenced transaction per leg, so each leg still commits on its own exactly as
+                // before M2 (no change to how a failure part-way through the legs behaves).
+                fenced(claim, "PAYMENT_LEG_" + legIndex, () -> {
+                    // A VOUCHER leg must draw the store credit down before it is recorded as settling
+                    // the invoice. Doing it first means an invalid, expired or already-spent voucher
+                    // fails the checkout rather than producing a Payment row backed by nothing.
+                    if (allocation.getType() == PosPaymentAllocationType.VOUCHER) {
+                        redeemVoucherAllocation(saved, allocation, request);
+                    }
+
+                    if (allocation.isReceipt()) {
+                        // The COLLECTION session for every leg of this checkout is the session
+                        // that's actually open right now — request.getSessionId(). For an ordinary
+                        // checkout this equals the invoice's own posSessionId (set just above in
+                        // buildInvoice), so this is a no-op vs. prior behavior; it only starts to
+                        // matter once a payment is recorded in a *different* session than the sale
+                        // (delivery settlement — see settleDelivery).
+                        invoiceService.recordPayment(saved.getId(), allocation.getAmount(),
+                                allocation.getModeLabel(), allocation.getReference(), saved.getInvoiceDate(),
+                                allocation.getBankAccountName(), null, splitGroupId, combinedMode,
+                                request.getSessionId());
+                    }
+                    return null;
+                }, ignored -> attemptService.evidencePaymentLeg(claim));
             }
 
             logSettlement(saved.getInvoiceNumber(), plan, invoiceTotal, splitGroupId);
@@ -465,7 +630,10 @@ public class PosCheckoutController {
         if (request.getSessionId() != null) {
             // Pass the plan so the session's tender counters are split by what each allocation
             // actually took, rather than re-derived from the invoice's combined mode label.
-            sessionService.recordInvoiceOnSession(request.getSessionId(), saved, plan);
+            final PosPaymentPlan sessionPlan = plan;
+            fenced(claim, "SESSION_RECORD",
+                    () -> { sessionService.recordInvoiceOnSession(request.getSessionId(), saved, sessionPlan); return null; },
+                    ignored -> attemptService.evidenceSessionRecorded(claim));
         }
 
         // Sales Order take-up: the order becomes INVOICED, releases its reservation, and any
@@ -473,61 +641,25 @@ public class PosCheckoutController {
         // After the payments, so the advance covers what is genuinely still outstanding. Never
         // fails the sale: by now it is posted and paid, and a refusal here would invite the
         // cashier to ring it again. A miss leaves the invoice with a visible balance instead.
+        // Fenced (M2.1): an owner that has been superseded cannot convert the order; a genuine
+        // conversion failure is recorded on the attempt, under the fence, and the sale stands.
         if (linkedSalesOrder != null) {
             try {
-                invoiceService.completeSalesOrderConversion(saved.getId());
+                fenced(claim, "SALES_ORDER", () -> { invoiceService.completeSalesOrderConversion(saved.getId()); return null; },
+                        ignored -> attemptService.evidenceSalesOrderCompleted(claim));
+            } catch (com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.SupersededException ex) {
+                throw ex;
             } catch (RuntimeException ex) {
                 log.error("POS sale {} posted but completing Sales Order {} failed: {}",
                         saved.getInvoiceNumber(), linkedSalesOrder, ex.getMessage(), ex);
-            }
-        }
-
-        markSerialsSold(saved);
-
-        // §4.1 Receipt archival: generate ZATCA QR at checkout time and store on the invoice.
-        // CRITICAL: persist via a single-column UPDATE (invoiceService.archiveReceiptQr →
-        // repo.updatePosReceiptQr), NOT invoiceRepository.save(saved). `saved` is the
-        // detached DRAFT snapshot built in Step 1 (amountPaid=null, status=DRAFT,
-        // deliveryStatus=PENDING). Steps 2 & 3 already committed PAID/posted state and the
-        // auto-DN/stock/GL in their own transactions; merging the stale entity back here
-        // would revert all of that — the exact "invoice stays DRAFT, Paid=0 after a
-        // successful payment" defect. A targeted UPDATE touches only posReceiptQr.
-        try {
-            String sellerName = saved.getBranchName();
-            String trn = null;
-            if (saved.getBranchId() != null) {
-                var branch = branchRepository.findById(saved.getBranchId()).orElse(null);
-                if (branch != null) {
-                    if (sellerName == null || sellerName.isBlank()) sellerName = branch.getName();
-                    trn = branch.getTrnNumber();
+                if (claim != null) {
+                    attemptService.recordSalesOrderFailure(claim, "FAILED: " + ex.getClass().getSimpleName()
+                            + ": " + ex.getMessage());
                 }
             }
-            BigDecimal totalWithVat = saved.getInvoiceTotal() != null ? saved.getInvoiceTotal() : BigDecimal.ZERO;
-            BigDecimal vatTotal = saved.getTaxTotal() != null ? saved.getTaxTotal() : BigDecimal.ZERO;
-            LocalDateTime invoiceAt = saved.getInvoiceDate() != null
-                    ? saved.getInvoiceDate().atStartOfDay() : businessDayClock.now();
-            String qr = ZatcaQrGenerator.generate(sellerName, trn, invoiceAt, totalWithVat, vatTotal);
-            invoiceService.archiveReceiptQr(saved.getId(), qr);
-        } catch (Exception e) {
-            // Non-blocking — QR archival failure must not roll back the checkout.
         }
 
-        // Update sales stats (last_sold_at + total_quantity_sold) for each non-voided line
-        if (request.getItems() != null && !request.getItems().isEmpty()) {
-            try {
-                java.util.Map<String, Integer> codeToQty = new java.util.LinkedHashMap<>();
-                for (PosCheckoutRequest.PosCheckoutItem item : request.getItems()) {
-                    if (Boolean.TRUE.equals(item.getVoided())) continue;
-                    String code = item.getItemCode();
-                    if (code == null || code.isBlank()) continue;
-                    int qty = item.getQuantity() != null ? item.getQuantity() : 1;
-                    codeToQty.merge(code, qty, Integer::sum);
-                }
-                productService.recordSaleStats(codeToQty);
-            } catch (Exception ignored) {
-                // Non-blocking — stats update must never roll back the checkout
-            }
-        }
+        markSerialsSoldFenced(claim, saved);
 
         // Audit: completed checkout + any voided lines
         final SalesInvoice finalSaved = saved;
@@ -543,6 +675,10 @@ public class PosCheckoutController {
                             it.getItemCode(), it.getItemName(), it.getVoidReason()));
         }
 
+        if (claim != null) attemptService.complete(claim);
+        // Derived, retryable work (receipt QR, sale statistics), after the sale is COMPLETED.
+        // Neither can undo or misreport the settled sale. See runPostTasks.
+        runPostTasks(claim != null ? claim.attemptId() : null, request, saved);
         SalesInvoice completed = invoiceService.getById(saved.getId());
         invoiceCustomerContactService.attach(completed);
         return ResponseEntity.ok(completed);
@@ -567,12 +703,13 @@ public class PosCheckoutController {
                 true,   // legacy scalars still accepted when no allocations are sent
                 PosPaymentAllocationResolver.MAX_CARD_LEGS,
                 java.util.Arrays.stream(PosPaymentAllocationType.values()).map(Enum::name).toList(),
-                CHECKOUT_API_VERSION);
+                CHECKOUT_API_VERSION,
+                true);  // checkoutKeyRequired: every checkout, PI-Flow delivery included (M2.2.1)
     }
 
     /** Bumped whenever the accepted checkout request shape changes. 1 = legacy scalars only;
-     *  2 = progressive payment allocations. */
-    private static final int CHECKOUT_API_VERSION = 2;
+     *  2 = progressive payment allocations; 3 = checkoutKey mandatory on every checkout (M2.2.1). */
+    private static final int CHECKOUT_API_VERSION = 3;
 
     /**
      * Look up a single POS invoice by invoice number (exact) for the Sales Return flow.
@@ -885,8 +1022,13 @@ public class PosCheckoutController {
         private String supervisorOverrideEmail;
         private String supervisorOverridePassword;
         private String supervisorOverridePin;
+        /** With supervisorOverridePin: the approver whose own PIN it is (Personal PIN approvals). */
+        private Long supervisorOverrideEmployeeId;
         /** Progressive payment allocations — the canonical shape, same as checkout. */
         private List<PosPaymentAllocation> paymentAllocations;
+
+        public Long getSupervisorOverrideEmployeeId() { return supervisorOverrideEmployeeId; }
+        public void setSupervisorOverrideEmployeeId(Long supervisorOverrideEmployeeId) { this.supervisorOverrideEmployeeId = supervisorOverrideEmployeeId; }
 
         public String getSupervisorOverrideEmail() { return supervisorOverrideEmail; }
         public void setSupervisorOverrideEmail(String supervisorOverrideEmail) { this.supervisorOverrideEmail = supervisorOverrideEmail; }
@@ -1372,6 +1514,322 @@ public class PosCheckoutController {
                 && settings.resolvedDeliveryWorkflowMode() == com.billbull.backend.pos.settings.PosDeliveryWorkflowMode.PI_FLOW;
     }
 
+    // ------------------------------------------------------------------ Phase 0 / M2 attempt journal
+
+    private static boolean hasClientKey(PosCheckoutRequest request) {
+        return request.getCheckoutKey() != null && !request.getCheckoutKey().isBlank();
+    }
+
+    private com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.ClaimRequest claimRequest(
+            PosCheckoutRequest request, String requestHash) {
+        if (!hasClientKey(request)) {
+            // The key rule in checkout() refuses this before any write; reaching here is a bug, and
+            // minting a key would silently drop the sale's idempotency. M2.2.1 removed the last
+            // server-minted ("srv-") key; key_source SERVER now only appears on older journal rows.
+            throw new IllegalStateException("POS checkout without a checkout key reached the claim");
+        }
+        return new com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.ClaimRequest(
+                request.getCheckoutKey().trim(), requestHash, resolvedBranchIdOrNull(), request.getSessionId(),
+                request.getTerminalId(), currentUser(), null);
+    }
+
+    /**
+     * M1's session rules, re-run on the session row while the claim holds its lock. Same rules, same
+     * refusal bodies, same order (the close-workflow gate's own 409 before SESSION_NOT_OPEN); the
+     * only difference from the pre-write check is that nothing can change the row while this runs.
+     * The Business Day continuation gate is not repeated: it depends on the clock and the Day Close
+     * state, not on a concurrent session transition, and it already ran.
+     */
+    private Optional<PosCheckoutSessionGuard.Refusal> lockedSessionRecheck(
+            PosCheckoutRequest request, com.billbull.backend.pos.session.PosSession locked) {
+        if (locked == null) return Optional.of(PosCheckoutSessionGuard.missing(request.getSessionId()));
+        var branchRefusal = PosCheckoutSessionGuard.checkBranch(request, locked, resolvedBranchIdOrNull());
+        if (branchRefusal.isPresent()) return branchRefusal;
+        closureWorkflowGate.assertMayOperate(locked);
+        return PosCheckoutSessionGuard.checkOpen(locked);
+    }
+
+    /** The response for a claim that did not succeed. Nothing was written in any of these cases. */
+    private ResponseEntity<?> answerClaimRefusal(PosCheckoutRequest request,
+            com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.ClaimResult outcome) {
+        if (outcome instanceof com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.SessionRefused r) {
+            return refuseCheckout(request, (PosCheckoutSessionGuard.Refusal) r.refusal());
+        }
+        if (outcome instanceof com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.Busy b) {
+            auditService.logCheckoutRefused(request.getSessionId(), request.getTerminalId(), request.getBranchId(),
+                    "SESSION_BUSY: " + b.detail());
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("code", "SESSION_BUSY");
+            body.put("message", "The POS session is being changed by another operation right now (a close, a suspend "
+                    + "or another checkout), so this sale was not recorded. Try again in a moment.");
+            body.put("sessionId", request.getSessionId());
+            body.put("recorded", false);
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+        }
+        var conflict = (com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.Conflict) outcome;
+        return answerAttemptConflict(request, conflict.kind(), conflict.attempt());
+    }
+
+    /**
+     * What a repeated key is answered with, from its journal row. {@code null} means "no answer
+     * here, carry on": no row (a pre-M2 sale, handled by M1's comparison), or a reclaimable row
+     * that a new claim may take over.
+     */
+    private ResponseEntity<?> answerFromJournal(PosCheckoutRequest request, String key, String requestHash) {
+        var found = attemptService.find(key);
+        if (found.isEmpty()) return null;
+        var a = found.get();
+        if (a.state() == com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptState.ACTIVE && a.leaseExpired()) {
+            a = attemptService.recoverIfExpired(a.id()).orElse(a);
+        }
+        // M2.2.3: an abandoned key is reserved for good, whatever the request. Refused here, and again at
+        // the claim (an abandonment that commits between this read and the claim), before any write.
+        if (a.state() == com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptState.ABANDONED) {
+            return answerAttemptConflict(request,
+                    com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.ConflictKind.ABANDONED, a);
+        }
+        if (!a.requestHash().equals(requestHash)) {
+            return answerAttemptConflict(request, com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.ConflictKind.KEY_REUSED, a);
+        }
+        return switch (a.state()) {
+            case COMPLETED -> answerAttemptConflict(request,
+                    com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.ConflictKind.COMPLETED, a);
+            case ACTIVE -> answerAttemptConflict(request,
+                    com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.ConflictKind.IN_PROGRESS, a);
+            case STALLED -> answerAttemptConflict(request,
+                    com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.ConflictKind.STALLED, a);
+            default -> null; // FAILED / RELEASED: M1's invoice check, then the claim, decide
+        };
+    }
+
+    private ResponseEntity<?> answerAttemptConflict(PosCheckoutRequest request,
+            com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.ConflictKind kind,
+            com.billbull.backend.pos.checkout.attempt.PosCheckoutAttempt a) {
+        switch (kind) {
+            case COMPLETED, INVOICE_EXISTS -> {
+                Long invoiceId = a.invoiceId() != null && kind == com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.ConflictKind.COMPLETED
+                        ? a.invoiceId()
+                        : invoiceRepository.findByPosCheckoutKey(a.checkoutKey()).map(SalesInvoice::getId).orElse(null);
+                if (invoiceId == null) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "CHECKOUT_ATTEMPT_INCONSISTENT: attempt "
+                            + a.id() + " is " + a.state() + " but its invoice cannot be found.");
+                }
+                SalesInvoice stored = invoiceService.getById(invoiceId);
+                if (kind == com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.ConflictKind.INVOICE_EXISTS) {
+                    // A released attempt whose invoice stands: the same rule M1 applies to any stored sale.
+                    Optional<String> mismatch = PosCheckoutReplayMatcher.firstMismatch(request, stored);
+                    if (mismatch.isPresent()) return keyReused(request, stored.getId(), stored.getInvoiceNumber(), mismatch.get());
+                }
+                if (kind == com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.ConflictKind.COMPLETED
+                        && (a.qrArchivedAt() == null || a.statsRecordedAt() == null)) {
+                    // A post task that failed (or never ran because the worker stopped after
+                    // COMPLETED) is retried here; the once-markers make the retry safe.
+                    runPostTasks(a.id(), request, stored);
+                    stored = invoiceService.getById(invoiceId);
+                }
+                invoiceCustomerContactService.attach(stored);
+                return ResponseEntity.ok(stored);
+            }
+            case KEY_REUSED -> {
+                return keyReused(request, a.invoiceId(), a.invoiceNumber(), "requestHash");
+            }
+            case ABANDONED -> {
+                auditService.logCheckoutRefused(request.getSessionId(), request.getTerminalId(), request.getBranchId(),
+                        "CHECKOUT_ABANDONED: key=" + a.checkoutKey() + " abandoned by " + a.resolvedBy());
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("code", "CHECKOUT_ABANDONED");
+                body.put("message", "This sale was abandoned on the server, so it was not recorded and never will be "
+                        + "under this checkout. Ring it up again as a new sale if the customer still wants it.");
+                body.put("checkoutKey", a.checkoutKey());
+                body.put("recorded", false);
+                body.put("terminal", true);
+                return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+            }
+            case STALLED -> {
+                auditService.logCheckoutRefused(request.getSessionId(), request.getTerminalId(), request.getBranchId(),
+                        "CHECKOUT_STALLED: attempt=" + a.id() + " invoice=" + a.invoiceNumber());
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("code", "CHECKOUT_STALLED");
+                body.put("message", "This sale was only partly recorded"
+                        + (a.invoiceNumber() != null ? " (invoice " + a.invoiceNumber() + ")" : "")
+                        + " and needs a supervisor to review it. Do not ring it again until they have.");
+                body.put("attemptId", a.id());
+                body.put("checkoutKey", a.checkoutKey());
+                body.put("invoiceId", a.invoiceId());
+                body.put("invoiceNumber", a.invoiceNumber());
+                return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+            }
+            default -> { // IN_PROGRESS
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("code", "CHECKOUT_IN_PROGRESS");
+                body.put("message", "This sale is still being recorded by an earlier request. Wait a moment and "
+                        + "try again; it will be answered with the finished sale. Do not ring it again.");
+                body.put("attemptId", a.id());
+                body.put("checkoutKey", a.checkoutKey());
+                body.put("leaseExpiresAt", String.valueOf(a.leaseExpiresAt()));
+                body.put("retryable", true);
+                return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+            }
+        }
+    }
+
+    private ResponseEntity<?> keyReused(PosCheckoutRequest request, Long invoiceId, String invoiceNumber, String differsIn) {
+        auditService.logCheckoutRefused(request.getSessionId(), request.getTerminalId(), request.getBranchId(),
+                "CHECKOUT_KEY_REUSED: invoice=" + invoiceNumber + " differs in " + differsIn);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("code", "CHECKOUT_KEY_REUSED");
+        body.put("message", invoiceNumber != null
+                ? "This checkout key already belongs to invoice " + invoiceNumber
+                        + ", which was a different sale. That invoice stands and this request was not recorded."
+                : "This checkout key was already used for a different sale, so this request was not recorded.");
+        body.put("checkoutKey", request.getCheckoutKey() != null ? request.getCheckoutKey().trim() : null);
+        body.put("invoiceId", invoiceId);
+        body.put("invoiceNumber", invoiceNumber);
+        body.put("differsIn", differsIn);
+        body.put("recorded", false);
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    /** One write step: fenced when there is a claim, run directly when there is not. */
+    private <T> T fenced(com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.PosCheckoutClaim claim,
+                         String step, java.util.function.Supplier<T> work, java.util.function.Consumer<T> evidence) {
+        if (claim == null) return work.get();
+        return attemptService.step(claim, step, work, evidence);
+    }
+
+    /** A leg that writes something: a voucher draw-down and/or a Payment + Receipt Voucher. */
+    private static boolean writesPaymentLeg(ResolvedPaymentAllocation allocation) {
+        return allocation.getType() == PosPaymentAllocationType.VOUCHER || allocation.isReceipt();
+    }
+
+    private static int countWritingLegs(PosPaymentPlan plan) {
+        int n = 0;
+        for (ResolvedPaymentAllocation a : plan.getAllocations()) {
+            if (a.getAmount() > 0.001 && writesPaymentLeg(a)) n++;
+        }
+        return n;
+    }
+
+    /** The session for the guard, or {@code null} when it does not exist. */
+    private com.billbull.backend.pos.session.PosSession findSessionOrNull(Long sessionId) {
+        try {
+            return sessionService.getById(sessionId);
+        } catch (ResponseStatusException ex) {
+            if (ex.getStatusCode().value() == HttpStatus.NOT_FOUND.value()) return null;
+            throw ex;
+        }
+    }
+
+    /** The branch {@code save()} will stamp on the invoice, or {@code null} when none resolves. */
+    private Long resolvedBranchIdOrNull() {
+        com.billbull.backend.settings.branch.Branch branch = branchAccessService.getRequiredCurrentUserBranch();
+        return branch != null ? branch.getId() : null;
+    }
+
+    /** A pre-write refusal: audited, answered 409, and nothing written. */
+    private ResponseEntity<?> refuseCheckout(PosCheckoutRequest request, PosCheckoutSessionGuard.Refusal refusal) {
+        log.warn("POS checkout refused before any write: {} terminal={} key={}",
+                refusal.auditDetail(), request.getTerminalId(), request.getCheckoutKey());
+        auditService.logCheckoutRefused(request.getSessionId(), request.getTerminalId(), request.getBranchId(),
+                refusal.auditDetail());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(refusal.body());
+    }
+
+    /** Whether the sale has a live (non-voided) line with a serial number to mark SOLD. */
+    private static boolean hasLiveSerials(SalesInvoice saved) {
+        if (saved.getItems() == null) return false;
+        for (SalesInvoiceItem it : saved.getItems()) {
+            if (it.getSerialNumber() != null && !it.getSerialNumber().isBlank() && !Boolean.TRUE.equals(it.getVoided())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Serial → SOLD is authoritative inventory state: one fenced step, all serials together. */
+    private void markSerialsSoldFenced(com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.PosCheckoutClaim claim,
+                                       SalesInvoice saved) {
+        if (!hasLiveSerials(saved)) return;
+        fenced(claim, "SERIALS_MARK", () -> { markSerialsSold(saved); return null; },
+                ignored -> attemptService.evidenceSerialsMarked(claim));
+    }
+
+    /**
+     * The compensating delete of a DRAFT whose checkout failed, fenced (M2.1). If the attempt has
+     * been superseded, the DRAFT is left for its new owner and the failure is only logged. Never
+     * masks the original failure, exactly like {@link #deleteQuietly}.
+     */
+    private void compensate(com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.PosCheckoutClaim claim,
+                            Long invoiceId) {
+        if (claim == null) { deleteQuietly(invoiceId); return; }
+        try {
+            fenced(claim, "COMPENSATE", () -> { invoiceService.delete(invoiceId); return null; }, null);
+        } catch (com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.SupersededException ex) {
+            log.warn("POS checkout compensation skipped: attempt {} no longer owned by this worker; DRAFT {} left in place",
+                    claim.attemptId(), invoiceId);
+        } catch (RuntimeException cleanupEx) {
+            // Intentionally swallowed: the caller is about to rethrow the real cause.
+        }
+    }
+
+    /**
+     * Receipt QR archival and sale statistics. Derived state (a reprint regenerates a missing QR;
+     * statistics are reporting counters), so neither is part of the fenced settlement. With an
+     * attempt, each runs at most once per COMPLETED attempt (the once-marker and the task's writes
+     * share a transaction) and a failed one runs again on the next replay of the key. Without one
+     * (unit-test controllers with no attempt service) they run as before. Never throws.
+     */
+    private void runPostTasks(java.util.UUID attemptId, PosCheckoutRequest request, SalesInvoice saved) {
+        if (attemptId == null) {
+            try { archiveReceiptQr(saved); } catch (RuntimeException ignored) { /* non-blocking, as before */ }
+            try { recordSaleStats(request); } catch (RuntimeException ignored) { /* non-blocking, as before */ }
+            return;
+        }
+        attemptService.runPostTask(attemptId, "qr_archived_at", () -> archiveReceiptQr(saved));
+        attemptService.runPostTask(attemptId, "stats_recorded_at", () -> recordSaleStats(request));
+    }
+
+    /**
+     * Receipt archival (section 4.1): generate the ZATCA QR and store it on the invoice.
+     * CRITICAL: persist via a single-column UPDATE (invoiceService.archiveReceiptQr ->
+     * repo.updatePosReceiptQr), NOT invoiceRepository.save(saved). {@code saved} is the detached
+     * DRAFT snapshot built in Step 1; merging it back would revert the committed PAID/posted state
+     * (the "invoice stays DRAFT, Paid=0 after a successful payment" defect). Deterministic for a
+     * given invoice, so running it twice writes the same value.
+     */
+    private void archiveReceiptQr(SalesInvoice saved) {
+        String sellerName = saved.getBranchName();
+        String trn = null;
+        if (saved.getBranchId() != null) {
+            var branch = branchRepository.findById(saved.getBranchId()).orElse(null);
+            if (branch != null) {
+                if (sellerName == null || sellerName.isBlank()) sellerName = branch.getName();
+                trn = branch.getTrnNumber();
+            }
+        }
+        BigDecimal totalWithVat = saved.getInvoiceTotal() != null ? saved.getInvoiceTotal() : BigDecimal.ZERO;
+        BigDecimal vatTotal = saved.getTaxTotal() != null ? saved.getTaxTotal() : BigDecimal.ZERO;
+        LocalDateTime invoiceAt = saved.getInvoiceDate() != null
+                ? saved.getInvoiceDate().atStartOfDay() : businessDayClock.now();
+        String qr = ZatcaQrGenerator.generate(sellerName, trn, invoiceAt, totalWithVat, vatTotal);
+        invoiceService.archiveReceiptQr(saved.getId(), qr);
+    }
+
+    /** Sales stats (last_sold_at + total_quantity_sold) for each non-voided line. Increments, so it
+     *  must run once per sale; with an attempt that is what the once-marker guarantees. */
+    private void recordSaleStats(PosCheckoutRequest request) {
+        if (request.getItems() == null || request.getItems().isEmpty()) return;
+        java.util.Map<String, Integer> codeToQty = new java.util.LinkedHashMap<>();
+        for (PosCheckoutRequest.PosCheckoutItem item : request.getItems()) {
+            if (Boolean.TRUE.equals(item.getVoided())) continue;
+            String code = item.getItemCode();
+            if (code == null || code.isBlank()) continue;
+            int qty = item.getQuantity() != null ? item.getQuantity() : 1;
+            codeToQty.merge(code, qty, Integer::sum);
+        }
+        productService.recordSaleStats(codeToQty);
+    }
+
     /** Best-effort rollback of a DRAFT invoice whose payment could not be completed —
      *  never masks the original failure with a cleanup error. */
     private void deleteQuietly(Long invoiceId) {
@@ -1466,13 +1924,18 @@ public class PosCheckoutController {
                 invoice.getBranchEntity());
     }
 
-    private boolean verifySupervisorCredentials(String email, String password, String pin, String terminalId) {
+    private boolean verifySupervisorCredentials(String email, String password, String pin, Long employeeId,
+                                                String terminalId) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String cashier = auth != null ? auth.getName() : null;
+        // Personal PIN: the PIN belongs to the named approver, never compared with the branch PIN.
+        if (employeeId != null && pin != null && !pin.isBlank()) {
+            return posSettingsService.verifySupervisorPersonalPin(employeeId, pin, terminalId, cashier).isValid();
+        }
         if (pin != null && !pin.isBlank()) {
             return posSettingsService.verifyPin(pin);
         }
         if (email != null && !email.isBlank() && password != null && !password.isBlank()) {
-            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-            String cashier = auth != null ? auth.getName() : null;
             return posSettingsService.verifySupervisorCredentials(
                     email, password, terminalId, cashier).isValid();
         }
@@ -1562,6 +2025,7 @@ public class PosCheckoutController {
     }
 
     private boolean verifySupervisorPriceOverride(PosCheckoutRequest req) {
-        return verifySupervisorCredentials(req.getSupervisorOverrideEmail(), req.getSupervisorOverridePassword(), req.getSupervisorOverridePin(), req.getTerminalId());
+        return verifySupervisorCredentials(req.getSupervisorOverrideEmail(), req.getSupervisorOverridePassword(),
+                req.getSupervisorOverridePin(), req.getSupervisorOverrideEmployeeId(), req.getTerminalId());
     }
 }

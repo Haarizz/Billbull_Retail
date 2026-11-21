@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { normalizeServerUrl, isInsecureRemote, posUrl, looksLikePosPage, describeNetError } = require('../src/serverUrl');
-const { classifyNavigation, classifyWindowOpen, isPermissionAllowed, isSignInRedirect } = require('../src/navigationPolicy');
+const { classifyNavigation, classifyWindowOpen, isOutsideTill, isPermissionAllowed, isSignInRedirect } = require('../src/navigationPolicy');
 const { createSettingsStore, DEFAULTS } = require('../src/settingsStore');
 
 const ORIGIN = 'https://shop.example.com';
@@ -59,6 +59,7 @@ test('navigation stays on the tenant origin; other web links go to the browser',
   assert.equal(classifyNavigation(`${ORIGIN}/login`, ORIGIN), 'allow');
   assert.equal(classifyNavigation('https://wa.me/971500000000?text=hi', ORIGIN), 'external');
   assert.equal(classifyNavigation('mailto:a@b.c', ORIGIN), 'external');
+  assert.equal(classifyNavigation('sms:+971501112222?body=Receipt%20SI-1', ORIGIN), 'external');
   assert.equal(classifyNavigation('https://shop.example.com.evil.com/', ORIGIN), 'external');
   assert.equal(classifyNavigation('http://shop.example.com/pos/', ORIGIN), 'external');
   assert.equal(classifyNavigation('file:///C:/Windows/system.ini', ORIGIN), 'deny');
@@ -107,4 +108,16 @@ test('settings store survives a missing or corrupt file and merges writes', () =
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('isOutsideTill flags same-origin addresses that are not under /pos/', () => {
+  assert.equal(isOutsideTill(`${ORIGIN}/pos`, ORIGIN), true);
+  assert.equal(isOutsideTill(`${ORIGIN}/pos?x=1`, ORIGIN), true);
+  assert.equal(isOutsideTill(`${ORIGIN}/sales/pos`, ORIGIN), true);
+  assert.equal(isOutsideTill(`${ORIGIN}/`, ORIGIN), true);
+  assert.equal(isOutsideTill(`${ORIGIN}/pos/`, ORIGIN), false);
+  assert.equal(isOutsideTill(`${ORIGIN}/pos/login`, ORIGIN), false);
+  assert.equal(isOutsideTill('https://other.example.com/pos', ORIGIN), false);
+  assert.equal(isOutsideTill('file:///C:/app/pages/offline.html', ORIGIN), false);
+  assert.equal(isOutsideTill(`${ORIGIN}/pos`, null), false);
 });

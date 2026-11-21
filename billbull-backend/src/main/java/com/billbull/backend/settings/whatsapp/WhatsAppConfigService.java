@@ -65,10 +65,11 @@ public class WhatsAppConfigService {
         incoming.setAccessToken(trimToNull(incoming.getAccessToken()));
         incoming.setAppSecret(trimToNull(incoming.getAppSecret()));
         incoming.setWebhookVerifyToken(trimToNull(incoming.getWebhookVerifyToken()));
-        // Blank stays blank (null): that document uses the manual flow. Nothing is defaulted here.
+        // Blank stays blank (null): that document uses the link flow. Nothing is defaulted here.
         incoming.setQuotationTemplateName(requireTemplateName(incoming.getQuotationTemplateName(), "Quotation"));
         incoming.setSalesOrderTemplateName(requireTemplateName(incoming.getSalesOrderTemplateName(), "Sales Order"));
         incoming.setSalesInvoiceTemplateName(requireTemplateName(incoming.getSalesInvoiceTemplateName(), "Sales Invoice"));
+        incoming.setPosReceiptTemplateName(requireTemplateName(incoming.getPosReceiptTemplateName(), "POS Receipt"));
         if (incoming.getDefaultCountryCode() != null) {
             incoming.setDefaultCountryCode(incoming.getDefaultCountryCode().replaceAll("\\D", ""));
         }
@@ -143,6 +144,7 @@ public class WhatsAppConfigService {
         copy.setQuotationTemplateName(src.getQuotationTemplateName());
         copy.setSalesOrderTemplateName(src.getSalesOrderTemplateName());
         copy.setSalesInvoiceTemplateName(src.getSalesInvoiceTemplateName());
+        copy.setPosReceiptTemplateName(src.getPosReceiptTemplateName());
         copy.setTemplateLanguage(src.getTemplateLanguage());
         return copy;
     }

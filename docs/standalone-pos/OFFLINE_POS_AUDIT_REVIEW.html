@@ -1,0 +1,813 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offline POS Audit Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: technical review dossier, sticky index rail on wide screens, single column on phones. */
+:root{
+  --paper:#FBFAF7; --sheet:#FFFFFF; --ink:#1D2126; --ink-2:#4A525C; --rule:#E3E0D8; --rule-2:#EFECE5;
+  --amber:#F5C742; --amber-ink:#7A5200; --amber-wash:#FFF6DA;
+  --bad:#B4261E; --bad-wash:#FCEBE9; --warn:#8F5A00; --warn-wash:#FFF1D6;
+  --ok:#1F6B45; --ok-wash:#E5F3EB; --info:#1F4F8A; --info-wash:#E7EEF8; --new:#6B3FA0; --new-wash:#F1EAFA;
+  --code-bg:#F3F1EC;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",Arial,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#15171A; --sheet:#1C1F23; --ink:#E9E6DF; --ink-2:#A9AFB7; --rule:#30343A; --rule-2:#262A2F;
+  --amber:#F5C742; --amber-ink:#F5C742; --amber-wash:#3A3016;
+  --bad:#FF8A80; --bad-wash:#3A1D1B; --warn:#F2B755; --warn-wash:#382A14;
+  --ok:#7CD3A3; --ok-wash:#18301F; --info:#8DB8F0; --info-wash:#1A2738; --new:#C7A6F0; --new-wash:#2A2038;
+  --code-bg:#24282D; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --paper:#15171A; --sheet:#1C1F23; --ink:#E9E6DF; --ink-2:#A9AFB7; --rule:#30343A; --rule-2:#262A2F;
+  --amber:#F5C742; --amber-ink:#F5C742; --amber-wash:#3A3016;
+  --bad:#FF8A80; --bad-wash:#3A1D1B; --warn:#F2B755; --warn-wash:#382A14;
+  --ok:#7CD3A3; --ok-wash:#18301F; --info:#8DB8F0; --info-wash:#1A2738; --new:#C7A6F0; --new-wash:#2A2038;
+  --code-bg:#24282D; color-scheme:dark }
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px;padding-block:32px 80px}
+@media (max-width:900px){.wrap{grid-template-columns:minmax(0,1fr);gap:16px}}
+nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px);align-self:start;font-size:13px;max-height:calc(100vh - 32px);overflow:auto}
+@media (max-width:900px){nav.toc{position:static;max-height:none;border:1px solid var(--rule);border-radius:6px;padding:12px 14px;background:var(--sheet)}}
+nav.toc p{font-family:var(--f-display);text-transform:uppercase;letter-spacing:.08em;font-size:12px;color:var(--ink-2);margin:14px 0 6px}
+nav.toc p:first-child{margin-top:0}
+nav.toc a{display:block;color:var(--ink);text-decoration:none;padding:2px 0 2px 10px;border-left:2px solid var(--rule)}
+nav.toc a:hover,nav.toc a:focus-visible{border-left-color:var(--amber);outline:none;color:var(--amber-ink)}
+main{min-width:0}
+header.cover{border-bottom:3px solid var(--ink);padding-bottom:20px;margin-bottom:28px}
+.eyebrow{font-family:var(--f-display);text-transform:uppercase;letter-spacing:.1em;font-size:12px;color:var(--ink-2)}
+h1{font-family:var(--f-display);font-weight:700;font-size:clamp(30px,4.4vw,44px);line-height:1.08;margin:6px 0 10px;text-wrap:balance}
+h2{font-family:var(--f-display);font-weight:700;font-size:26px;line-height:1.2;margin:52px 0 6px;text-wrap:balance;scroll-margin-top:16px}
+h2 .num{color:var(--amber-ink);margin-right:8px}
+h3{font-family:var(--f-display);font-weight:600;font-size:19px;margin:28px 0 6px;text-wrap:balance;scroll-margin-top:16px}
+h4{font-family:var(--f-body);font-weight:600;font-size:15px;margin:18px 0 4px}
+p,li{max-width:76ch}
+.lede{font-size:17px;color:var(--ink-2);max-width:72ch;margin:0}
+.meta{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:14px;font-size:13px;color:var(--ink-2)}
+.meta b{color:var(--ink);font-weight:500}
+code,.mono{font-family:var(--f-mono);font-size:.86em;background:var(--code-bg);padding:1px 4px;border-radius:3px;overflow-wrap:anywhere}
+pre{font-family:var(--f-mono);font-size:12.5px;line-height:1.5;background:var(--code-bg);padding:12px 14px;border-radius:6px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;font-size:inherit}
+.verdict{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin:24px 0 8px}
+@media (max-width:640px){.verdict{grid-template-columns:minmax(0,1fr)}}
+.vcard{border:1px solid var(--rule);background:var(--sheet);border-radius:8px;padding:16px 18px;min-width:0}
+.vcard.primary{border:2px solid var(--amber);background:var(--amber-wash)}
+.vcard .k{font-family:var(--f-display);text-transform:uppercase;letter-spacing:.08em;font-size:12px;color:var(--ink-2)}
+.vcard .v{font-family:var(--f-display);font-weight:700;font-size:24px;line-height:1.15;margin:4px 0 6px}
+.vcard p{margin:0;font-size:14px}
+.pill{display:inline-block;font-family:var(--f-display);font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;padding:1px 7px;border-radius:999px;white-space:nowrap;vertical-align:1px}
+.p-bad{background:var(--bad-wash);color:var(--bad)} .p-warn{background:var(--warn-wash);color:var(--warn)}
+.p-ok{background:var(--ok-wash);color:var(--ok)} .p-info{background:var(--info-wash);color:var(--info)}
+.p-new{background:var(--new-wash);color:var(--new)} .p-dec{background:var(--amber-wash);color:var(--amber-ink);border:1px solid var(--amber)}
+.tbl{overflow-x:auto;margin:12px 0 4px;border:1px solid var(--rule);border-radius:6px;background:var(--sheet)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.5}
+th,td{text-align:left;vertical-align:top;padding:8px 10px;border-bottom:1px solid var(--rule-2)}
+th{font-family:var(--f-display);font-weight:600;font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-2);background:var(--paper);border-bottom:1px solid var(--rule)}
+tr:last-child td{border-bottom:0}
+td.id{font-family:var(--f-mono);font-size:12px;white-space:nowrap;color:var(--ink-2)}
+.wide table{min-width:820px}
+.callout{border-left:4px solid var(--amber);background:var(--sheet);padding:12px 16px;margin:14px 0;border-radius:0 6px 6px 0}
+.callout.bad{border-left-color:var(--bad)} .callout.ok{border-left-color:var(--ok)}
+.callout p{margin:4px 0}
+.answer{font-weight:500}
+ol.steps,ul.tight{padding-left:22px} ul.tight li,ol.steps li{margin:3px 0}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+@media (max-width:760px){.two{grid-template-columns:minmax(0,1fr)}}
+.box{border:1px solid var(--rule);border-radius:6px;padding:12px 14px;background:var(--sheet);min-width:0}
+.box h4{margin-top:0}
+.mermaid-wrap{overflow-x:auto;border:1px solid var(--rule);border-radius:6px;background:var(--sheet);padding:12px;margin:12px 0}
+pre.mermaid{background:none;margin:0;padding:0;font-size:13px}
+.final{border:2px solid var(--ink);border-radius:8px;padding:20px 22px;margin-top:28px;background:var(--sheet)}
+.final .v{font-family:var(--f-display);font-weight:700;font-size:30px;margin:4px 0 10px}
+.small{font-size:13px;color:var(--ink-2)}
+a{color:var(--info)}
+a:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+hr{border:0;border-top:1px solid var(--rule);margin:40px 0}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <p>Verdict</p>
+  <a href="#summary">Summary</a>
+  <a href="#method">Scope and method</a>
+  <p>Validations</p>
+  <a href="#v1">1 · Terminal cryptography</a>
+  <a href="#v2">2 · Outbox and printing</a>
+  <a href="#v3">3 · Checkout and recovery</a>
+  <a href="#v4">4 · Lease, clock, revocation</a>
+  <a href="#v5">5 · Inventory safety</a>
+  <a href="#v6">6 · Sync and sequences</a>
+  <a href="#v7">7 · Storage and recovery</a>
+  <a href="#v8">8 · Session and Day Close</a>
+  <p>Report</p>
+  <a href="#r1">R1 · Confirmed issues</a>
+  <a href="#r2">R2 · New issues</a>
+  <a href="#r3">R3 · Already addressed</a>
+  <a href="#r4">R4 · Business decisions</a>
+  <a href="#r5">R5 · Corrected architecture</a>
+  <a href="#r6">R6 · Phase 0 acceptance</a>
+  <a href="#r7">R7 · Before Phase 2</a>
+  <a href="#r8">R8 · Required tests</a>
+  <a href="#rec">Recommendation</a>
+</nav>
+
+<main>
+<header class="cover">
+  <div class="eyebrow">BillBull ERP · Standalone POS · Second review</div>
+  <h1>Offline POS Audit Review</h1>
+  <p class="lede">A code-verified review of <code>docs/standalone-pos/OFFLINE_POS_READINESS_AUDIT.html</code> (6 Nov 2026). It checks eight design risks against the current repository before Phase 0 and Phase 2 are approved. Read-only: no source, migration, configuration, database or service was changed.</p>
+  <div class="meta">
+    <span>Reviewed <b>12 Nov 2026</b></span>
+    <span>Branch <b>feat/email-pdf-attachments</b></span>
+    <span>HEAD <b>be9be921</b> (only <code>application.properties</code> modified)</span>
+    <span>Highest migration <b>V137</b>, so the next free number is <b>V138</b></span>
+  </div>
+</header>
+<section id="m0-correction">
+  <div class="callout bad">
+    <p><b>M0 correction, added 12 Nov 2026 after this document was written.</b> A database-backed reproduction (<code>PosCheckoutClosedSessionDefectTest</code>, run twice on the disposable clone <code>billbull_m0_checkout_20261112</code>, HEAD <code>be9be921</code>) did <b>not</b> reproduce the predicted partial commit for a checkout naming a CLOSED or SUSPENDED session.</p>
+    <p><b>Observed:</b></p>
+    <ul class="tight">
+      <li>HTTP 200, invoice PAID with zero balance.</li>
+      <li>Delivery Note, stock movement, invoice journal and receipt journal written.</li>
+      <li>Payment and Receipt Voucher written, with the Payment attributed to the closed or suspended session.</li>
+      <li>The session's totals stayed at 0.</li>
+      <li>The closed session's live X-Report expected cash rose after it had been closed.</li>
+      <li>The same-key retry returned 200 with the same, fully paid invoice.</li>
+    </ul>
+    <p><b>Cause:</b> <code>SalesInvoiceService.createSalesPaymentForInvoice</code> calls the one-argument <code>PaymentService.savePayment(p)</code> (<code>SalesInvoiceService.java:1948</code>), so <code>PosDrawerSessionValidator.requireOpenDrawerSession</code> never runs on the till path. <code>PosSessionRepository.incrementSessionTotals</code> updates OPEN sessions only.</p>
+    <p><b>What this changes:</b> statements in this document that describe "invoice posted, then payment refused", an unpaid invoice returned on retry, or Day Close counting it as a credit sale are <b>not correct for this scenario</b>. They are kept and marked rather than removed. The real defect is silent acceptance and misattribution of cash to a session that is already closed or suspended.</p>
+    <p><b>Still open:</b></p>
+    <ul class="tight">
+      <li>Other partial-commit paths in this document, such as a payment leg failing for a different reason after posting, were not tested by M0. They remain plausible but unverified.</li>
+      <li><b>Day Close behaviour with such a sale remains unverified</b>: <code>closeDay</code> was not run.</li>
+      <li>M1 adds a pre-write session guard that refuses these checkouts with 409 before any write. It is not concurrency-safe; the session-row lock and attempt claim remain M2.</li>
+    </ul>
+  </div>
+</section>
+
+
+<section id="summary">
+  <div class="verdict">
+    <div class="vcard primary">
+      <div class="k">Phase 0</div>
+      <div class="v">Approve with changes</div>
+      <p>The direction is right, but a completion timestamp alone cannot find or resolve incomplete checkouts. Phase 0 must add a pre-write session check, a checkout attempt journal with the intended payment plan, per-payment-leg keys, clear replay outcomes and a manual resolution queue.</p>
+    </div>
+    <div class="vcard">
+      <div class="k">Phase 2</div>
+      <div class="v">Not approvable yet</div>
+      <p>Four parts of the proposed Phase 2 design do not hold against the code: the HMAC key scheme, the outbox state machine, the revocation rule and the sequence-gap rule. Auto-FEFO with a negative override is also impossible for batch products. The conditions are in <a href="#r7">R7</a>.</p>
+    </div>
+  </div>
+  <div class="callout bad">
+    <p><span class="pill p-bad">Corrected by M0</span> This scenario was not reproduced by M0. See the <a href="#m0-correction">M0 correction</a>. The original text is kept below.</p>
+    <p><b>The most important finding concerns online checkout today, before any offline work.</b> If a checkout names a POS session that is no longer OPEN (closed from the back office, or suspended by the idle scheduler), the server still saves the invoice, deducts stock and posts the invoice journal. Only then does it refuse the payment. <span class="pill p-bad">Corrected by M0</span> Not reproduced: the payment was accepted too. See the <a href="#m0-correction">M0 correction</a>. The original text is kept below. A retry with the same key returns HTTP 200 with that unpaid invoice, and Day Close counts its balance as a credit sale, so it reconciles without any variance. Every offline replay after a back-office session close would take this path. See <a href="#v3">V3</a> and <a href="#r2">N1</a>.</p>
+  </div>
+</section>
+
+<section id="method">
+  <h2>Scope and method</h2>
+  <ul class="tight">
+    <li>Every claim below was checked by reading the code at HEAD <code>be9be921</code>. Line numbers refer to that revision.</li>
+    <li>No code was run, and no database or service was touched. Partial-commit paths were found by tracing transaction boundaries, not by injecting faults. The tests in <a href="#r8">R8</a> are what turn them into measured facts.</li>
+    <li>Browser and Electron platform behaviour (storage eviction, <code>persist()</code> heuristics, WebCrypto algorithm support, background sync) comes from platform knowledge, not from this repository. Each such point is marked <span class="pill p-info">verify on pilot hardware</span>.</li>
+    <li>Status labels: <span class="pill p-bad">Defect</span> is wrong in code or in the proposed design. <span class="pill p-new">New</span> was not in the previous audit. <span class="pill p-ok">Addressed</span> is already handled by current code. <span class="pill p-dec">Decision</span> needs business approval. <span class="pill p-warn">Partial</span> is correct but incomplete.</li>
+  </ul>
+</section>
+
+<!-- ============================ V1 ============================ -->
+<section id="v1">
+  <h2><span class="num">V1</span>Terminal cryptography</h2>
+  <p class="answer"><span class="pill p-bad">Defect</span> The server cannot verify an HMAC-SHA256 signature if it stores only a hash of the terminal key.</p>
+  <p>To verify <code>HMAC(K, m)</code>, the server has to compute the same value, and that needs <code>K</code> itself. <code>SHA-256(K)</code> does not let anyone compute <code>HMAC(K, m)</code>. The proposal copied the pattern from PIN devices: <code>PosPinLoginService</code> stores <code>sha256(token)</code> (<code>pos/pinlogin/PosPinLoginService.java:94</code>) and verifies by hashing the token the client sends (<code>:224</code>, <code>findByTokenHashAndRevokedAtIsNull(sha256(...))</code>). That works for a <em>bearer</em> token because the client sends the secret on every request. An offline signature never sends the key, so the pattern does not carry over. If the server used the stored hash as the HMAC key instead, the hash would become the secret, and "store only the hash" would no longer mean anything.</p>
+
+  <h3>Comparison</h3>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Concern</th><th>A. HMAC, shared secret stored by the server</th><th>B. Browser key pair, server stores the public key</th></tr></thead>
+    <tbody>
+      <tr><td>What the server holds</td><td>The secret, recoverable. It could be kept encrypted with the existing <code>common.crypto.EncryptedStringConverter</code>, but the server can decrypt it.</td><td>The public key only. Nothing secret.</td></tr>
+      <tr><td>Database or backup leak</td><td>Leak of the database plus the encryption key lets an attacker forge records for every terminal.</td><td>No forgery possible. Public keys are not secret.</td></tr>
+      <tr><td>Proof of origin</td><td>None. The server could have produced any signature itself.</td><td>Only the holder of the private key can sign. This holds up in a dispute.</td></tr>
+      <tr><td>Key creation</td><td>Server generates it and sends the raw bytes to JavaScript once. The till imports it with <code>importKey('raw', …, false)</code>.</td><td>Till runs <code>crypto.subtle.generateKey({name:'ECDSA', namedCurve:'P-256'}, false, ['sign'])</code>. The private key never exists outside the browser's key store.</td></tr>
+      <tr><td>WebCrypto support</td><td>HMAC: universal.</td><td>ECDSA P-256: every Chromium, including all browser tills. Ed25519 only arrived in Chromium 137. Electron 44.9.3 has it, but older Chrome tills may not. <span class="pill p-info">verify on pilot hardware</span></td></tr>
+      <tr><td>Non-extractable key in IndexedDB</td><td>Yes. A <code>CryptoKey</code> can be stored in IndexedDB.</td><td>Yes, the same.</td></tr>
+      <tr><td>Java verification</td><td><code>javax.crypto.Mac("HmacSHA256")</code></td><td><code>Signature.getInstance("SHA256withECDSAinP1363Format")</code> (JDK 9+, Java 17 here). Plain <code>SHA256withECDSA</code> expects DER and rejects WebCrypto's raw 64-byte <code>r‖s</code> output, which is a common integration bug.</td></tr>
+      <tr><td>Enrollment</td><td>Secret is shown or sent once, so a leaked enrollment response is a permanent compromise.</td><td>The till sends its public key with a single-use enrollment code from an admin. A leaked response reveals nothing.</td></tr>
+      <tr><td>Revocation</td><td>Mark revoked. Old signatures still verify (the server keeps the secret).</td><td>Mark revoked. Keep the public key so old records stay verifiable.</td></tr>
+      <tr><td>Rotation</td><td>New secret sent to the till, while the server keeps the old one.</td><td>Till makes a new pair online and signs the rotation request with the old key. The old key becomes <code>RETIRED</code> (verify-only). Every record carries a <code>keyId</code>.</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="callout">
+    <p><b>What "non-extractable" protects.</b> It stops page script, including injected script, from exporting the key. It does not stop injected script from <em>using</em> the key while it runs. It also does not stop someone who copies the whole browser profile from disk. A valid signature proves "made by whoever holds this terminal's browser profile", not "made by an honest cashier". The lease limits and server-side reconciliation stay the real financial controls.</p>
+  </div>
+
+  <h3>Recommended design: option B, ECDSA P-256</h3>
+  <ol class="steps">
+    <li><b>Enrollment (online, admin-approved).</b> In POS Administration, an admin creates an offline enrollment for terminal <i>T</i>. The server returns a short-lived single-use code and stores only its SHA-256 (the PIN-device pattern is correct for this bearer code). The till generates a non-extractable P-256 pair and posts <code>{terminalId, spkiPublicKey, code}</code>. The server checks the code, binds the key to the terminal's primary key and branch, assigns a <code>keyId</code>, and returns <code>keyId</code> plus the tenant's lease-signing public key. The till stores the private <code>CryptoKey</code>, the <code>keyId</code> and the pinned server public key in IndexedDB.</li>
+    <li><b>Signing offline records.</b> Canonicalize each record with RFC 8785 (JSON Canonicalization Scheme), including <code>prevHash</code>, <code>keyId</code>, <code>leaseId</code> and <code>localSeq</code>. Hash it with SHA-256 and sign with <code>{name:'ECDSA', hash:'SHA-256'}</code>. Store the signature as base64url P1363. Shared test vectors must prove that JavaScript and Java canonicalize byte-identically.</li>
+    <li><b>Server signs leases.</b> Use a per-tenant P-256 lease-signing key held server-side, outside the tenant database (keystore file or secret store), so a leaked database cannot mint leases. Issue the lease as an ES256 compact JWS. <code>jjwt</code> 0.11.5 is already a dependency and supports ES256. Claims: <code>leaseId, terminalPk, keyId, branchId, sessionId, tradingDate, iat</code> (server clock), <code>notAfter</code> (server clock), <code>maxSales, maxCashMinor, seqStart, tenders, productClasses, catalogVersion, policyVersion</code>. The server also stores the lease row (<code>pos_offline_leases</code>), which is the authority.</li>
+    <li><b>Browser verifies leases.</b> ES256 JWS signatures are raw <code>r‖s</code>, so <code>crypto.subtle.verify({name:'ECDSA', hash:'SHA-256'}, pinnedServerKey, sig, signingInput)</code> works directly. This check only catches local corruption or casual edits. At ingest the server never trusts the till's copy: it loads the lease by id.</li>
+    <li><b>Revocation and rotation</b> work as in the table. Keys are never deleted. Records arriving under a revoked key are stored and routed by the rule in <a href="#v4">V4</a>, never rejected unseen.</li>
+  </ol>
+</section>
+
+<!-- ============================ V2 ============================ -->
+<section id="v2">
+  <h2><span class="num">V2</span>Outbox and printing</h2>
+  <p class="answer"><span class="pill p-bad">Defect</span> In the proposed state machine, <code>CAPTURED → PENDING</code> happens only after "receipt printed / drawer opened". A durable sale can therefore get stuck in all four cases asked about.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Case</th><th>Under the proposed machine</th></tr></thead>
+    <tbody>
+      <tr><td>Printer disconnected</td><td>The record stays <code>CAPTURED</code> and never syncs. The server never learns about cash it is owed.</td></tr>
+      <tr><td>Print agent unavailable</td><td>Same. USB, Bluetooth and Windows-queue printers all go through the agent.</td></tr>
+      <tr><td>Drawer fails</td><td>Offline, this happens on <em>every</em> sale (see below), so no offline sale would ever sync.</td></tr>
+      <tr><td>Crash after the IndexedDB commit, before printing</td><td>On restart nothing says whether the receipt was printed, and no transition moves the record on.</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="callout bad">
+    <p><span class="pill p-new">New</span> <b>BillBull cannot open a cash drawer offline today.</b> <code>openCashDrawer</code> only dispatches a <code>pos:open-cash-drawer</code> window event (<code>packages/shared/src/pages/Sales/POS/device/cashDrawer/useCashDrawer.js:28-33</code>). No listener for it exists in <code>packages/shared</code>, <code>apps/pos</code>, the Retail <code>src</code> or <code>tools/pos-desktop</code>. The print agent refuses <code>ESC p</code> drawer pulses (<code>tools/pos-print-agent/lib/escposPolicy.js:84</code>). The only drawer pulse BillBull can deliver goes through a server-relayed network printer print, which <code>PosPrinterService:164</code> checks against <code>PosDrawerKickAuthorizer</code>, and that requires an OPEN session verified on the server. None of this works offline. The drawer would have to open through the Windows printer driver's "open drawer on print" setting or the drawer's manual key. <span class="pill p-info">verify on pilot hardware</span></p>
+  </div>
+
+  <p>The online path already uses the right order. <code>useCheckout.js</code> shows success only after <code>posCheckout</code> resolves (<code>:317-331</code>), then prints and opens the drawer in a fire-and-forget block whose failures only warn (<code>:416-470</code>). The offline design should keep that order, with the IndexedDB commit taking the place of the server's confirmation.</p>
+
+  <h3>Corrected model: three independent tracks</h3>
+  <p>Sync state, print state and drawer state are separate fields on the stored record. Only the sync track decides whether the server learns about the sale.</p>
+  <div class="mermaid-wrap"><pre class="mermaid">
+stateDiagram-v2
+  direction LR
+  [*] --> COMMITTED: Settle, one IndexedDB tx (durability strict) writes record, localSeq, lease counters, chain head
+  COMMITTED --> SENDING: online, worker holds Web Lock
+  SENDING --> COMMITTED: transport error or retryable code (backoff)
+  SENDING --> RECEIVED: server stored the signed record (its own commit)
+  RECEIVED --> [*]: purge after retention (e.g. 30 days)
+  </pre></div>
+  <div class="two">
+    <div class="box"><h4>Print track (never gates sync)</h4>
+      <pre>NOT_REQUESTED → QUEUED → PRINTING → PRINTED
+                                ↘ FAILED → QUEUED (reprint)</pre>
+      <p class="small">The receipt is always rendered from the <em>stored</em> record, never from React state, so the paper matches what syncs. On boot, any record in <code>QUEUED</code> or <code>PRINTING</code> raises a "receipt not printed for OFF-…" prompt.</p></div>
+    <div class="box"><h4>Drawer track (log only)</h4>
+      <pre>REQUESTED → OPENED | FAILED | MANUAL_KEY</pre>
+      <p class="small">An audit log of drawer events for the session's cash review. It never changes the sale's state.</p></div>
+  </div>
+  <h4>Rules</h4>
+  <ul class="tight">
+    <li>A sale is complete when the IndexedDB transaction's <code>complete</code> event fires, not when <code>put()</code> returns. Open that transaction with <code>{durability: 'strict'}</code> explicitly. Chromium's default has changed between versions and should not be relied on. <span class="pill p-info">verify on pilot hardware</span></li>
+    <li>Success screen, print and drawer request all happen after that commit and only after it.</li>
+    <li>If the till crashes before the commit, no record and no receipt exist. The draft cart is restored, and the cashier sees that the sale was not recorded.</li>
+    <li>If it crashes after the commit, the record syncs normally. The print track shows the receipt as unprinted, and the cashier reprints from the stored record.</li>
+    <li>On the server, receiving a record (<code>RECEIVED</code>) is a separate step from posting it. Posting has its own state machine (<a href="#r5">R5</a>), so a record that needs review never keeps the till waiting.</li>
+  </ul>
+</section>
+
+<!-- ============================ V3 ============================ -->
+<section id="v3">
+  <h2><span class="num">V3</span>Checkout completion and recovery</h2>
+  <p class="answer"><span class="pill p-warn">Partial</span> The previous audit was right that checkout is not atomic. It underestimated how many partial states there are, and the proposed completion marker cannot detect several of them or tell which step failed.</p>
+
+  <h3>Transaction map of <code>PosCheckoutController.checkout</code> (lines 228-549)</h3>
+  <p>The controller is not <code>@Transactional</code>. Each row marked TX is its own commit.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>#</th><th>Step and location</th><th>Tx</th><th>Writes</th><th>If it fails</th><th>Retry with same key today</th></tr></thead>
+    <tbody>
+      <tr><td class="id">S0</td><td>Permission, then replay: <code>findByPosCheckoutKey</code> (:240-247)</td><td>read</td><td>none</td><td>n/a</td><td>Returns <em>any</em> invoice holding the key (DRAFT, partly paid or complete) with HTTP 200. The payload is not compared.</td></tr>
+      <tr><td class="id">S1</td><td>Continuation gate, closure gate, Business Day gate (:261-290)</td><td>read</td><td>audit only</td><td>409 / 423, nothing written</td><td>Same refusal</td></tr>
+      <tr><td class="id">S2</td><td>Allocation structure, price level, salesperson, customer, SO take-up (:295-331)</td><td>read</td><td>none</td><td>4xx, nothing written</td><td>Same refusal</td></tr>
+      <tr><td class="id">TX1</td><td><code>invoiceService.save</code> (:343, <code>SalesInvoiceService.java:339</code>)</td><td>TX</td><td>Invoice and items, the number from the tenant-wide counter locked <code>PESSIMISTIC_WRITE</code> (<code>SalesDocumentNumberingService.resolveNumberForCreate:111</code>), pricing record, key</td><td>Rolls back, nothing kept</td><td>Same as a new attempt</td></tr>
+      <tr><td class="id">S3</td><td><code>allocationResolver.resolve</code> (:352); PI-flow branch (:362-385); card-leg total (:391-400)</td><td>—</td><td>—</td><td><code>deleteQuietly</code>: a physical <code>deleteById</code> (<code>SalesInvoiceService.delete:1611-1626</code>). The invoice number is already used, so it leaves a gap. If the delete fails, the DRAFT stays.</td><td>If the delete failed: 200 with the DRAFT</td></tr>
+      <tr><td class="id">TX2</td><td><code>updateStatus(PAID|PARTIALLY_PAID|CONFIRMED)</code> (:413-418, <code>@Transactional(rollbackFor=Exception)</code> at :1636)</td><td>TX</td><td>Stock check, credit limit, pinned batches, FEFO, auto Delivery Note, stock movements, revenue/COGS (Fast Sale), invoice journal, history. Status set to <b>PAID with no payment recorded yet</b>.</td><td>Whole TX rolls back, then <code>deleteQuietly</code></td><td>If the delete failed: 200 with the DRAFT</td></tr>
+      <tr><td class="id">TX3a</td><td>Per VOUCHER leg: <code>CreditVoucherService.redeem</code> (:441-443, service :279)</td><td>TX</td><td>Voucher balance (row lock), voucher transaction, GL</td><td>Propagates, no compensation</td><td>200 with partial invoice. Redeem itself is idempotent per invoice and voucher (:301-314).</td></tr>
+      <tr><td class="id">TX3b…n</td><td>Per receipt leg: <code>recordPayment</code> (:452, service :1833) → <code>PaymentService.savePayment</code> (:240)</td><td>TX each</td><td>Payment row, payment number (locked counter), Receipt Voucher and GL, invoice amount paid and status</td><td><b>400 if the session is not OPEN</b> (<code>PosDrawerSessionValidator.requireOpenDrawerSession</code>, called at <code>PaymentService:272-276</code>). Earlier legs stay committed.</td><br><span class="pill p-bad">Corrected by M0</span> Not on the till path: the validator never runs here. See the <a href="#m0-correction">M0 correction</a>. The original text is kept below.<td>200 with partly paid or unpaid invoice</td></tr>
+      <tr><td class="id">TX4</td><td><code>sessionService.recordInvoiceOnSession</code> (:465-469, service :1791)</td><td>TX</td><td>Closure re-check (:1807), session totals (:1851)</td><td>409 <b>after the money is committed</b></td><td>200 with the posted invoice</td></tr>
+      <tr><td class="id">S4</td><td>SO conversion (:476-483)</td><td>TX</td><td>Sales Order status</td><td>Logged and swallowed</td><td>—</td></tr>
+      <tr><td class="id">S5</td><td><code>markSerialsSold</code> (:485, body :1348-1363)</td><td>repository-level</td><td>Serial SOLD</td><td><b>Not in try/catch.</b> The error returns to a till whose sale is fully posted, and the serial stays AVAILABLE.</td><td>200</td></tr>
+      <tr><td class="id">S6</td><td>ZATCA QR (:495-513), sale stats (:516-530), audit (async, <code>REQUIRES_NEW</code>), <code>terminalActivityService.recordActivity</code> (:537)</td><td>various</td><td>Cosmetic or audit data</td><td>QR and stats swallowed. Activity not guarded.</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Partial states that can be committed</h3>
+  <div class="tbl wide"><table>
+    <thead><tr><th>State</th><th>What is committed</th><th>How it shows today</th><th>Found by the proposed marker?</th></tr></thead>
+    <tbody>
+      <tr><td class="id">P1</td><td>DRAFT invoice holding the key: crash between TX1 and TX2, or <code>deleteQuietly</code> failed</td><td>Retry returns 200 with a DRAFT. Day Close refuses ("Draft invoices exist", <code>PosSessionService.closeDay</code> ~:2489-2496), but nothing explains why.</td><td>Yes, if rows can be told apart from legacy ones</td></tr>
+      <tr><td class="id">P2</td><td>Invoice, stock and GL posted, <b>no payment</b></td><td>Status PAID, balance equal to the total. Day Close treats the balance as <code>creditSales</code> and the identity balances, so it <b>looks exactly like a deliberate credit sale</b>. The customer's account shows a debt for cash already paid.</td><td>Says "not complete" but not which legs are missing, and the server never stored which legs were intended</td><br><span class="pill p-bad">Corrected by M0</span> Not reproduced for a CLOSED or SUSPENDED session, where the sale was fully paid. See the <a href="#m0-correction">M0 correction</a>. The original text is kept below.</tr>
+      <tr><td class="id">P3</td><td>Some legs recorded</td><td>PARTIALLY_PAID or PAID with a remaining balance</td><td>Same limits as P2</td></tr>
+      <tr><td class="id">P4</td><td>Voucher drawn down, its payment leg missing</td><td>Voucher balance reduced with no Payment row</td><td>Same limits as P2</td></tr>
+      <tr><td class="id">P5</td><td>All payments recorded, session totals not updated (closure race at :1807, or crash)</td><td>The till shows a <em>refusal</em> for a paid sale, so the cashier may re-ring or refund. Expected cash is still right because it comes from <code>sales_payments</code> (<code>PosCashReconciliationService:201</code>).</td><td>Yes, if the marker is written after TX4</td></tr>
+      <tr><td class="id">P6</td><td>Fully posted, serial not marked sold</td><td>Error response, and the serial can be sold again</td><td>Only if the marker is written after S5</td></tr>
+      <tr><td class="id">P7</td><td>Still running: a retry arrives while the first request is between TX1 and the end</td><td>200 with a half-built invoice</td><td><b>No.</b> A missing marker looks the same whether the request is still running or died.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Two more defects affect recovery. <span class="pill p-new">New</span> Two simultaneous requests with the same key both miss the lookup. The loser violates <code>uq_si_pos_checkout_key</code> (<code>V13__pos_safety_fixes.sql:21</code>), and <code>GlobalExceptionHandler.handleDataIntegrity</code> (:171-197) answers 409 "the name or code is already in use", which confuses the cashier. Also, <code>checkoutKey</code> is optional: <code>buildInvoice</code> stamps it only when present (:940-942), so a keyless checkout can never be matched later.</p>
+
+  <h3>Can retrying payment allocations duplicate financial entries?</h3>
+  <p class="answer"><span class="pill p-bad">Yes</span> Every call to <code>recordPayment</code> creates a new Payment row, payment number, Receipt Voucher and GL posting (<code>SalesInvoiceService.createSalesPaymentForInvoice</code> → <code>PaymentService.savePayment:240-345</code>). No key per leg exists. <code>splitGroupId</code> is random on each attempt (<code>PosCheckoutController:429</code>) and null for single-leg sales. Matching by amount and mode is ambiguous, for example two Visa legs of 50.00. Only the VOUCHER leg is idempotent. <b>Automatic resume of payments is therefore not safe today, and Phase 0 must not attempt it.</b></p>
+
+  <h3>What Phase 0 must implement</h3>
+  <ol class="steps">
+    <li><b>Pre-write session check.</b> Before TX1, refuse with 409 <code>SESSION_NOT_OPEN</code> or <code>SESSION_MISMATCH</code> unless the session exists, is <code>OPEN</code>, belongs to the request's terminal, and belongs to the branch the server resolves for this user. This removes the most likely cause of P2 and P3. Today a checkout against a CLOSED or SUSPENDED session passes every gate: <code>BusinessDayContinuationGate.evaluate</code> ignores CLOSED, and <code>PosSessionClosureWorkflowGate.isInClosureWorkflow</code> is false for CLOSED.</li>
+    <li><b>Checkout attempt journal</b> (<code>pos_checkout_attempts</code>, migration V138). Written in its own short transaction before TX1: key (unique), request hash (canonical body without supervisor credentials), the <em>resolved payment plan</em> with each leg's type, amount, reference and <code>allocationKey = key#index</code>, session, terminal, branch, user, <code>started_at</code>, status <code>IN_PROGRESS</code>. Each step records its own completion flag in a <code>REQUIRES_NEW</code> transaction: <code>INVOICE_SAVED(id, number)</code>, <code>POSTED</code>, <code>LEG_n_RECORDED(paymentId)</code>, <code>SESSION_RECORDED</code>, <code>SERIALS_MARKED</code>, then <code>COMPLETED</code> last. Cosmetic steps (QR, stats) are logged but do not decide completeness.</li>
+    <li><b>Key per payment leg</b>: a nullable <code>sales_payments.pos_allocation_key</code> column with a partial unique index, written for every new POS leg. This does not enable automatic resume. It makes a duplicate leg impossible, both now and when a supervisor records a missing leg.</li>
+    <li><b>Replay outcomes</b> instead of blanket 200: see the matrix in <a href="#r6">R6</a>. A different request hash under the same key is never answered with the earlier sale.</li>
+    <li><b>Telling running from dead.</b> A sweep job, modelled on <code>PosPrintJobTimeoutSweepJob</code>, marks <code>IN_PROGRESS</code> attempts older than a configurable timeout as <code>INCOMPLETE</code>. Until then, a replay gets <code>CHECKOUT_IN_PROGRESS</code> with <code>Retry-After</code>.</li>
+    <li><b>Failures after money is committed.</b> Guard <code>markSerialsSold</code> and <code>recordActivity</code>, and catch the TX4 closure-race 409. Each marks the attempt <code>INCOMPLETE</code> with the failed step. The till gets a structured "sale recorded, needs a supervisor check, do not ring again" answer, never a plain refusal.</li>
+    <li><b>Investigation and manual resolution</b> (back office, read-only first). For each incomplete attempt, show: intended plan against recorded legs, the invoice and its status history, Delivery Note and stock movements, journal entries, receipt vouchers, voucher transactions, session totals against <code>sales_payments</code>, and the POS audit trail. Resolution actions use only existing audited operations:
+      <ul class="tight">
+        <li><i>Record missing leg</i>: a supervisor confirms the money was actually collected (counted cash or card slip). The system calls <code>recordPayment</code> for exactly that leg, and the allocation key blocks any second attempt.</li>
+        <li><i>Confirm as credit</i>: only when the customer really owes the amount.</li>
+        <li><i>Mark serials sold</i>.</li>
+        <li><i>Cancel sale</i>: through the existing cancellation path (<code>updateStatus(CANCELLED)</code> cancels the DN and reverses the journal). Only when no payment is recorded and the goods are confirmed returned, with a reason and a second approver.</li>
+      </ul>
+      No step deletes or reverses anything automatically.</li>
+    <li><b>Legacy suspects report</b> (read-only, run per tenant before rollout). POS_SALE invoices with status PAID and a balance above 0.005. POS_SALE DRAFTs holding a checkout key that are older than one hour. Invoices whose amount paid differs from their recorded payments. Pre-Phase-0 rows have no stored intended plan, so each one is triaged by hand.</li>
+  </ol>
+  <div class="callout"><p><b>On the single-transaction alternative.</b> The previous audit is right that wrapping everything in one transaction would hold the tenant-wide invoice-number lock (<code>findLockedByDocumentType</code>, <code>PESSIMISTIC_WRITE</code>) for the whole checkout and serialize every till on the tenant. The journal approach is the right choice for Phase 0. A later option is to take the number in its own short transaction, which gives no worse gaps than <code>deleteQuietly</code> already causes, and then run the rest atomically. That needs its own design review.</p></div>
+</section>
+
+<!-- ============================ V4 ============================ -->
+<section id="v4">
+  <h2><span class="num">V4</span>Lease, clock and revocation</h2>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Control</th><th>Till can enforce offline?</th><th>Can a modified client bypass it?</th><th>Server enforcement at ingest</th></tr></thead>
+    <tbody>
+      <tr><td>Lease expiry</td><td>Only against the device clock</td><td>Yes. Turning the clock back defeats it.</td><td>Partly. The server knows <code>iat</code>, <code>notAfter</code> and arrival time on its own clock, but not when the sale happened. Arrival after <code>notAfter</code> is normal after an outage, so it cannot be a rejection reason on its own.</td></tr>
+      <tr><td>Maximum sale count</td><td>Yes, with a counter in the same IndexedDB transaction</td><td>Yes, by editing the profile</td><td><b>Yes.</b> <code>localSeq</code> must fall in <code>[seqStart, seqStart+maxSales)</code>. Sequence numbers are signed, so gaps and overruns are visible.</td></tr>
+      <tr><td>Maximum cash</td><td>Yes, same as count</td><td>Yes</td><td><b>Yes.</b> The server sums cash per lease, and anything over the cap goes to review.</td></tr>
+      <tr><td>Branch, terminal, session binding</td><td>Copied from the lease</td><td>Request fields, yes</td><td><b>Yes.</b> The binding comes from the stored lease and the key's terminal, never from <code>X-Branch-Id</code> or the request body.</td></tr>
+      <tr><td>Terminal revocation</td><td>No. It reaches the till only at next contact.</td><td>n/a</td><td>Partly. See the sequence analysis below.</td></tr>
+      <tr><td>Business date</td><td>The window end can be enforced only against the device clock</td><td>The window end, yes</td><td><b>Yes for the date itself.</b> The invoice date comes from the session's <code>tradingDate</code> (<code>PosCheckoutController.posBusinessDate:212-226</code>), never from the client.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Clocks and restarts</h3>
+  <ul class="tight">
+    <li><b>Trustworthy</b>: server timestamps (<code>iat</code>, <code>notAfter</code>, arrival), the server-stored lease, record signatures (they show who holds the key), and per-key sequence order and gaps.</li>
+    <li><b>Not trustworthy</b>: <code>capturedAt</code>, the device clock, and any order inferred from device time across restarts.</li>
+    <li><code>performance.now()</code> only runs forward within one page lifetime. A restart resets it. After a restart the till knows only a stored floor, <code>lastTrustedTime = max(server time at last sync + elapsed, last capturedAt)</code>. It should refuse to sell when the wall clock is below that floor (minus a small tolerance), or beyond <code>notAfter</code>. This catches honest mistakes and a clock that jumps forward. It cannot catch a deliberate rollback that stays above the floor.</li>
+    <li>Conclusion: expiry and the business-day end are <em>honest-mode</em> controls. The sale count and cash caps are the controls the server can actually check, so keep leases short and the caps tight.</li>
+  </ul>
+
+  <h3>"Records created after <code>revokedAt</code> can be identified by sequence"</h3>
+  <p class="answer"><span class="pill p-bad">Not sufficient</span> A sequence number gives order within one key. It says nothing about time.</p>
+  <p>At the moment of revocation, the server knows only the highest sequence it has seen: the highest one ingested, or the last one a heartbeat reported. Call it <code>seqAtRevocation</code>. Records at or below it were certainly made before revocation. Records above it may have been rung legitimately before revocation by a till that was offline, or after it. They cannot be told apart, because the only timestamp they carry comes from the till's own clock. Only a server-issued token for each sale could prove timing, and that cannot exist offline.</p>
+  <h4>Rule for previously issued leases after revocation</h4>
+  <ol class="steps">
+    <li>Revocation sets the key to <code>REVOKED</code>. Every <code>ACTIVE</code> lease for that key becomes <code>REVOKED</code> in the same transaction, with <code>seqAtRevocation</code> recorded.</li>
+    <li>Records at or below <code>seqAtRevocation</code> post normally.</li>
+    <li>Records above it but inside the revoked lease's sequence window and caps are stored and handled per decision <a href="#r4">D6</a>: post with a flag (routine decommission) or hold for review (suspected theft or compromise).</li>
+    <li>Records outside every lease window are held. They never post automatically.</li>
+    <li>On its next contact, the till learns of the revocation, deletes its lease and any offline PIN verifier, and keeps sending its outbox.</li>
+    <li>Exposure is limited to the unused caps of the leases still outstanding. Allow at most one active lease per terminal, and issue the next only when the previous one has been closed (<a href="#v8">V8</a>).</li>
+  </ol>
+</section>
+
+<!-- ============================ V5 ============================ -->
+<section id="v5">
+  <h2><span class="num">V5</span>Inventory safety</h2>
+  <h3>How stock is posted today</h3>
+  <ul class="tight">
+    <li><b>The negative-stock override is global only.</b> In <code>DeliveryNoteService.markDelivered</code>, <code>allowNegative = !stockCheckRequired</code> (:510), and the setting is read straight from <code>salesSettingsService.getSettings()</code> at :390, :480 and :622. <code>SalesInvoiceService.enforceStockCheck</code> refuses a shortfall when the setting is on (~:1928, with the comment "No product-level negative-stock override; governed globally"). No per-call parameter exists.</li>
+    <li><b>Batch products can never go negative.</b> When <code>product.isBatch()</code> (<code>isBatchControlled</code>, :1519), the deduction goes through <code>postAllocatedBatchDeliveryDeduction</code> (:653-685). That requires batch allocations that <em>exactly</em> match the quantity, whatever the global setting. In Fast Sale, <code>ensureDirectInvoiceBatchSelections</code> (<code>SalesInvoiceService:2145-2181</code>) auto-reserves FEFO through <code>BatchSelectionService.autoReserveFefoForSalesInvoiceLine</code> (:183) and throws "Insufficient Batch Stock" on a shortfall.</li>
+    <li><b>FEFO eligibility uses the server's date at the moment of posting</b> (<code>LocalDate.now()</code> at <code>BatchSelectionService:703</code>, <code>:748</code>, <code>:895</code>), not the date of the sale.</li>
+    <li><b>Non-batch goods</b> are deducted across the warehouse's active bins in order, with any shortfall placed on the line's bin when the override applies (<code>postBatchAwareDeliveryDeduction:591-651</code>).</li>
+    <li><b>Serials</b> are marked sold after the payments, outside any transaction shared with the sale (<code>PosCheckoutController.markSerialsSold:1348</code>).</li>
+    <li><b>Warehouse</b>: <code>save()</code> fills in the branch warehouse from the branch resolved for the current user (<code>resolveBranchForSave:2658-2672</code>). A replay must set that branch from the lease, not from a request header.</li>
+  </ul>
+
+  <h3>Can auto-FEFO at sync guarantee the physically sold batch?</h3>
+  <p class="answer"><span class="pill p-bad">No</span> FEFO at sync records the batch the server would pick at sync time. That matches the batch that left the shelf only if the cashier always picked in expiry order and no other till or document used that batch in the meantime. Neither can be known. Two further problems:</p>
+  <ul class="tight">
+    <li>A batch that expired between the sale and the sync is not eligible at sync. FEFO then records a different batch, or the sale fails.</li>
+    <li>When two tills oversell a batch product, the second replay fails outright: no override path exists for batch products. That contradicts the previous audit's "Batch / expiry products, auto FEFO: default ALLOW … flags but does not block" and its Phase 3 scope.</li>
+  </ul>
+
+  <h3>Product classes for the first pilot</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Class</th><th>Pilot</th><th>Reason</th></tr></thead>
+    <tbody>
+      <tr><td>Non-batch, non-serial stock goods at a fixed price</td><td><span class="pill p-ok">Allow</span></td><td>Can be posted with a narrow override (below) and flagged.</td></tr>
+      <tr><td>Service products</td><td><span class="pill p-ok">Allow</span></td><td>No stock is involved (<code>enforceStockCheck</code> skips <code>isService()</code>).</td></tr>
+      <tr><td>Batch or expiry products (<code>isBatch</code>), auto-FEFO or pinned</td><td><span class="pill p-bad">Block</span></td><td>No override path; the batch cannot be proven; expiry is judged at sync.</td></tr>
+      <tr><td>Serial products, and units with per-unit <code>-N</code> batch numbers</td><td><span class="pill p-bad">Block</span></td><td>Unique units whose state lives on the server.</td></tr>
+      <tr><td>Lines below minimum price, negotiated prices, supervisor overrides</td><td><span class="pill p-bad">Block</span></td><td>The PIN and minimum-price checks run on the server.</td></tr>
+      <tr><td>Branches in Workflow Driven sales mode</td><td><span class="pill p-dec">Decision</span></td><td>The auto Delivery Note may not be delivered at checkout (<code>autoGenerateDeliveryNote</code> returns whether it delivered), so stock is deducted later in the back office. Run the pilot on Fast Sale branches only.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>A narrow negative-stock override without changing the tenant policy</h3>
+  <ol class="steps">
+    <li>Add an explicit <code>StockPostingPolicy</code> value (<code>GLOBAL</code> or <code>OFFLINE_REPLAY_NON_BATCH</code>) and pass it as a <em>parameter</em> down <code>updateStatus → doUpdateStatus → enforceStockCheck / autoGenerateDeliveryNote → markDelivered → postBatchAwareDeliveryDeduction</code>. The three direct reads of <code>getSettings()</code> must take this value. Do not use a ThreadLocal: audit logging is <code>@Async</code>, and a value leaking into the next request on a pooled thread would be a financial bug.</li>
+    <li><code>OFFLINE_REPLAY_NON_BATCH</code> skips the shortfall refusal only for non-batch, non-serial lines and stamps <code>StockMovement.negativeOverride = true</code>. Reports already surface that flag (<code>InventoryReportDataService:593-641</code>, <code>BinStockService:241</code>).</li>
+    <li>Only <code>PosOfflineSaleIngestService</code> may select it, after the record's signature and lease checks pass. It is never read from a request body. Online checkout always passes <code>GLOBAL</code>, so its behaviour stays byte-identical.</li>
+    <li>Batch or serial lines in an offline record are refused when the record is validated, before any write, and the record goes to review.</li>
+    <li>The tenant's <code>SalesSettings.stockCheckRequired</code> is never modified. A test proves that an online sale made at the same moment is still refused.</li>
+  </ol>
+</section>
+
+<!-- ============================ V6 ============================ -->
+<section id="v6">
+  <h2><span class="num">V6</span>Sync failure and sequence recovery</h2>
+  <p><span class="pill p-bad">Defect</span> The previous rule "a gap stops acceptance past it" would hold back every later valid sale for as long as one record is missing, possibly forever. <span class="pill p-bad">Defect</span> "4xx final, 5xx retried" cannot work: a 401 (sign in again), 403 (wrong branch), 409 (closure in progress) or 423 (Business Day closed) can each become postable later, while a 500 caused by a bad payload never will.</p>
+
+  <h3>Two stages on the server</h3>
+  <ol class="steps">
+    <li><b>Receive.</b> For each record: verify the signature and the <code>keyId</code>, insert into <code>pos_offline_sales</code> in its own transaction (unique <code>offline_sale_id</code>, unique <code>(key_id, local_seq)</code>), store the raw payload and its hash, and answer <code>RECEIVED</code>. From here on the server owns the record, and the till's job is done.</li>
+    <li><b>Post.</b> A worker posts each terminal's records in sequence order through the shared checkout service with the replay context. Posting results are visible to the till by polling, but the till never retries them.</li>
+  </ol>
+
+  <h3>The questions answered</h3>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Question</th><th>Answer</th></tr></thead>
+    <tbody>
+      <tr><td>One sequence is rejected</td><td>Its posting failure sends it to review with a reason code. Sales do not depend on each other financially, so later records keep posting. The exceptions are a bad signature or a chain conflict, which suggest tampering: the server still <em>receives and stores</em> later records but stops <em>auto-posting</em> for that key until an admin releases it.</td></tr>
+      <tr><td>Can later valid records sync?</td><td>Yes. Each record is signed on its own, so record n+1 verifies even when n is missing. It is posted with a <code>GAP_BEFORE</code> flag.</td></tr>
+      <tr><td>How is a lost record found?</td><td>A gap in <code>local_seq</code> for a key, or record n+1's <code>prevHash</code> not matching the stored hash of n. Further evidence: heartbeat <code>{highWaterSeq, chainHead}</code>, and the signed lease-close summary <code>{lastSeq, count, cashTotal, chainHead}</code>.</td></tr>
+      <tr><td>Admin resolution of a missing sequence</td><td><code>GAP_SUSPECTED</code> → (the till is asked; it may still be sending) → <code>GAP_CONFIRMED</code> when the till reports it no longer has n, or its lease-close summary skips it. The admin then either (a) recovers the record from a backup copy and ingests it normally, or (b) declares it lost. In that case an incident is opened with the paper-receipt evidence, the sale is entered through the normal back-office invoice path linked to the incident, or booked as a cash variance on the session. Nothing is ever invented. Every step is audited.</td></tr>
+      <tr><td>Duplicate after a partial commit</td><td>Posting uses <code>offlineSaleId</code> as the checkout key, and the Phase 0 attempt journal records how far it got. An <code>INCOMPLETE</code> attempt is never posted again automatically; it goes to review with its step evidence. A resend after a lost <code>RECEIVED</code> answer gets <code>DUPLICATE_SAME</code>, which the till treats as done.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Reason codes</h3>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Code</th><th>Meaning</th><th>Till action</th></tr></thead>
+    <tbody>
+      <tr><td colspan="3"><b>Transport (whole batch)</b></td></tr>
+      <tr><td>network error, timeout, 502, 503, 504, 429</td><td>Unknown whether it arrived</td><td>Retry the same batch with backoff (idempotent)</td></tr>
+      <tr><td><code>AUTH_REQUIRED</code> (401)</td><td>JWT expired or missing</td><td>Hold until someone signs in, then retry</td></tr>
+      <tr><td><code>BRANCH_CONTEXT</code> (403)</td><td>Header branch differs from the record's branch</td><td>Fix the context, then retry</td></tr>
+      <tr><td><code>CLIENT_UPGRADE_REQUIRED</code></td><td>Unsupported record or schema version</td><td>Hold until the app updates, then retry</td></tr>
+      <tr><td colspan="3"><b>Receive stage (per record)</b></td></tr>
+      <tr><td><code>RECEIVED</code></td><td>Stored on the server</td><td>Done</td></tr>
+      <tr><td><code>DUPLICATE_SAME</code></td><td>Already stored with the same hash</td><td>Done</td></tr>
+      <tr><td><code>DUPLICATE_CONFLICT</code></td><td>Same id or sequence, different hash</td><td>Stop; review. Never retry.</td></tr>
+      <tr><td><code>SIGNATURE_INVALID</code>, <code>KEY_UNKNOWN</code></td><td>Cannot be attributed</td><td>Server quarantines it; review</td></tr>
+      <tr><td><code>KEY_REVOKED</code>, <code>LEASE_REVOKED</code></td><td>Stored, routed per <a href="#r4">D6</a></td><td>Done for the till</td></tr>
+      <tr><td><code>SEQ_OUTSIDE_LEASE</code>, <code>CAP_EXCEEDED</code></td><td>Stored, held for review</td><td>Done for the till</td></tr>
+      <tr><td colspan="3"><b>Post stage (server only; the till just shows it)</b></td></tr>
+      <tr><td><code>POSTED</code>, <code>POSTED_FLAGGED</code> (<code>NEGATIVE_STOCK</code>, <code>PRICE_DRIFT</code>, <code>TAX_DRIFT</code>, <code>GAP_BEFORE</code>)</td><td>Invoice created</td><td>Offer reprint or email of the tax invoice</td></tr>
+      <tr><td><code>POSTING_TRANSIENT</code> (deadlock, lock timeout)</td><td>Infrastructure</td><td>The server retries it automatically</td></tr>
+      <tr><td><code>BLOCKED_SESSION_NOT_OPEN</code>, <code>BLOCKED_DAY_CLOSED</code>, <code>BLOCKED_PERIOD_LOCKED</code>, <code>BLOCKED_PRODUCT</code> (inactive, batch, serial)</td><td>Needs a business resolution</td><td>Review queue (<a href="#v8">V8</a>)</td></tr>
+      <tr><td><code>CHECKOUT_INCOMPLETE</code></td><td>Partly posted</td><td>Review with the step evidence</td></tr>
+    </tbody>
+  </table></div>
+  <p class="small"><span class="pill p-new">New</span> Sync needs a user JWT today. The token lives in <code>sessionStorage</code> and lasts 24 hours, so a till that restarted offline has none. The authority for a record comes from its signature, so ingest should accept records carried by <em>any</em> signed-in user with till access in that branch. Records must also be accepted from terminals the 02:00 <code>PosTerminalAutoArchiveJob</code> has archived after a long outage.</p>
+</section>
+
+<!-- ============================ V7 ============================ -->
+<section id="v7">
+  <h2><span class="num">V7</span>Storage and recovery</h2>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Question</th><th>Finding</th></tr></thead>
+    <tbody>
+      <tr><td>IndexedDB in Chrome</td><td>Stored per origin in the browser profile. By default it is "best effort": when the disk runs low, Chrome can evict a whole origin (least recently used first). <span class="pill p-info">verify on pilot hardware</span></td></tr>
+      <tr><td><code>persist()</code> denied</td><td>Chrome decides silently, without a prompt, from site engagement, PWA install, bookmarks and notification permission. If it is denied, data is kept but can be evicted under disk pressure. Offline cash must then stay disabled (<a href="#r4">D10</a>).</td></tr>
+      <tr><td>Electron 44.9.3</td><td>The profile is in <code>%APPDATA%\BillBull POS</code>. It survives uninstall (<code>deleteAppDataOnUninstall: false</code>) and belongs to one Windows user (<code>perMachine: false</code>). Whether Chromium sends the persistent-storage request through Electron's permission handler is unverified. If it does, the current allow-list (<code>navigationPolicy.js:52</code>: clipboard and fullscreen only) would deny it. <span class="pill p-info">verify on pilot hardware</span></td></tr>
+      <tr><td>Site data cleared</td><td>Clearing "cookies and other site data" deletes IndexedDB, the service worker and <code>localStorage</code>: the outbox, the signing key, the terminal id and fingerprint, the PIN-device token and the agent pairing token. The till comes back as a new terminal. The server can detect the loss only through accounting: a lease that never closes and has records missing. <span class="pill p-new">New</span> In Electron, changing the server address changes the origin, so the outbox is left behind invisibly. The <code>/pos/</code> page has no preload bridge, so the shell cannot see how many records are pending before allowing the change.</td></tr>
+      <tr><td>Sync after the app closes</td><td>Not reliable. Background Sync runs only while the browser process is running. Electron runs nothing after it quits, and Periodic Background Sync needs an installed PWA with high engagement. <b>The open till page is the only sync engine.</b> The service worker only caches the app shell.</td></tr>
+      <tr><td>Print agent as backup outbox</td><td>Feasible: it is local, origin-allow-listed and paired, and writes under <code>%APPDATA%\BillBull\PrintAgent</code>, so clearing browser data does not touch it. Costs: a new storage surface on an agent designed to print only (<code>PRINT_AGENT_SECURITY.md</code>); customer data at rest that would need encrypting; a release dependency on agent 0.7.0, which is not yet released. Because the pairing token lives in <code>localStorage</code>, reading the backup after a data clear needs a fresh pairing (the file stays safe meanwhile). Records are signed, so the agent cannot forge them. It could still lose them, as any local software can. For an Electron-only pilot, a file copy written by Electron's main process through a narrow preload is simpler (<a href="#r4">D11</a>).</td></tr>
+    </tbody>
+  </table></div>
+  <h3>On every launch</h3>
+  <ol class="steps">
+    <li>Open IndexedDB and check <code>storage.persisted()</code> and <code>storage.estimate()</code>.</li>
+    <li>Verify the hash chain from the last acknowledged record to the head, and check the counters against the lease.</li>
+    <li>Show the pending count and any unprinted receipts. Restore the draft cart. Resolve any pending online checkout attempt (Phase 0).</li>
+    <li>Online: sign in, sync the outbox, then close the old lease before a new one can be issued or the session closed.</li>
+    <li>Offline: keep selling only if the lease is valid, the clock is above its stored floor, and storage readiness still holds.</li>
+  </ol>
+  <h3>Minimum conditions before offline cash is enabled</h3>
+  <ol class="steps">
+    <li>Secure context. IndexedDB opens, and a write-then-read probe with <code>durability: 'strict'</code> succeeds.</li>
+    <li>Persistent storage granted, or an equivalent verified on Electron.</li>
+    <li>Free quota at or above an agreed minimum (for example 200 MB), and usage below 80%.</li>
+    <li>Signing key present and enrolled. Server lease key pinned. Lease valid and its signature verified.</li>
+    <li>Outbox integrity check passed, and no unresolved chain conflict.</li>
+    <li>Device clock within the agreed tolerance of server time at the last sync.</li>
+    <li>Catalog snapshot and tax configuration younger than the agreed age.</li>
+    <li>Pilot: Electron shell, one Windows user per till, server-address change blocked while records are pending, and the backup copy active if <a href="#r4">D11</a> chooses one.</li>
+  </ol>
+</section>
+
+<!-- ============================ V8 ============================ -->
+<section id="v8">
+  <h2><span class="num">V8</span>Session, Day Close and financial reconciliation</h2>
+  <h3>The gates as they exist in code</h3>
+  <ul class="tight">
+    <li><b>Day Close</b> (<code>PosSessionService.closeDay</code>, from :2435) refuses OPEN or SUSPENDED sessions on that date (~:2452-2461), POS DRAFT invoices (~:2489-2496) and pending or failed payments (~:2498-2505). It then checks the sales identity, in which an unpaid balance counts as <code>creditSales</code>.</li>
+    <li><b>Session close</b> (<code>closeSession</code>, :877) accepts OPEN or SUSPENDED sessions, locks the row and needs admin approval. There is no special "force close" endpoint: a supervisor or admin can close any session in scope from any device. Expected cash comes from <code>sales_payments</code> by collection session, so cash from offline sales not yet synced shows up as an <em>overage</em> at the count.</li>
+    <li><span class="pill p-new">New</span> <b>The idle and hard-limit scheduler</b> (<code>PosSessionScheduler.suspendIdleSessions:34-63</code>, every minute) suspends OPEN sessions when <code>sessionIdleTimeoutMinutes</code> (default 0, meaning off) or <code>sessionMaxDurationHours</code> is set. An offline till cannot report activity, so its session can be suspended while it keeps selling.</li>
+    <li><b>Closed business day</b>: <code>SalesInvoiceService.save</code> refuses invoices for a business day that has been closed (:374-380). Nothing is written.</li>
+    <li><b>Period lock</b>: database triggers on <code>journal_entries</code> and <code>ledger_entries</code> (<code>PeriodLockTriggerInstaller</code>) make TX2 roll back.</li>
+  </ul>
+
+  <h3>The four scenarios</h3>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Scenario</th><th>What happens today</th><th>With Phase 0, plus the Phase 2 gates</th></tr></thead>
+    <tbody>
+      <tr><td>Session closed from the back office while the till is offline</td><td>Close succeeds; the drawer count shows an overage. Later replays hit P2: invoice, stock and GL posted, payment refused, and it looks like a credit sale.</td><td>Pre-write check gives <code>BLOCKED_SESSION_NOT_OPEN</code> with nothing written. Session close should refuse while the session has an <code>ACTIVE</code> lease, unless a supervisor explicitly closes it with the lease outstanding (reason recorded, lease marked <code>OUTSTANDING_AT_CLOSE</code>).</td></tr>
+      <tr><td>Day Close attempted while an issued lease may hold unsent sales</td><td>Blocked only while the session is OPEN or SUSPENDED. Once someone closes the session, Day Close goes ahead.</td><td>Day Close also refuses while any lease for that branch and date is not <code>CLOSED</code>. A lease closes only when the till sends a signed summary and the server holds every record up to <code>lastSeq</code> with a matching chain. If the till never returns, a supervisor may <i>abandon</i> the lease with a reason, and later arrivals go to review.</td></tr>
+      <tr><td>Offline sale arrives after the session closed</td><td>Before Day Close: P2. After Day Close: <code>save</code> refuses cleanly.</td><td><code>BLOCKED_SESSION_NOT_OPEN</code> or <code>BLOCKED_DAY_CLOSED</code> goes to review. The resolution is a business decision (<a href="#r4">D4</a>).</td></tr>
+      <tr><td>Accounting period locked before sync</td><td>TX2 rolls back, the DRAFT is deleted (a number gap), and the cashier sees an error.</td><td><code>BLOCKED_PERIOD_LOCKED</code> goes to review. Finance either unlocks the period temporarily and posts, or posts into the open period with a reference (<a href="#r4">D5</a>).</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout"><p><b>A pending count reported by the till is not proof.</b> The till may be offline, may have lost its data, or may be modified. The server-side source of truth is the lease register. Each lease holds a range of sequence numbers and a cash cap, and closes only on a signed summary that matches what the server received. Heartbeat counts are a helpful early warning, nothing more.</p></div>
+  <h3>Safe administrative resolution path</h3>
+  <ol class="steps">
+    <li>One "Offline records" review queue per branch, showing the record, its signature and lease status, the posting attempt evidence, and the affected session and day.</li>
+    <li>Allowed actions, each needing a supervisor role, a reason and an audit entry:
+      <ul class="tight">
+        <li><i>Retry posting</i>, after the blocking condition is fixed.</li>
+        <li><i>Post into a reconciliation session</i> that a supervisor opened to receive this cash, referencing the original session and its close variance (per <a href="#r4">D4</a>).</li>
+        <li><i>Record as lost or cash variance</i>.</li>
+        <li><i>Mark as duplicate</i>.</li>
+      </ul></li>
+    <li>Nothing is deleted or reversed automatically. Every posting uses the existing audited operations.</li>
+  </ol>
+</section>
+
+<hr>
+
+<!-- ============================ R1 ============================ -->
+<section id="r1">
+  <h2><span class="num">R1</span>Confirmed issues in the previous audit</h2>
+  <div class="tbl wide"><table>
+    <thead><tr><th>ID</th><th>Previous audit said</th><th>Finding</th><th>See</th></tr></thead>
+    <tbody>
+      <tr><td class="id">C1</td><td>Server issues a 256-bit key, stores its hash, and the till signs with HMAC-SHA256</td><td><span class="pill p-bad">Defect</span> Cannot be verified from a hash. Replace it with a browser-generated ECDSA P-256 key pair.</td><td><a href="#v1">V1</a></td></tr>
+      <tr><td class="id">C2</td><td><code>CAPTURED → PENDING</code> after receipt printed or drawer opened</td><td><span class="pill p-bad">Defect</span> Sales get stuck, and offline the drawer can never open. Sync must be separate from printing.</td><td><a href="#v2">V2</a></td></tr>
+      <tr><td class="id">C3</td><td>Records after <code>revokedAt</code> identified by sequence</td><td><span class="pill p-bad">Defect</span> A sequence gives order, not time. Use the <code>seqAtRevocation</code> rule.</td><td><a href="#v4">V4</a></td></tr>
+      <tr><td class="id">C4</td><td>A gap stops acceptance past it</td><td><span class="pill p-bad">Defect</span> One lost record would stall every later sale. Receive everything, flag gaps, quarantine only on tampering.</td><td><a href="#v6">V6</a></td></tr>
+      <tr><td class="id">C5</td><td>4xx is final per record; 5xx and network errors are retried</td><td><span class="pill p-bad">Defect</span> Needs a reason-code catalogue.</td><td><a href="#v6">V6</a></td></tr>
+      <tr><td class="id">C6</td><td>Auto-FEFO batch goods allowed by default; replay never refuses for stock</td><td><span class="pill p-bad">Defect</span> Batch products have no override path; FEFO cannot prove the batch; expiry is checked against the server's date.</td><td><a href="#v5">V5</a></td></tr>
+      <tr><td class="id">C7</td><td><code>pos_checkout_completed_at</code> with replay returning 409 for invoices "created after the migration"</td><td><span class="pill p-warn">Partial</span> Cannot tell running from dead, cannot say which step failed, has no stored intended plan, compares no payload, and the "after the migration" test needs a per-row marker (migration times differ per tenant).</td><td><a href="#v3">V3</a></td></tr>
+      <tr><td class="id">C8</td><td>Session close and Day Close gated on the heartbeat's <code>pendingCount</code></td><td><span class="pill p-bad">Defect</span> A value reported by the till is not proof. Use the server-side lease register.</td><td><a href="#v8">V8</a></td></tr>
+      <tr><td class="id">C9</td><td>"Drawer pulses" as a background step; hardware runs with agent printer and drawer offline</td><td><span class="pill p-bad">Defect</span> BillBull cannot open a drawer offline. The event has no listener; the agent refuses <code>ESC p</code>; the server path needs an OPEN session.</td><td><a href="#v2">V2</a></td></tr>
+      <tr><td class="id">C10</td><td>"Each record is its own server transaction (after Phase 0)"</td><td><span class="pill p-bad">Defect</span> Phase 0 as proposed does not make checkout atomic. One record still spans 4 to 7 or more commits.</td><td><a href="#v3">V3</a></td></tr>
+      <tr><td class="id">C11</td><td>Phase 0 risk: low</td><td><span class="pill p-warn">Partial</span> Medium. It changes the financial path for both <code>/sales/pos</code> and <code>/pos</code>, because the endpoint is shared.</td><td><a href="#r6">R6</a></td></tr>
+      <tr><td class="id">C12</td><td>Cached offline PIN verifier: PBKDF2 with a server salt</td><td><span class="pill p-warn">Partial</span> A 4 to 6 digit PIN stored in IndexedDB can be brute-forced in seconds by anyone with access to the profile. It works as a screen lock, not as authentication. Each sale must carry the identity of the session owner, not a verified cashier.</td><td><a href="#r4">D12</a></td></tr>
+      <tr><td class="id">C13</td><td>Dedupe on <code>UNIQUE(terminal_id, local_seq)</code></td><td><span class="pill p-warn">Partial</span> Should be <code>(key_id, local_seq)</code>. A re-enrolled key starts a new sequence, and terminal ids are claimed by the client.</td><td><a href="#v6">V6</a></td></tr>
+      <tr><td class="id">C14</td><td>V136 and V137 untracked; next number unclear</td><td><span class="pill p-ok">Resolved</span> Both are committed in <code>be9be921</code>. The next free number is <b>V138</b>.</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============================ R2 ============================ -->
+<section id="r2">
+  <h2><span class="num">R2</span>New issues discovered</h2>
+  <div class="tbl wide"><table>
+    <thead><tr><th>ID</th><th>Severity</th><th>Issue and evidence</th><th>Affects today?</th></tr></thead>
+    <tbody>
+      <tr><td class="id">N1</td><td><span class="pill p-bad">Critical</span></td><td>A checkout on a session that is not OPEN posts the invoice, stock and GL, then fails at payment. No session-status check runs before TX1 (<code>PosCheckoutController:261-265</code> checks only continuation and the closure workflow). <code>PaymentService.savePayment:272-276</code> then rejects the payment. A retry returns 200.</td><td>Yes, online<br><span class="pill p-bad">Corrected by M0</span> M0 found the opposite: the payment is accepted and attributed to the non-OPEN session.</td></tr>
+      <tr><td class="id">N2</td><td><span class="pill p-bad">High</span></td><td>A posted but unpaid POS invoice reconciles at Day Close as a credit sale (<code>closeDay</code> identity), so the defect is invisible to the cashier and to finance. The customer is shown owing money they already paid in cash.</td><td>Yes<br><span class="pill p-bad">Corrected by M0</span> Does not arise for this scenario: the balance was 0. Day Close behaviour unverified.</td></tr>
+      <tr><td class="id">N3</td><td><span class="pill p-bad">High</span></td><td>The server never stores the intended payment plan, so an incomplete checkout cannot be reconciled from server data.</td><td>Yes</td></tr>
+      <tr><td class="id">N4</td><td><span class="pill p-bad">High</span></td><td>No idempotency key per payment leg. Any automatic resume would duplicate Payment, Receipt Voucher and GL entries.</td><td>Latent</td></tr>
+      <tr><td class="id">N5</td><td><span class="pill p-bad">High</span></td><td>Replay by key ignores the payload and returns DRAFT, partial or still-running invoices with 200 (<code>:240-247</code>).</td><td>Yes</td></tr>
+      <tr><td class="id">N6</td><td><span class="pill p-warn">Medium</span></td><td>Two simultaneous requests with the same key: the loser gets the generic 409 "name or code already in use" (<code>GlobalExceptionHandler:171-197</code>).</td><td>Yes</td></tr>
+      <tr><td class="id">N7</td><td><span class="pill p-warn">Medium</span></td><td>The closure race in <code>recordInvoiceOnSession:1807</code> returns 409 after the payments are committed. The till shows a refusal for a paid sale.</td><td>Yes</td></tr>
+      <tr><td class="id">N8</td><td><span class="pill p-warn">Medium</span></td><td><code>markSerialsSold</code> and <code>recordActivity</code> are not guarded. An exception reports a complete sale as failed, and the serial stays sellable.</td><td>Yes</td></tr>
+      <tr><td class="id">N9</td><td><span class="pill p-warn">Medium</span></td><td>When the idle or hard limit is set, the scheduler suspends sessions of offline tills, and every replay then hits N1.</td><td>Phase 2</td></tr>
+      <tr><td class="id">N10</td><td><span class="pill p-warn">Medium</span></td><td>A credit-only checkout on a CLOSED session adds to the closed session's totals. <code>recordInvoiceOnSession</code> refuses only sessions in the close workflow.</td><td>Yes</td></tr>
+      <tr><td class="id">N11</td><td><span class="pill p-warn">Medium</span></td><td>FEFO eligibility uses the server's <code>LocalDate.now()</code> at posting time.</td><td>Phase 2</td></tr>
+      <tr><td class="id">N12</td><td><span class="pill p-warn">Medium</span></td><td>The negative override is a global setting read deep inside <code>DeliveryNoteService</code>. No narrow path exists; one must be added.</td><td>Phase 2</td></tr>
+      <tr><td class="id">N13</td><td><span class="pill p-bad">High (offline)</span></td><td>The cash drawer cannot be opened offline by BillBull (<a href="#v2">V2</a>).</td><td>Phase 2</td></tr>
+      <tr><td class="id">N14</td><td><span class="pill p-warn">Medium</span></td><td><code>deleteQuietly</code> physically deletes a DRAFT whose number has already been used, leaving gaps in the tax invoice series after every refusal past TX1. It goes against the soft-delete convention, and may itself fail and leave a DRAFT behind.</td><td>Yes</td></tr>
+      <tr><td class="id">N15</td><td><span class="pill p-warn">Medium</span></td><td>The session, terminal and branch the client sends are not checked against each other before writing.</td><td>Yes</td></tr>
+      <tr><td class="id">N16</td><td><span class="pill p-warn">Medium</span></td><td>Electron: changing the server address strands the outbox; each Windows user has its own profile; <code>persist()</code> routing is untested; the shell cannot see pending counts.</td><td>Phase 2</td></tr>
+      <tr><td class="id">N17</td><td><span class="pill p-warn">Medium</span></td><td><code>PosTerminalAutoArchiveJob</code> may archive a terminal that has been offline a long time. Ingest must still accept records from archived or revoked terminals.</td><td>Phase 2</td></tr>
+      <tr><td class="id">N18</td><td><span class="pill p-warn">Medium</span></td><td>Sync depends on a user JWT that a till restarted offline does not have.</td><td>Phase 2</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============================ R3 ============================ -->
+<section id="r3">
+  <h2><span class="num">R3</span>Risks already addressed</h2>
+  <div class="tbl wide"><table>
+    <thead><tr><th>ID</th><th>Control in code</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td class="id">A1</td><td>The business date comes from the session, never from the client</td><td><code>PosCheckoutController.posBusinessDate:212-226</code></td></tr>
+      <tr><td class="id">A2</td><td>No invoice can be written into a closed business day</td><td><code>SalesInvoiceService.save:374-380</code></td></tr>
+      <tr><td class="id">A3</td><td>Day Close blocks OPEN or SUSPENDED sessions, DRAFT invoices and pending or failed payments</td><td><code>PosSessionService.closeDay</code> ~:2452-2505</td></tr>
+      <tr><td class="id">A4</td><td>Status, stock, Delivery Note and invoice GL commit together</td><td><code>updateStatus</code>, <code>@Transactional(rollbackFor=Exception)</code> :1636</td></tr>
+      <tr><td class="id">A5</td><td>Voucher redemption is locked and idempotent per invoice and voucher</td><td><code>CreditVoucherService.redeem:279-345</code></td></tr>
+      <tr><td class="id">A6</td><td>Expected cash has one source: <code>sales_payments</code> by collection session</td><td><code>PosCashReconciliationService:201</code></td></tr>
+      <tr><td class="id">A7</td><td>A payment's drawer session is validated, never guessed, and cannot be changed afterwards</td><td><code>PosDrawerSessionValidator</code>; <code>PaymentService:256-277</code></td></tr>
+      <tr><td class="id">A8</td><td>The period lock is enforced in the database and cannot be bypassed by replay</td><td><code>PeriodLockTriggerInstaller</code></td></tr>
+      <tr><td class="id">A9</td><td>Validation runs before anything is written (allocations, price level, salesperson, customer, Sales Order)</td><td><code>PosCheckoutController:295-331</code></td></tr>
+      <tr><td class="id">A10</td><td>Online printing runs after commit and is fire-and-forget</td><td><code>useCheckout.js:317-470</code></td></tr>
+      <tr><td class="id">A11</td><td>One invoice per checkout key</td><td><code>uq_si_pos_checkout_key</code> (V13)</td></tr>
+      <tr><td class="id">A12</td><td>No duplicate invoice numbers (locked counter)</td><td><code>SalesDocumentNumberingService:111-127</code></td></tr>
+      <tr><td class="id">A13</td><td>The <code>negativeOverride</code> flag on stock movements, and reports that show it</td><td><code>StockMovement:70</code>, <code>InventoryReportDataService:593-641</code></td></tr>
+      <tr><td class="id">A14</td><td>Print agent: origin allow-list, pairing, refusal of drawer commands</td><td><code>tools/pos-print-agent/lib/escposPolicy.js</code></td></tr>
+      <tr><td class="id">A15</td><td>Electron keeps its profile across uninstall</td><td><code>tools/pos-desktop/package.json</code> (<code>deleteAppDataOnUninstall:false</code>)</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============================ R4 ============================ -->
+<section id="r4">
+  <h2><span class="num">R4</span>Decisions that need business approval</h2>
+  <div class="tbl wide"><table>
+    <thead><tr><th>ID</th><th>Decision</th><th>Recommendation</th><th>Needed for</th></tr></thead>
+    <tbody>
+      <tr><td class="id">D1</td><td>Offline invoice numbering: a provisional receipt now and the tax invoice number at sync, or leased number blocks per terminal</td><td>Provisional for the pilot, subject to a written UAE VAT (FTA) opinion on the provisional receipt</td><td>Phase 2</td></tr>
+      <tr><td class="id">D2</td><td>Refuse checkouts on non-OPEN sessions before writing (today they half-post)</td><td>Approve. It turns silent damage into a clear refusal.</td><td>Phase 0</td></tr>
+      <tr><td class="id">D3</td><td>Day Close blocked by unresolved incomplete checkouts (and later by active leases)</td><td>Approve, with a supervisor override that records a reason</td><td>Phase 0 / 2</td></tr>
+      <tr><td class="id">D4</td><td>How a late offline sale is posted after session close or Day Close: a reconciliation session, or the current day with the original trading date referenced</td><td>A reconciliation session for session-closed cases. Finance and tax decide the date of supply after Day Close.</td><td>Phase 2</td></tr>
+      <tr><td class="id">D5</td><td>Offline records that arrive into a locked period</td><td>Finance chooses: unlock temporarily, or post into the next period</td><td>Phase 2</td></tr>
+      <tr><td class="id">D6</td><td>Records above <code>seqAtRevocation</code></td><td>Hold by default; post with a flag when the reason is decommission</td><td>Phase 2</td></tr>
+      <tr><td class="id">D7</td><td>Lease limits per branch (duration, sale count, cash)</td><td>Short: for example 4 hours, 50 sales, a cash cap below one normal cash drop</td><td>Phase 2</td></tr>
+      <tr><td class="id">D8</td><td>Pilot product classes and sales mode</td><td>Non-batch and non-serial goods plus services, on Fast Sale branches only</td><td>Phase 2</td></tr>
+      <tr><td class="id">D9</td><td>Card on an external terminal while offline</td><td>Not in the pilot</td><td>Phase 3</td></tr>
+      <tr><td class="id">D10</td><td>Require persistent storage; Electron-only pilot</td><td>Yes to both</td><td>Phase 2</td></tr>
+      <tr><td class="id">D11</td><td>Backup copy of the outbox: print agent, Electron file copy, or none</td><td>Electron file copy for the pilot</td><td>Phase 2</td></tr>
+      <tr><td class="id">D12</td><td>Offline unlock rule and how much an offline PIN is worth</td><td>Session owner only; the PIN is a screen lock and does not authenticate</td><td>Phase 2</td></tr>
+      <tr><td class="id">D13</td><td>Who owns the negative-stock review list, and the time limit for resolving it</td><td>Branch manager, within 2 business days</td><td>Phase 2</td></tr>
+      <tr><td class="id">D14</td><td>Who may resolve incomplete checkouts, and by which actions</td><td>Supervisor records missing legs; a second approver for cancellation</td><td>Phase 0</td></tr>
+      <tr><td class="id">D15</td><td>Offline drawer approach</td><td>Driver-level "open on print", or the manual key, with a drawer log</td><td>Phase 2</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============================ R5 ============================ -->
+<section id="r5">
+  <h2><span class="num">R5</span>Corrected architecture and state machine</h2>
+  <div class="two">
+    <div class="box"><h4>Till (Electron, pilot)</h4>
+      <ul class="tight">
+        <li>IndexedDB stores: <code>outbox</code>, <code>printJobs</code>, <code>drawerLog</code>, <code>lease</code>, <code>keys</code>, <code>meta</code> (lastSeq, chain head, clock floor), <code>pendingCheckout</code> (Phase 0), <code>drafts</code>, catalog snapshot.</li>
+        <li>Non-extractable ECDSA P-256 signing key, plus the pinned server lease key.</li>
+        <li>An offline policy module: lease valid, clock sane, storage ready, tender and product class allowed.</li>
+        <li>A sync worker under a Web Lock, active only while the page is open.</li>
+      </ul></div>
+    <div class="box"><h4>Server</h4>
+      <ul class="tight">
+        <li><code>pos_terminal_offline_keys</code>: public keys, <code>keyId</code>, status ACTIVE, RETIRED or REVOKED.</li>
+        <li><code>pos_offline_leases</code>: the authority. Sequence window, caps, status ACTIVE, CLOSED, REVOKED, ABANDONED or OUTSTANDING_AT_CLOSE.</li>
+        <li><code>pos_offline_sales</code>: raw signed records, receive state and post state.</li>
+        <li><code>pos_checkout_attempts</code> (Phase 0): the step journal for every checkout, online or replayed.</li>
+        <li><code>PosCheckoutService</code>, extracted, with a <code>CheckoutContext</code> (online, or offline replay with the stock policy and gate rules).</li>
+        <li>Review queues: incomplete checkouts (Phase 0) and offline records (Phase 2).</li>
+      </ul></div>
+  </div>
+  <h3>Server-side record lifecycle</h3>
+  <div class="mermaid-wrap"><pre class="mermaid">
+stateDiagram-v2
+  [*] --> RECEIVED: signature and key verified, stored (own tx)
+  [*] --> QUARANTINED: bad signature, unknown key, conflicting duplicate
+  RECEIVED --> HELD: outside lease, cap exceeded, revoked after seqAtRevocation (D6)
+  RECEIVED --> POSTING: worker, per-key sequence order
+  POSTING --> POSTED: attempt journal COMPLETED
+  POSTING --> POSTED_FLAGGED: negative stock, price or tax drift, gap before
+  POSTING --> RECEIVED: POSTING_TRANSIENT (server retries)
+  POSTING --> BLOCKED: session not open, day closed, period locked, product not allowed
+  POSTING --> INCOMPLETE: attempt journal shows a partial commit
+  HELD --> POSTING: supervisor releases
+  BLOCKED --> POSTING: condition fixed, retry
+  BLOCKED --> RESOLVED: reconciliation session, lost or variance
+  INCOMPLETE --> RESOLVED: missing leg recorded or cancelled via existing paths
+  QUARANTINED --> RESOLVED: admin decision
+  POSTED --> [*]
+  POSTED_FLAGGED --> [*]
+  RESOLVED --> [*]
+  </pre></div>
+  <p class="small">The till's lifecycle (COMMITTED → SENDING → RECEIVED) and its separate print and drawer tracks are in <a href="#v2">V2</a>. The online checkout attempt lifecycle is IN_PROGRESS → COMPLETED, INCOMPLETE or REFUSED_ROLLED_BACK, and INCOMPLETE then moves to RESOLVED_*.</p>
+</section>
+
+<!-- ============================ R6 ============================ -->
+<section id="r6">
+  <h2><span class="num">R6</span>Exact Phase 0 acceptance criteria</h2>
+  <p>Phase 0 changes no offline behaviour. Its server changes apply to <code>/sales/pos</code> and <code>/pos</code> alike, because they share the endpoint. Each criterion is behind a property flag, off by default, so it can be rolled back.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>ID</th><th>Criterion</th><th>Verified by</th></tr></thead>
+    <tbody>
+      <tr><td class="id">AC-01</td><td>Migration <code>V138</code> (or the next free number at merge) creates <code>pos_checkout_attempts</code> (unique <code>checkout_key</code>) and adds a nullable <code>sales_payments.pos_allocation_key</code> with a partial unique index. It is additive and idempotent, guarded with <code>to_regclass</code> and column checks, and reuses no retired number.</td><td>Migration run twice on a clone of testdb, on a disposable 8081 backend</td></tr>
+      <tr><td class="id">AC-02</td><td>With <code>pos.checkout.preflight-session.enabled</code>: a checkout naming a session that is missing, not <code>OPEN</code>, owned by another terminal, or of another branch gets 409 <code>SESSION_NOT_OPEN</code> or <code>SESSION_MISMATCH</code>. Zero rows are written to invoices, items, Delivery Notes, stock movements, journal entries, payments, receipt vouchers or session totals.</td><td>A database-backed <code>*Test</code> counting rows before and after, plus a negative control with the flag off that reproduces today's partial post</td></tr>
+      <tr><td class="id">AC-03</td><td>Every keyed checkout writes an attempt row (its own transaction) before TX1, holding the request hash and the resolved plan with allocation keys. Each step flag is written in a <code>REQUIRES_NEW</code> transaction. <code>COMPLETED</code> is written only after <code>SESSION_RECORDED</code> and <code>SERIALS_MARKED</code>.</td><td>Unit tests with each step failing in turn</td></tr>
+      <tr><td class="id">AC-04</td><td>Replay outcomes:
+        <ul class="tight">
+          <li>COMPLETED with the same hash: 200, the same invoice.</li>
+          <li>A different hash: 409 <code>CHECKOUT_KEY_REUSED</code>.</li>
+          <li>IN_PROGRESS: 409 <code>CHECKOUT_IN_PROGRESS</code> with <code>Retry-After</code>.</li>
+          <li>INCOMPLETE: 409 <code>CHECKOUT_INCOMPLETE</code> with invoice id, number, completed and missing steps.</li>
+          <li>REFUSED_ROLLED_BACK: may run again.</li>
+          <li>A legacy invoice with no attempt row: 200, unchanged.</li>
+        </ul>
+        Never 200 for a DRAFT or a partial invoice.</td><td>A table-driven controller test covering every case</td></tr>
+      <tr><td class="id">AC-05</td><td>A violation of <code>uq_si_pos_checkout_key</code> during save is answered through AC-04, never by the generic data-integrity 409.</td><td>A two-thread database-backed <code>*Test</code></td></tr>
+      <tr><td class="id">AC-06</td><td>A sweep job marks <code>IN_PROGRESS</code> attempts older than <code>pos.checkout.attempt-timeout-seconds</code> (default 120) as <code>INCOMPLETE</code> and writes a <code>PosAuditLog</code> entry. It never deletes, cancels or reverses anything.</td><td>Unit test with a fixed clock</td></tr>
+      <tr><td class="id">AC-07</td><td>A failure after money is committed (TX4 closure race, serial marking, activity) gives 409 <code>CHECKOUT_INCOMPLETE</code> with <code>doNotRering: true</code>. The till shows "Sale recorded, supervisor check needed" and blocks a new Settle of that cart.</td><td>Backend fault-injection tests and a frontend characterization test</td></tr>
+      <tr><td class="id">AC-08</td><td>Every new POS payment leg stores <code>pos_allocation_key = checkoutKey#index</code>. Writing a second Payment with the same key fails.</td><td>Database-backed <code>*Test</code></td></tr>
+      <tr><td class="id">AC-09</td><td>Back office: an incomplete-checkout list per branch with the evidence view from <a href="#v3">V3</a>, plus the actions <i>record missing leg</i> (supervisor, uses the allocation key), <i>confirm as credit</i>, <i>mark serials sold</i> and <i>mark resolved with note</i>, and a link to the existing cancellation flow. Every action is audited. Nothing runs automatically.</td><td>Integration test per action, plus a manual QA script</td></tr>
+      <tr><td class="id">AC-10</td><td>With D3 approved: Day Close refuses while the date's sessions have attempts that are <code>IN_PROGRESS</code> or <code>INCOMPLETE</code>, and lists them.</td><td>Unit test next to the existing <code>closeDay</code> blocker tests</td></tr>
+      <tr><td class="id">AC-11</td><td>A read-only legacy-suspects report (<a href="#v3">V3</a>, item 8) is run on every tenant before the rollout is enabled, and its findings are triaged and recorded.</td><td>A report artifact for each tenant</td></tr>
+      <tr><td class="id">AC-12</td><td>Frontend: before <code>posCheckout</code>, <code>{key, fingerprint, payload without supervisor credentials, sessionId, terminalId, startedAt}</code> is written to IndexedDB with <code>durability:'strict'</code>. It is cleared only on a definite outcome. On boot, a pending attempt blocks Settle and calls <code>GET /api/pos/checkout/attempts/{key}</code>. The draft cart is persisted per terminal and session, and restored after a refresh.</td><td>Vitest with <code>fake-indexeddb</code>: refresh before the POST, during it, and after a lost response</td></tr>
+      <tr><td class="id">AC-13</td><td><code>axiosConfig</code> tags network errors with <code>err.isNetwork</code>, and a read-only connectivity badge appears on the standalone rail only.</td><td>Unit test</td></tr>
+      <tr><td class="id">AC-14</td><td>The successful online path behaves exactly as before: existing checkout unit tests and POS characterization tests pass. Only tests that asserted the old partial behaviour change, and each such change is reviewed. The <code>tools/pos-parity</code> run shows no difference.</td><td>CI, plus a parity run on a disposable clone</td></tr>
+      <tr><td class="id">AC-15</td><td>Overhead: the attempt-journal writes add no more than an agreed p95 (for example 30 ms) to checkout on a clone of testdb.</td><td>Measured benchmark</td></tr>
+      <tr><td class="id">AC-16</td><td>Rollback: turning off <code>pos.checkout.attempt-journal.enabled</code> and <code>pos.checkout.preflight-session.enabled</code> restores today's behaviour. The new table and column are unused when the flags are off.</td><td>A test with the flags off</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============================ R7 ============================ -->
+<section id="r7">
+  <h2><span class="num">R7</span>Conditions before Phase 2 can begin</h2>
+  <ol class="steps">
+    <li>Phase 0 has run in production on the pilot tenant long enough to measure the incomplete-checkout rate, and every <code>INCOMPLETE</code> has been explained.</li>
+    <li>Decisions D1, D4 to D8, D10 to D12 and D15 are signed off. D1 includes a written VAT opinion.</li>
+    <li><code>PosCheckoutService</code> is extracted with an explicit <code>CheckoutContext</code>, and the parity harness proves online behaviour unchanged.</li>
+    <li>The <code>StockPostingPolicy</code> parameter is in place. Batch and serial lines are refused before writing in replay. Tests prove the global setting is untouched.</li>
+    <li>The crypto design from <a href="#v1">V1</a> is accepted, with shared JavaScript and Java test vectors for RFC 8785 canonicalization and P1363 signatures.</li>
+    <li>The lease register, with session-close and Day Close gates, is designed on the server side, and the <code>seqAtRevocation</code> rule is in the design.</li>
+    <li>Two-stage ingestion (receive, then post) and the reason-code catalogue from <a href="#v6">V6</a> are agreed.</li>
+    <li>The idle-suspension scheduler and <code>PosTerminalAutoArchiveJob</code> skip sessions and terminals that hold an active lease.</li>
+    <li>The offline drawer approach is tested on the pilot hardware. Electron storage behaviour is measured: <code>persist()</code>, eviction, server-address change, Windows user switch.</li>
+    <li>The rule for carrying sync on any authorized user's JWT is agreed (<a href="#v6">N18</a>).</li>
+    <li>The review queue's operating runbook exists, with named owners and time limits (D13, D14).</li>
+    <li>Automatic completion of a partially posted record is either excluded from Phase 2, or designed on top of the allocation keys and tested separately.</li>
+  </ol>
+</section>
+
+<!-- ============================ R8 ============================ -->
+<section id="r8">
+  <h2><span class="num">R8</span>Tests for every critical failure scenario</h2>
+  <p class="small">Database-backed tests must be named <code>*Test</code>, because no failsafe plugin runs <code>*IT</code> classes. They run against a clone of testdb on a disposable 8081 backend, never against testdb itself.</p>
+  <h3>Phase 0</h3>
+  <div class="tbl wide"><table>
+    <thead><tr><th>ID</th><th>Scenario</th><th>Level</th><th>Expected</th></tr></thead>
+    <tbody>
+      <tr><td class="id">T01</td><td>Crash between TX1 and TX2 (injected)</td><td>DB</td><td>Swept to INCOMPLETE; replay gives 409 INCOMPLETE; Day Close blocked</td></tr>
+      <tr><td class="id">T02</td><td>Stock shortfall in TX2</td><td>DB</td><td>TX2 rolled back; DRAFT removed; attempt REFUSED_ROLLED_BACK; number gap recorded in the attempt</td></tr>
+      <tr><td class="id">T03</td><td>Leg 2 of 3 fails</td><td>DB</td><td>INCOMPLETE with leg flags; replay writes no payment; resolution records exactly leg 2; a second resolution is refused by the allocation key</td></tr>
+      <tr><td class="id">T04</td><td>Session closed before checkout</td><td>DB</td><td>Pre-write 409 with zero rows written. The negative control (flag off) reproduces P2.</td></tr>
+      <tr><td class="id">T05</td><td>Session SUSPENDED by the scheduler</td><td>DB</td><td>Same as T04</td></tr>
+      <tr><td class="id">T06</td><td>X-Report generated between the pre-write check and TX4</td><td>DB</td><td>409 INCOMPLETE(SESSION) with <code>doNotRering</code>; expected cash correct</td></tr>
+      <tr><td class="id">T07</td><td>Two threads, same key</td><td>DB</td><td>One invoice; the other request gets IN_PROGRESS or a 200 replay, never the generic 409</td></tr>
+      <tr><td class="id">T08</td><td>Same key, different payload</td><td>Unit</td><td>409 KEY_REUSED</td></tr>
+      <tr><td class="id">T09</td><td>Replay while the first request is still running</td><td>DB</td><td>409 IN_PROGRESS</td></tr>
+      <tr><td class="id">T10</td><td>Serial marking fails</td><td>Unit</td><td>INCOMPLETE(SERIALS), <code>doNotRering</code>, serial listed for resolution</td></tr>
+      <tr><td class="id">T11</td><td>Voucher leg payment fails after redeem</td><td>DB</td><td>Resolution calls redeem again, which is idempotent; the voucher is drawn once</td></tr>
+      <tr><td class="id">T12</td><td>Browser refresh after the POST is sent, before the answer</td><td>Frontend</td><td>Pending attempt found; status query; correct screen; one invoice</td></tr>
+      <tr><td class="id">T13</td><td>Browser crash before the POST</td><td>Frontend</td><td>Status NOT_FOUND; resend with the same key is safe</td></tr>
+      <tr><td class="id">T14</td><td>Replay of a legacy invoice (no attempt row)</td><td>Unit</td><td>200, as before</td></tr>
+      <tr><td class="id">T15</td><td>Period locked before TX2</td><td>DB</td><td>Clean refusal; no stock or GL rows</td></tr>
+      <tr><td class="id">T16</td><td>Day Close with INCOMPLETE attempts</td><td>Unit</td><td>Refused, with the list</td></tr>
+      <tr><td class="id">T17</td><td>Success-path parity</td><td>Parity harness</td><td>Identical requests, database effects, GL and session totals</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Phase 2</h3>
+  <div class="tbl wide"><table>
+    <thead><tr><th>ID</th><th>Scenario</th><th>Expected</th></tr></thead>
+    <tbody>
+      <tr><td class="id">T20</td><td>Printer unplugged, agent stopped, drawer fails, crash after commit and before print</td><td>Record syncs; print track FAILED or QUEUED; the reprint matches the stored record</td></tr>
+      <tr><td class="id">T21</td><td>Tab killed between <code>put</code> and transaction complete</td><td>No record, no sequence gap, no orphan counter</td></tr>
+      <tr><td class="id">T22</td><td>Two tabs</td><td>One sync worker (Web Lock); unique sequence numbers</td></tr>
+      <tr><td class="id">T23</td><td>Clock moved back and forward; restart with the clock below the floor</td><td>Selling refused as designed</td></tr>
+      <tr><td class="id">T24</td><td>Lease expires, sale count reached, cash cap reached</td><td>Selling stops on the till; the server flags any overrun</td></tr>
+      <tr><td class="id">T25</td><td>Terminal revoked while offline</td><td>Records at or below <code>seqAtRevocation</code> post; those above follow D6</td></tr>
+      <tr><td class="id">T26</td><td>Tampered signature, edited payload, deleted record, reordered or replayed record, another terminal's key</td><td>The matching reason code; nothing posted wrongly</td></tr>
+      <tr><td class="id">T27</td><td>Cross-language crypto test vectors</td><td>JavaScript and Java agree byte for byte</td></tr>
+      <tr><td class="id">T28</td><td>A record lost from the outbox</td><td>Gap flagged; later records post; the missing-record workflow completes</td></tr>
+      <tr><td class="id">T29</td><td>Duplicate submission after a partial commit</td><td>INCOMPLETE review; no second posting</td></tr>
+      <tr><td class="id">T30</td><td>Session closed from the back office while the till is offline</td><td>The lease gate refuses or records OUTSTANDING_AT_CLOSE; late records go to review</td></tr>
+      <tr><td class="id">T31</td><td>Day Close with an active lease</td><td>Refused; the abandon-lease flow works</td></tr>
+      <tr><td class="id">T32</td><td>Period locked before sync</td><td>BLOCKED_PERIOD_LOCKED</td></tr>
+      <tr><td class="id">T33</td><td>Non-batch shortfall with <code>stockCheckRequired=true</code></td><td>The replay posts with <code>negativeOverride</code>; an online sale at the same moment is still refused; the setting is unchanged</td></tr>
+      <tr><td class="id">T34</td><td>Batch or serial line in an offline record</td><td>Refused before any write; record sent to review</td></tr>
+      <tr><td class="id">T35</td><td><code>persist()</code> denied, low quota, site data cleared</td><td>Offline mode disabled; the server detects the lost lease</td></tr>
+      <tr><td class="id">T36</td><td>Electron restart, server-address change, Windows user switch</td><td>Outbox survives; address change blocked while records are pending</td></tr>
+      <tr><td class="id">T37</td><td>Sync attempted with an expired JWT</td><td>Waits for a sign-in; nothing lost; any authorized user can carry the records</td></tr>
+      <tr><td class="id">T38</td><td>Idle suspension and auto-archive with an active lease</td><td>Both skipped</td></tr>
+      <tr><td class="id">T39</td><td>Parity: N sales offline against the same sales online</td><td>Identical effects apart from the documented flags</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="rec">
+  <div class="final">
+    <div class="eyebrow">Recommendation</div>
+    <div class="v">APPROVE PHASE 0 WITH CHANGES</div>
+    <p>Approve Phase 0 with acceptance criteria AC-01 to AC-16 in place of the completion-timestamp design. The most valuable change, the pre-write session check, fixes a defect that can damage financial records on online tills today, before any offline work begins. Do not approve Phase 2 until the conditions in <a href="#r7">R7</a> are met and decisions D1, D4 to D8, D10 to D12 and D15 are signed.</p>
+  </div>
+</section>
+</main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true,theme:window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"default"});</script>
+</body>
+</html>

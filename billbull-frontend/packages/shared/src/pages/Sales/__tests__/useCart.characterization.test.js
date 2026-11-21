@@ -264,7 +264,9 @@ describe('cartItemsToPayload', () => {
 
     const kept = setup({ ...EXCLUSIVE_5, voidMode: 'VOID' }).result.current.cartItemsToPayload(items);
     expect(kept).toHaveLength(2);
-    expect(kept[1].voided).toBe(true);
+    // Scan order: the cart's newest-first [a, b] goes out as [b, a].
+    expect(kept.map(r => r.itemCode)).toEqual(['B', 'A']);
+    expect(kept[0].voided).toBe(true);
 
     const dropped = setup({ ...EXCLUSIVE_5, voidMode: 'DELETE' }).result.current.cartItemsToPayload(items);
     expect(dropped).toHaveLength(1);

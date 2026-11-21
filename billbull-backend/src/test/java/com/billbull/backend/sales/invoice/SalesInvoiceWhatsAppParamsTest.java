@@ -27,6 +27,15 @@ class SalesInvoiceWhatsAppParamsTest {
         assertEquals("01 Oct 2026", SalesInvoiceController.invoiceTemplateParams(inv, "AED").get(3));
     }
 
+    @Test
+    void posReceiptParamsAreNameNumberTotalSaleDateEvenWithADueDate() {
+        SalesInvoice inv = invoice();
+        inv.setDueDate(LocalDate.of(2026, 10, 31));
+
+        assertEquals(List.of("Test Customer", "INV-2026-0042", "AED 1,050.00", "01 Oct 2026"),
+                SalesInvoiceController.receiptTemplateParams(inv, "AED"));
+    }
+
     private static SalesInvoice invoice() {
         SalesInvoice inv = new SalesInvoice();
         inv.setCustomerName("Test Customer");

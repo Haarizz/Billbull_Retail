@@ -54,7 +54,9 @@ public class PosSessionTransferService {
     @Transactional
     public PosSession transfer(Long sessionId, String destinationTerminalId,
                                 Long initiatedByUserId, boolean supervisorAuthorized) {
-        PosSession session = sessionRepository.findById(sessionId)
+        // Locked (Phase 0 / M2): the caller, PosSessionService#transferSession, already holds this
+        // lock; taking it here too keeps the hand-off safe for any other caller.
+        PosSession session = sessionRepository.findByIdForUpdate(sessionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "POS session not found: " + sessionId));
 

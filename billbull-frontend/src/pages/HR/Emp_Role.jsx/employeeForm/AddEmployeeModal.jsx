@@ -580,6 +580,7 @@ const AddEmployeeModal = ({
             selectedBranch={selectedBranch}
             warehouses={warehouses}
             formatBranchLabel={formatBranchLabel}
+            employeeId={employeeToEdit?.id ?? null}
           />
         );
       case 'pay':

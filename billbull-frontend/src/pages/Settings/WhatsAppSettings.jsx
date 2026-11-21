@@ -47,6 +47,9 @@ const EMPTY_FORM = {
     quotationTemplateName: 'quotation_document',
     salesOrderTemplateName: 'sales_order_document',
     salesInvoiceTemplateName: 'sales_invoice_document',
+    // No suggested default: a till must keep sending receipt links until someone enters a name
+    // that is really approved in Meta.
+    posReceiptTemplateName: '',
     templateLanguage: 'en',
 };
 
@@ -55,6 +58,7 @@ const TEMPLATE_FIELDS = [
     { key: 'quotationTemplateName', label: 'Quotation Template', placeholder: 'quotation_document', hint: 'Header: Document. {{1}} customer, {{2}} quotation no, {{3}} amount, {{4}} valid until.' },
     { key: 'salesOrderTemplateName', label: 'Sales Order Template', placeholder: 'sales_order_document', hint: 'Header: Document. {{1}} customer, {{2}} order no, {{3}} amount, {{4}} expected delivery.' },
     { key: 'salesInvoiceTemplateName', label: 'Sales Invoice Template', placeholder: 'sales_invoice_document', hint: 'Header: Document. {{1}} customer, {{2}} invoice no, {{3}} amount, {{4}} due date.' },
+    { key: 'posReceiptTemplateName', label: 'POS Receipt Template', placeholder: 'pos_receipt_document', hint: 'Used by the POS till. Header: Document. {{1}} customer, {{2}} receipt no, {{3}} amount, {{4}} sale date.' },
 ];
 
 const randomToken = () => {
@@ -205,7 +209,7 @@ export default function WhatsAppSettings() {
                             <div>
                                 <p className="text-sm font-semibold text-slate-800">Enable WhatsApp Business API</p>
                                 <p className="mt-1 text-sm text-slate-500">
-                                    When off, the WhatsApp button downloads the PDF and opens the chat so the user attaches it manually.
+                                    When off, the WhatsApp button sends a link to the document (summary + PDF) from your own WhatsApp instead.
                                 </p>
                             </div>
                             <button
@@ -260,7 +264,7 @@ export default function WhatsAppSettings() {
                         </div>
                     </Card>
 
-                    <Card title="Message Templates" subtitle="One approved template per document. Names and language must match WhatsApp Manager exactly. Leave a name blank to keep that document on the manual download-and-attach flow.">
+                    <Card title="Message Templates" subtitle="One approved template per document. Names and language must match WhatsApp Manager exactly. Leave a name blank to keep that document on the link flow (a link to the document, sent from your own WhatsApp).">
                         <div className="grid gap-4 md:grid-cols-3">
                             {TEMPLATE_FIELDS.map(({ key, label, placeholder, hint }) => (
                                 <div key={key} className="md:col-span-3">
@@ -357,7 +361,7 @@ export default function WhatsAppSettings() {
                         <ol className="mt-3 space-y-2 text-sm text-amber-800">
                             <li>1. Verify the business in Meta Business Manager.</li>
                             <li>2. Add a WhatsApp number that is not on the WhatsApp phone app.</li>
-                            <li>3. Get the document templates approved (Utility, Document header): <span className="font-semibold">quotation_document</span>, <span className="font-semibold">sales_order_document</span>, <span className="font-semibold">sales_invoice_document</span>.</li>
+                            <li>3. Get the document templates approved (Utility, Document header): <span className="font-semibold">quotation_document</span>, <span className="font-semibold">sales_order_document</span>, <span className="font-semibold">sales_invoice_document</span> and, for the POS till, <span className="font-semibold">pos_receipt_document</span>.</li>
                             <li>4. Create a System User and a permanent token.</li>
                             <li>5. Paste the values here, save, then Test Connection.</li>
                         </ol>

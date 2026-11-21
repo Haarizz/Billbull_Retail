@@ -10,6 +10,7 @@ import {
   Clock, AlertTriangle, KeyRound, ShieldCheck, Undo2, Check, Receipt, Banknote, ChevronRight,
 } from 'lucide-react';
 import { Switch } from '../../../../../components/ui/switch';
+import { approvalModeLabel, normalizeApprovalMode } from '../../lib/approvalMode';
 
 /**
  * Restates the configured Business Day as its three phases, for the settings
@@ -49,7 +50,7 @@ const draftFromSettings = (posSettings) => ({
   requireSupervisorForDayClose: !!posSettings?.requireSupervisorForDayClose,
   requireAdminApprovalForSessionClose: !!posSettings?.requireAdminApprovalForSessionClose,
   requireAdminApprovalForDayClose: !!posSettings?.requireAdminApprovalForDayClose,
-  supervisorApprovalMode: posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN',
+  supervisorApprovalMode: normalizeApprovalMode(posSettings?.supervisorApprovalMode),
   requirePriceOverrideApproval: !!posSettings?.requirePriceOverrideApproval,
   deliveryReturnChargePolicy: posSettings?.deliveryReturnChargePolicy || 'WAIVE',
   deliveryWorkflowMode: posSettings?.deliveryWorkflowMode || 'DEFAULT_SETTLEMENT',
@@ -293,7 +294,9 @@ export default function PosBehaviorSettings({
   };
 
   const pinSet = !!posSettings?.supervisorPinSet;
-  const usesPin = d.supervisorApprovalMode !== 'PASSWORD';
+  // Only Branch PIN mode depends on the shared PIN; Personal PIN uses each supervisor's own.
+  const usesPin = normalizeApprovalMode(d.supervisorApprovalMode) === 'PIN';
+  const usesPersonalPin = d.supervisorApprovalMode === 'PERSONAL_PIN';
   const pinMissing = usesPin && !pinSet && !d.supervisorPin;
   const pinNeededBy = [
     d.requireSupervisorForVoid && 'Item Removal',
@@ -308,7 +311,7 @@ export default function PosBehaviorSettings({
     ['Customer', d.requireCustomer ? 'Required' : 'Optional'],
     ['Line removal', d.voidMode === 'DELETE' ? 'Delete' : 'Void'],
     ['Delivery', d.deliveryWorkflowMode === 'PI_FLOW' ? 'PI Flow' : 'Default'],
-    ['Approvals by', usesPin ? 'Branch PIN' : 'Password'],
+    ['Approvals by', approvalModeLabel(d.supervisorApprovalMode)],
     ['Business Day', d.operatingHoursEnabled && preview ? `${preview.start}–${preview.closure}` : 'Calendar day'],
   ];
 
@@ -574,6 +577,7 @@ export default function PosBehaviorSettings({
             description="How a supervisor authenticates whenever the till asks for approval."
             control={<Choice value={d.supervisorApprovalMode} onChange={val => patch({ supervisorApprovalMode: val })} options={[
               { value: 'PIN', label: 'Branch PIN', hint: 'The supervisor enters the branch supervisor PIN set here.' },
+              { value: 'PERSONAL_PIN', label: 'Personal PIN', hint: 'The supervisor picks their name and enters their own POS PIN (HR → Employees → Access). Records who approved. Needs a supervisor role.' },
               { value: 'PASSWORD', label: 'Own Password', hint: 'The supervisor signs in with their own username and password. The account must hold a supervisor role.' },
             ]} />}>
             <div className="rounded-xl bg-gray-50 border border-gray-200 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
@@ -592,7 +596,7 @@ export default function PosBehaviorSettings({
               <p className="text-[11px] text-gray-500 sm:flex-1">
                 {usesPin
                   ? 'One PIN shared by all supervisors at this branch.'
-                  : 'Not used for Password approvals, but still used for session takeover and cross-branch session transfer.'}
+                  : `Not used for ${usesPersonalPin ? 'Personal PIN' : 'Password'} approvals, but still used for session takeover and cross-branch session transfer.`}
               </p>
             </div>
           </SettingRow>

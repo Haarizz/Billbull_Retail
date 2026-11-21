@@ -20,9 +20,9 @@ import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
 import { getBankAccounts } from '../../api/ledgerApi';
 import {
-  getPosSettings, getPosSettingsForBranch, savePosSettings, savePosAppearance, verifySupervisorAuth, openPosSession,
+  getPosSettings, getPosSettingsForBranch, savePosSettings, savePosAppearance, authorizeShiftHandover, openPosSession,
   getPosSessionById, getLastClosingCount,
-  addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, getPosDayCloseSummary, closePosDay, posCheckout,
+  addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, getPosDayCloseSummary, closePosDay,
   checkPosXReportPrintable, checkPosZReportPrintable,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal,
   getDenominationLadder,
@@ -45,7 +45,7 @@ import { ENTRY_POINT } from './SalesReturn/constants';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
 import { getTemplateFamily, resolvePrintTemplate } from '../../api/printTemplateApi';
 import { isSheetPaper, POS_SHEET_FORMATS, sheetFormatLabel } from './POS/device/printing/posSheetTemplates';
-import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
+import useCheckoutSheetPreview from './POS/features/checkout/useCheckoutSheetPreview';
 import { computeLineTaxTotals } from '../../utils/vatMath';
 import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../utils/documentTaxType';
 import { buildXReportViewModel as buildXReportViewModelShared, buildZReportViewModel as buildZReportViewModelShared } from '../../utils/posReportViewModel';
@@ -128,6 +128,8 @@ import {
   Upload,
   Coins,
   Monitor,
+  Mail,
+  MessageCircle,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -148,13 +150,13 @@ import {
 // ─── POS sub-modules ──────────────────────────────────────────────────────────
 import { DirhamSymbol, DenominationLabel, CurrencyAmount, DenominationAmount, renderAED, setActiveCurrency } from './POS/POSCurrency';
 import { WALK_IN_CUSTOMER, STATUS_ENUM_TO_LABEL } from './POS/posConstants';
-import { toNumber, mapPosProductAggregateItem, mapPosCustomer, getLineFloor, mergeSavedPosSettings, isDeliverySalesOrder } from './POS/posUtils';
+import { toNumber, mapPosProductAggregateItem, mapPosCustomer, getLineFloor, mergeSavedPosSettings, isDeliverySalesOrder, inScanOrder } from './POS/posUtils';
 import InvoicePreviewItems from './POS/features/customers/InvoicePreviewItems';
 import {
   buildZatcaTlvBase64, buildThermalReceiptHtml, buildLayawayReceiptHtml, buildLayawayReceiptText,
   buildPosPrintData,
   buildDocumentPreviewHtml, buildThermalPrintHtml, buildServiceJobA4Html,
-  USE_NEW_POS_PRINT_TEMPLATE, buildDraftPrintDataFromCart,
+  USE_NEW_POS_PRINT_TEMPLATE,
 } from './POS/posPrintUtils';
 import {
   ThermalMock, useA4BlobUrl, A4PreviewFrame, A4LivePreview,
@@ -164,6 +166,9 @@ import { usePaymentManager } from './POS/payments/usePaymentManager';
 import { buildCheckoutPaymentFields, buildSettlementPaymentFields } from './POS/payments/paymentPayloadAdapter';
 import { buildPaymentBlock, buildPaymentBlockFromRecords, paymentBlockRows, matchesPaymentFilter, PAYMENT_FILTERS } from './POS/payments/paymentPresentation';
 import { useCheckoutCapabilities } from './POS/payments/useCheckoutCapabilities';
+import { checkoutContext, CheckoutBlockedError, OPERATION_TYPES, PendingCheckoutStorageError, submitCheckout } from './POS/features/checkout/checkoutOperation';
+import { usePendingCheckouts } from './POS/features/checkout/usePendingCheckouts';
+import PendingCheckoutNotice from './POS/features/checkout/PendingCheckoutNotice';
 import PaymentAllocationPanel from './POS/payments/PaymentAllocationPanel';
 import { PAYMENT_TYPES } from './POS/payments/paymentModel';
 import { planVoucherApplication, capVoucherAllocations } from './POS/payments/voucherRedemption';
@@ -193,8 +198,8 @@ import ReceiptShareModal from '../../components/pos/ReceiptShareModal';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter, warmPrintAgent } from '../../utils/localPrintAgent';
 import { startPrintTimer } from '../../utils/printTiming';
 import { buildEscPosDocumentBase64 } from '../../utils/escPosReceipt';
-import { mapToTemplate2Data, mapInvoiceToTxn } from './POS/receiptTemplates/billBullTaxInvoiceData';
-import { buildTemplate2Html } from './POS/receiptTemplates/buildTemplate2Html';
+import { getReceiptTemplate } from './POS/receiptTemplates';
+import { stableCheckoutPreviewHtml } from './POS/receiptTemplates/stablePreviewHtml'; // Template 2/3 checkout preview: registry + time-only-change guard
 // ─── POS feature modules (Phase 3 in-place decomposition) ─────────────────────
 import { DELIVERY_SETTLE_METHODS } from './POS/features/delivery/deliveryConstants';
 import NewDeliveryOrder from './POS/features/delivery/NewDeliveryOrder';
@@ -215,7 +220,7 @@ import { usePosSalesOrders } from './POS/features/salesOrders/usePosSalesOrders'
 import { useDelivery } from './POS/features/delivery/useDelivery';
 import { usePosPrinting } from './POS/device/printing/usePosPrinting';
 import { useTemplateSettings } from './POS/features/templateSettings/useTemplateSettings';
-import { useCheckout } from './POS/features/checkout/useCheckout';
+import { useCheckout, confirmSeparateSaleDefault } from './POS/features/checkout/useCheckout';
 import { usePosPriceLevel } from './POS/features/pricing/usePosPriceLevel';
 import { useLineUnits } from './POS/features/cart/useLineUnits';
 import { useCart } from './POS/features/cart/useCart';
@@ -238,6 +243,10 @@ import LiveSessionDialog from './POS/features/session/LiveSessionDialog';
 import SupervisorPinDialog from './POS/features/session/SupervisorPinDialog';
 import CheckoutCompleteSummary from './POS/features/checkout/CheckoutCompleteSummary';
 import CheckoutCompleteActions from './POS/features/checkout/CheckoutCompleteActions';
+import LastReceiptDialog from './POS/features/checkout/LastReceiptDialog';
+import { findLatestSessionInvoice, receiptFromStoredInvoice, sessionStartDate } from './POS/features/checkout/lastReceiptRecovery';
+import { openReceiptSms } from '../../utils/receiptSms';
+import { createDocumentLink, documentLinkUrl } from '../../api/documentLinkApi';
 import CheckoutSettlementSummary from './POS/features/checkout/CheckoutSettlementSummary';
 import CheckoutPaymentHeader from './POS/features/checkout/CheckoutPaymentHeader';
 import CheckoutPaymentFooter from './POS/features/checkout/CheckoutPaymentFooter';
@@ -254,6 +263,7 @@ import { buildThermalReceiptArtifacts as buildThermalReceiptArtifactsImpl } from
 import { buildPosReceiptPdfHtml } from './POS/device/printing/buildReceiptPdfHtml';
 import { round2Money, formatMoney2, todayInputDate, parseUTCDate } from './POS/lib/posFormatting';
 import { resolvePosFunctionAccessMode, isPosSupervisorUser as resolveIsPosSupervisorUser } from './POS/lib/posFunctionAccess';
+import { normalizeApprovalMode } from './POS/lib/approvalMode';
 import { buildZReportExcelSections, buildXReportExcelRows } from './POS/features/reports/reportExcelBuilders';
 import { confirmDialog } from '../../components/AppConfirmBridge';
 import { REGISTER_NEW_TERMINAL_CONFIRM } from './POS/features/terminal/terminalUnavailable';
@@ -399,6 +409,7 @@ export default function POSSales() {
     showSupervisorPin,
     supervisorPinValue, setSupervisorPinValue,
     supervisorPinEmail, setSupervisorPinEmail,
+    supervisorApprover, setSupervisorApprover,
     supervisorPinError, setSupervisorPinError,
     pendingVoidItemId,
     pendingPriceOverride,
@@ -680,7 +691,7 @@ export default function POSSales() {
   // below reads/writes on its own scan-resolve path.
   const {
     posProducts, posProductPage, posProductTotalPages, posProductTotalElements,
-    posProductsLoading, posProductsLoadingMore, posProductsError,
+    posProductsLoading, posProductsLoadingMore, posProductsError, posProductsSearchPending,
     loadPosProducts, loadMorePosProducts,
     searchQuery, setSearchQuery,
     productCategories, horizontalCategories, selectedCategory, setSelectedCategory,
@@ -708,8 +719,13 @@ export default function POSSales() {
   const [creditCardNumber, setCreditCardNumber] = useState('');
   const [creditCardResult, setCreditCardResult] = useState(null);
   const [showLastReceiptDialog, setShowLastReceiptDialog] = useState(false);
+  // Last Receipt after a reload: the server lookup of the session's newest sale.
+  const [lastReceiptLoading, setLastReceiptLoading] = useState(false);
+  const [lastReceiptError, setLastReceiptError] = useState('');
+  const [lastReceiptLookup, setLastReceiptLookup] = useState(0);
   const [showReprintModal, setShowReprintModal] = useState(false);
   const [reprintSelectedInvoice, setReprintSelectedInvoice] = useState(null);
+  const [reprintShare, setReprintShare] = useState(null); // { channel, sale }: sharing a reprinted invoice
   const [reprintConfirmOpen, setReprintConfirmOpen] = useState(false);
   const [reprintFilterDateFrom, setReprintFilterDateFrom] = useState(new Date().toISOString().slice(0, 10));
   const [reprintFilterDateTo, setReprintFilterDateTo] = useState(new Date().toISOString().slice(0, 10));
@@ -972,7 +988,6 @@ export default function POSSales() {
     printFeedback, setPrintFeedback,
     notifyPrintFallback,
     printThermalReceiptWithConfiguredPrinter,
-    resolveInvoiceA4Template,
     resolveCreditNoteA4Template,
     buildInvoiceSheetHtml,
     paperForSale,
@@ -1351,7 +1366,7 @@ export default function POSSales() {
         taxInclusive: !!currentInvoice.taxInclusive,
         invoiceTotal: (currentInvoice.total || 0) + previewShipping,
         discountTotal: currentInvoice.totalDiscount || 0,
-        items: (currentInvoice.items || []).map(it => ({
+        items: inScanOrder(currentInvoice.items).map(it => ({
           itemCode: it.code || it.productId || it.id || '',
           itemName: it.name || '',
           // Arabic item name (Fix 5) — carried from the cart line's nameAr, which
@@ -1420,15 +1435,15 @@ export default function POSSales() {
       // Template 2 (Arabic/bilingual) has its own HTML renderer — the checkout
       // preview must show whichever template is saved in Print Templates, same
       // as the ESC/POS print path below already does (see buildReceiptEscPosBase64).
-      if (receiptTemplateId === 'billbull-ar') {
-        const isWalkInPreview = !customer || customer.id === 'walk-in';
+      const componentTemplate = getReceiptTemplate(receiptTemplateId);
+      if (componentTemplate.kind === 'component') { const isWalkInPreview = !customer || customer.id === 'walk-in';
         // Template 2's Show/Hide toggles are split per sub-tab (previewT2 already
         // resolved above by previewHasTax) so the preview honours whichever tab's
         // settings the till will actually print.
         const t2Toggles = previewT2;
         const t2StampAvailable = previewT2.showQRCode && !!tplStampDataUrl;
         const t2ShowQr = previewT2.showQRCode && !t2StampAvailable;
-        const txn = mapInvoiceToTxn(mockInvoice, {
+        const txn = componentTemplate.mapInvoiceToTxn(mockInvoice, {
           currency: activeCurrency,
           terminalId: currentTerminal?.terminalId,
           cashierName: cashierDisplayName,
@@ -1459,14 +1474,15 @@ export default function POSSales() {
           titleEn: previewHeader,
           titleAr: previewHeaderAr,
         };
-        const html = buildTemplate2Html(mapToTemplate2Data(outlet, txn, t2Toggles));
+        const html = stableCheckoutPreviewHtml(componentTemplate.buildHtml(componentTemplate.mapData(outlet, txn, t2Toggles)));
         checkoutPreviewFreezeRef.current = html;
         return html;
       }
 
-      const activeThermalPaper = previewHasTax ? tplInvoicePaper : tplReceiptPaper;
-      // User request: always use 80mm print preview in the checkout window.
-      const html = buildThermalReceiptHtml('80mm', mockInvoice, {
+      // 58mm when that is the configured roll; 80mm otherwise (a sheet paper shows the
+      // sheet preview below instead, so this one is only a fallback there).
+      const activeThermalPaper = String(previewHasTax ? tplInvoicePaper : tplReceiptPaper).includes('58') ? '58mm' : '80mm';
+      const html = buildThermalReceiptHtml(activeThermalPaper, mockInvoice, {
         shippingCharge: previewShipping > 0 ? previewShipping : null,
         depositApplied: previewDeposit > 0 ? previewDeposit : null,
         balanceDue: previewDeposit > 0 ? Math.max(0, previewGrand - previewDeposit) : null,
@@ -1506,76 +1522,36 @@ export default function POSSales() {
     t2ReceiptShowLoyalty, t2ReceiptShowQRCode, t2ReceiptShowFooterText, t2ReceiptShowBarcode,
     t2InvoiceShowLogo, t2InvoiceShowCompanyDetails, t2InvoiceShowTrn, t2InvoiceShowArabic, t2InvoiceShowCustomerDetails,
     t2InvoiceShowAccountBalance, t2InvoiceShowDelivery, t2InvoiceShowVatSummary, t2InvoiceShowPaymentDetails,
-    t2InvoiceShowLoyalty, t2InvoiceShowQRCode, t2InvoiceShowFooterText, t2InvoiceShowBarcode]);
+    t2InvoiceShowLoyalty, t2InvoiceShowQRCode, t2InvoiceShowFooterText, t2InvoiceShowBarcode,
+    tplInvoicePaper, tplReceiptPaper]);
 
   const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);
 
-  // Phase 3 cutover: A4 checkout-time preview — net-new capability, gated on both
-  // USE_NEW_POS_PRINT_TEMPLATE and the invoice being configured for A4 paper (the
-  // thermal preview above never checked paper size; this one must, so a thermal-only
-  // branch never sees an A4 preview attempt). Uses the same draft-cart -> printData
-  // pipeline the real print/reprint path already uses via buildPosPrintData, so the
-  // checkout preview and the actual printed A4 output are guaranteed to agree.
-  const _previewHasTax = currentInvoice ? isTaxInvoiceDocument(currentInvoice) : false;
-  const _activePreviewPaper = _previewHasTax ? tplInvoicePaper : tplReceiptPaper;
-  // User request: always use 80mm print preview in the checkout window.
-  const showA4CheckoutPreview = false;
-  const checkoutA4Html = useMemo(() => {
-    if (!showA4CheckoutPreview) return '';
-    if (checkoutSettling) return checkoutPreviewFreezeRef.current || '';
-    if (!currentInvoice) return '';
-    try {
-      const customer = selectedCustomerData;
-      const previewShipping = Number(shippingCharge) || 0;
-      const draftData = buildDraftPrintDataFromCart({
-        invoiceNumber: previewInvoiceNo || '',
-        invoiceDate: new Date().toISOString(),
-        customer,
-        saleType: currentInvoice.saleType || '',
-        terminalId: currentTerminal?.terminalId || '',
-        counterName: currentTerminal?.counterName || '',
-        paymentMode: checkoutPaymentFields.paymentMode,
-        subTotal: currentInvoice.subtotal || 0,
-        taxTotal: currentInvoice.tax || 0,
-        taxInclusive: !!currentInvoice.taxInclusive,
-        invoiceTotal: (currentInvoice.total || 0) + previewShipping,
-        discountTotal: currentInvoice.totalDiscount || 0,
-        branchName: currentTerminal?.branchName || currentSession?.branchName || '',
-        items: (currentInvoice.items || []).map(it => ({
-          itemCode: it.code || it.productId || it.id || '',
-          itemName: it.name || '',
-          description: it.description || '',
-          quantity: it.quantity || 0,
-          unitPrice: it.price || 0,
-          netAmount: it.total || 0,
-          discountPercent: it.discount || 0,
-          taxPercent: it.taxRate,
-          taxAmount: it.taxAmount,
-          batchNumber: it.pinnedBatchNumber || it.batchNumber || '',
-          voided: !!it.isVoided,
-        })),
-      }, tplInvoiceFooter);
-      const template = resolveInvoiceA4Template(tplInvoiceFooter, {
-        showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn,
-        showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes,
-        showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp,
-        showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner,
-        colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode,
-        colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt,
-      }, isTaxInvoiceDocument(currentInvoice));
-      const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: activeCurrency || 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-      return generateDocumentPrintHtml(template, draftData, options);
-    } catch (e) {
-      console.warn('A4 checkout preview failed:', e);
-      return '';
-    }
-  }, [showA4CheckoutPreview, checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, shippingCharge,
-    checkoutPaymentFields, currentTerminal, currentSession, activeCurrency, resolveInvoiceA4Template,
-    tplInvoiceFooter, tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
-    tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode, tplInvoiceShowStamp,
-    tplInvoiceShowSignature, tplInvoiceShowGrandTotalBanner, tplInvoiceColItemCode, tplInvoiceColItemImage,
-    tplInvoiceColBarcode, tplInvoiceColBatchNo, tplInvoiceColDiscount, tplInvoiceColVatPct, tplInvoiceColVatAmt,
-    tplOutletName, effectiveOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl, tplStampDataUrl]);
+  // The checkout preview follows the sale's paper: a sheet (A4 / A5 / A5L / Pre-printed)
+  // renders through the real sheet print path (POS/features/checkout/useCheckoutSheetPreview);
+  // 80mm / 58mm keep the thermal preview above.
+  const checkoutSheetPreview = useCheckoutSheetPreview({
+    open: showPaymentDialog,
+    settling: checkoutSettling,
+    currentInvoice,
+    customer: selectedCustomerData,
+    invoiceNo: previewInvoiceNo,
+    shippingCharge,
+    paymentMode: checkoutPaymentFields.paymentMode,
+    currentTerminal, currentSession,
+    currency: activeCurrency,
+    paperForSale, buildInvoiceSheetHtml,
+    templateFamily: posInvoiceTemplateFamily,
+    tpl: {
+      receiptPaper: tplReceiptPaper, invoiceFooter: tplInvoiceFooter, invoiceHeader: tplInvoiceHeader,
+      receiptHeader: tplReceiptHeader, invoiceShowStamp: tplInvoiceShowStamp,
+      outletName: tplOutletName, outletTrn: effectiveOutletTrn, outletAddress: tplOutletAddress,
+      outletPhone: tplOutletPhone, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplStampDataUrl,
+      companyLogoUrl: company?.logoUrl,
+    },
+  });
+  const showA4CheckoutPreview = checkoutSheetPreview.isSheet;
+  const checkoutA4Html = checkoutSheetPreview.html;
   const checkoutA4BlobUrl = useA4BlobUrl(checkoutA4Html);
 
   // Heartbeat moved into usePosSession (terminal keep-alive is lifecycle-owned).
@@ -1683,20 +1659,20 @@ export default function POSSales() {
     if (!showPaymentDialog && checkoutSettling) setCheckoutSettling(false);
   }, [showPaymentDialog, checkoutSettling]);
 
-  // Fetch the REAL next invoice number from the backend numbering sequence when
-  // the checkout dialog opens, so the header + receipt preview show the number
-  // the sale will actually be assigned (not a fabricated SI-POS-000001). It's a
-  // preview (numberingService.preview) — no sequence is consumed until the sale
-  // posts — so it's re-fetched each time the dialog opens and after each sale
-  // (invoiceCounter bump) to stay current under concurrent tills.
+  // REAL next invoice number from the backend numbering sequence, shown as
+  // "Next: …" in the cart header and in the checkout header + receipt preview.
+  // It's a preview (numberingService.preview): nothing is consumed until the sale
+  // posts, so an abandoned cart leaves no gap. Another till can still take it
+  // first, so it's re-fetched on load, after each sale (invoiceCounter), when the
+  // cart gets its first line and when checkout opens/closes.
+  const cartHasItems = currentInvoice.items.length > 0;
   useEffect(() => {
-    if (!showPaymentDialog) return;
     let cancelled = false;
     getNextInvoiceNumber()
       .then(no => { if (!cancelled && no) setPreviewInvoiceNo(no); })
       .catch(() => { /* keep last value; UI falls back to blank if never fetched */ });
     return () => { cancelled = true; };
-  }, [showPaymentDialog, invoiceCounter]);
+  }, [showPaymentDialog, invoiceCounter, cartHasItems]);
 
   useEffect(() => {
     const code = selectedCustomerData?.code;
@@ -2436,8 +2412,9 @@ export default function POSSales() {
   };
 
 
-  // Supervisor approval mode: PIN (numeric keypad) or PASSWORD (manager login).
-  const supervisorApprovalMode = posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN';
+  // Supervisor approval mode: PIN (branch PIN keypad), PASSWORD (manager login) or
+  // PERSONAL_PIN (pick the supervisor, then their own till PIN). See POS/lib/approvalMode.js.
+  const supervisorApprovalMode = normalizeApprovalMode(posSettings?.supervisorApprovalMode);
 
   // Console -> Behavior -> Action Button Access. Resolved once here and handed to every
   // template, so Classic, Cart Focus and Compact enforce one branch-wide rule; the gate itself
@@ -2468,7 +2445,7 @@ export default function POSSales() {
     setHandoverBusy(true);
     setHandoverError('');
     try {
-      const result = await verifySupervisorAuth({
+      const result = await authorizeShiftHandover({
         email: handoverEmail,
         password: handoverPassword,
         terminalId: currentTerminal?.terminalId || '',
@@ -2491,8 +2468,10 @@ export default function POSSales() {
         `Shift handover authorized by ${result.supervisorName}. Terminal unlocked.`,
         'success'
       );
-    } catch {
-      setHandoverError('Could not verify credentials. Check connection and retry.');
+    } catch (err) {
+      // 409 SESSION_CHECKOUT_IN_PROGRESS: a sale is still being recorded on the session (or was only
+      // partly recorded), so the server refused to move it to another cashier yet. Say so.
+      setHandoverError(err?.response?.data?.message || 'Could not verify credentials. Check connection and retry.');
     } finally {
       setHandoverBusy(false);
     }
@@ -2817,8 +2796,16 @@ export default function POSSales() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsBankAccounts]);
 
+  // Checkouts persisted before sending that the server has not confirmed (Phase 0 / M2.2.2):
+  // reconciled read-only when the till loads or its context changes, listed in PendingCheckoutNotice.
+  const pendingCheckoutsNotice = usePendingCheckouts({ currentSession, currentTerminal });
+  // A second press while the first request is in flight sends nothing (it would be the same
+  // operation anyway, and the server would only answer CHECKOUT_IN_PROGRESS).
+  const deliveryInFlightRef = useRef(false);
   const handleOutForDelivery = useCallback(async () => {
-    if (!validateDeliveryOrder()) return;
+    if (deliveryInFlightRef.current) return;
+    deliveryInFlightRef.current = true;
+    if (!validateDeliveryOrder()) { deliveryInFlightRef.current = false; return; }
     setDeliveryOutLoading(true);
     try {
       const customer = deliveryCustomerId
@@ -2876,8 +2863,29 @@ export default function POSSales() {
         // Sending out a Sales Order taken up from POS → Orders links the delivery to the order.
         ...(activeSalesOrder?.soNumber ? { linkedSalesOrder: activeSalesOrder.soNumber } : {}),
       };
-
-      const savedInvoice = await posCheckout(payload);
+      // Every delivery order records an invoice (a Default-Settlement sale, or a PI-Flow Pro-forma
+      // Invoice that marks its serials sold), so it goes through the same checkout operation as a
+      // counter sale (Phase 0 / M2.2.2): the key and this exact payload are committed to IndexedDB
+      // before the request goes out, an identical retry (also after a reload) reuses them, and an
+      // edited order is not sent while this one is unresolved unless the cashier confirms it is a
+      // separate order.
+      let savedInvoice;
+      try {
+        savedInvoice = await submitCheckout({
+          operationType: OPERATION_TYPES.DELIVERY,
+          payload,
+          context: checkoutContext({ currentSession, currentTerminal }),
+          summary: { customerName: customer?.name || null, itemCount: currentInvoice.items.length, total: currentInvoice.total ?? null },
+          confirmSeparateSale: confirmSeparateSaleDefault,
+        });
+      } catch (checkoutErr) {
+        if (checkoutErr?.checkoutOutcome === 'uncertain' && !checkoutErr?.response?.data?.code) {
+          checkoutErr.deliveryUnconfirmed = true;
+        }
+        throw checkoutErr;
+      } finally {
+        pendingCheckoutsNotice.refresh();
+      }
       // PI Flow: the branch's Delivery Workflow made this a Pro-forma Invoice — a Draft that
       // becomes the sale only when Delivery Settlement settles or returns it. The slip printed
       // below is titled PRO-FORMA INVOICE from the same flag.
@@ -2946,9 +2954,22 @@ export default function POSSales() {
       setDeliveryValidationErrors({});
     } catch (err) {
       console.error('Out for delivery failed', err);
-      alert(err?.response?.data?.message || 'Failed to create delivery order. Please try again.');
+      // No answer, a timeout or a server error does not mean the order failed: it may have been
+      // recorded before the answer was lost. The retry reuses this order's key, so the server
+      // answers with the order it already recorded instead of issuing a second one.
+      alert(err instanceof PendingCheckoutStorageError
+        ? `This till could not save the delivery order safely before sending it (${err.message}), so it was NOT sent. `
+          + 'Check that browser storage is allowed and not full, then try again.'
+        : err instanceof CheckoutBlockedError
+          ? err.message
+          : err?.deliveryUnconfirmed
+            ? 'The server did not confirm this delivery order, so it may or may not have been recorded. '
+              + 'Press Out for Delivery again without changing the order. The retry is matched to this order '
+              + '(also after a reload), so an order that already went through is not recorded twice.'
+            : (err?.response?.data?.message || 'Failed to create delivery order. Please try again.'));
     } finally {
       setDeliveryOutLoading(false);
+      deliveryInFlightRef.current = false;
     }
     // buildThermalReceiptArtifacts/printThermalReceiptWithConfiguredPrinter are
     // intentionally omitted here — they're declared further down in this component,
@@ -3000,6 +3021,7 @@ export default function POSSales() {
 
   // Fetch real POS invoices when the reprint modal opens.
   useEffect(() => {
+    setReprintShare(null);
     if (showReprintModal) {
       fetchReprintInvoices();
       // Start from the till's configured sheet; a thermal till starts on A4.
@@ -3278,7 +3300,7 @@ export default function POSSales() {
     checkoutError, setCheckoutError,
     checkoutPhase, setCheckoutPhase,
     checkoutFinalizing, setCheckoutFinalizing,
-    lastPaidInvoice,
+    lastPaidInvoice, setLastPaidInvoice,
     checkoutRemarks, setCheckoutRemarks,
     processPayment,
   } = useCheckout({
@@ -3310,6 +3332,7 @@ export default function POSSales() {
       tplLogoDataUrl, tplStampDataUrl, tplInvoiceShowBankDetails, effectiveOutletTrn, company,
     },
     pricing: { priceLevelId: posPriceLevel.explicitPriceLevelId, pending: posPriceLevel.pending },
+    pendingCheckouts: { onChanged: pendingCheckoutsNotice.refresh },
     errorRouting: {
       isClosureWorkflowError, showClosureRequiredBlock, setShowPaymentDialog,
       requestApproval,
@@ -3414,47 +3437,228 @@ export default function POSSales() {
     handleCloseDay,
   });
 
+  // Share Receipt (Email / WhatsApp / SMS) runs for the sale just completed, or for an invoice picked
+  // in Reprint Previous Invoices (reprintShare = { channel, sale }); the hooks below read whichever is active.
+  const shareSale = reprintShare?.sale || lastPaidInvoice;
+  const shareChannel = reprintShare ? reprintShare.channel : receiptShareChannel;
+
+  // A stored invoice as the checkout snapshot shape the share flow reads. The PDF builder fetches
+  // the full invoice by id; tender and credit figures are not stored, so they are left out (as the
+  // thermal reprint leaves out the credit block).
+  const openReprintShare = (channel, raw) => {
+    if (!raw?.id) return;
+    const walkIn = !raw.customerName || /walk[- ]?in/i.test(raw.customerName);
+    const known = walkIn ? null : customerOptions.find(c => c.id !== WALK_IN_CUSTOMER.id
+      && ((raw.customerCode && (c.code === raw.customerCode || c.id === raw.customerCode)) || (raw.customerId != null && String(c.id) === String(raw.customerId))));
+    const customer = walkIn ? null : {
+      id: known?.id ?? raw.customerId ?? raw.customerCode ?? raw.customerName,
+      name: raw.customerName,
+      email: known?.email || raw.customerEmail || '',
+      phone: known?.phone || known?.mobile || raw.customerPhone || raw.customerMobile || '',
+    };
+    setReceiptShareChannel(null); // never two share dialogs reading the same hooks
+    setReprintShare({
+      channel,
+      sale: {
+        id: raw.invoiceNumber, total: Number(raw.invoiceTotal) || 0, invoice: raw, offline: null,
+        customer, paymentMode: raw.paymentMode, paymentBlock: null,
+        paidAmount: null, changeAmount: null, depositAmount: 0,
+        creditPreviousBalance: null, creditInvoiceCredit: null, creditAmountPaid: null, creditUpdatedBalance: null,
+      },
+    });
+  };
+
   // Pre-fill the share dialog from the customer on the settled sale. A walk-in
   // has neither, so the cashier gets an empty field to type into.
   const receiptShareInitialValue = useMemo(() => {
-    const cust = lastPaidInvoice?.customer;
+    const cust = shareSale?.customer;
     if (!cust || cust.id === WALK_IN_CUSTOMER.id) return '';
-    return (receiptShareChannel === 'email' ? cust.email : cust.phone || cust.mobile) || '';
-  }, [lastPaidInvoice, receiptShareChannel]);
+    return (shareChannel === 'email' ? cust.email : cust.phone || cust.mobile) || '';
+  }, [shareSale, shareChannel]);
+
+  // The receipt as A4/thermal PDF HTML for the WhatsApp link's document — the same call the email
+  // path below makes (kept inline there: posReceiptEmailPdf.test executes that handler's source).
+  const buildReceiptShareHtml = useCallback(
+    () => buildPosReceiptPdfHtml({ lastPaidInvoice: shareSale, fetchInvoice: getSalesInvoiceById, paperForSale, buildInvoiceSheetHtml, company, tplInvoiceShowStamp, templateSettings: receiptArtifactTemplateSettings, posContext: { activeCurrency, cashierDisplayName, customerOptions, currentTerminal, currentSession } }),
+    [shareSale, paperForSale, buildInvoiceSheetHtml, company, tplInvoiceShowStamp, receiptArtifactTemplateSettings, activeCurrency, cashierDisplayName, customerOptions, currentTerminal, currentSession],
+  );
+
+  // WhatsApp sends a link to the receipt page (summary + PDF, document/share on the backend) once
+  // the sale has a server invoice: ReceiptShareModal hands this doc to WhatsAppLinkShareDialog.
+  // A sale without one (still in the offline outbox) keeps the plain wa.me text.
+  const receiptLinkDoc = useMemo(() => {
+    const invoiceId = shareSale?.invoice?.id;
+    if (shareChannel !== 'whatsapp' || shareSale?.offline || invoiceId == null || !Number.isFinite(Number(invoiceId))) return null;
+    const cust = shareSale.customer;
+    return {
+      documentType: 'SALES_INVOICE',
+      documentId: invoiceId,
+      documentNo: shareSale.invoice.invoiceNumber || shareSale.id,
+      customerName: cust && cust.id !== WALK_IN_CUSTOMER.id ? cust.name : '',
+      phone: receiptShareInitialValue,
+      amountText: formatCurrencyStr(shareSale.total),
+      presentation: 'RECEIPT',
+      buildHtml: buildReceiptShareHtml,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- formatCurrencyStr is a stable formatter
+  }, [shareSale, shareChannel, receiptShareInitialValue, buildReceiptShareHtml]);
+
+  // Email opens the back office's Send Email dialog (preview + PDF attachment) once the sale has a
+  // server invoice; a sale still in the offline outbox keeps the plain form, which refuses to send.
+  const receiptEmailDoc = useMemo(() => {
+    const invoiceId = shareSale?.invoice?.id;
+    if (shareChannel !== 'email' || shareSale?.offline || invoiceId == null || !Number.isFinite(Number(invoiceId))) return null;
+    const cust = shareSale.customer;
+    // A reprinted invoice has no payment block: its stored balance says what is still owed.
+    const owed = Number(shareSale.paymentBlock ? shareSale.paymentBlock.transferredToAr : shareSale.invoice.balance) || 0;
+    return {
+      docNumber: shareSale.id || shareSale.invoice.invoiceNumber,
+      companyName: receiptArtifactTemplateSettings?.tplOutletName || company?.companyName || company?.name || '',
+      // The facts the WhatsApp receipt message lists; the dialog's default message is built from them.
+      customerName: cust && cust.id !== WALK_IN_CUSTOMER.id ? cust.name : '',
+      date: shareSale.invoice.invoiceDate || new Date().toLocaleDateString('en-CA'),
+      amountText: formatCurrencyStr(shareSale.total),
+      balanceText: owed > 0.004 ? formatCurrencyStr(owed) : '',
+      buildHtml: buildReceiptShareHtml,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- formatCurrencyStr is a stable formatter
+  }, [shareSale, shareChannel, buildReceiptShareHtml, receiptArtifactTemplateSettings, company]);
+
+  // SMS carries the same customer receipt page (/d/<token>) the WhatsApp link flow sends.
+  const createReceiptShareLink = useCallback(async () => {
+    const invoiceId = shareSale?.invoice?.id;
+    if (shareSale?.offline || invoiceId == null) return '';
+    const created = await createDocumentLink('SALES_INVOICE', invoiceId, await buildReceiptShareHtml(), 'RECEIPT');
+    return created?.path ? documentLinkUrl(created.path) : '';
+  }, [shareSale, buildReceiptShareHtml]);
 
   // Email attaches the receipt as a PDF (buildReceiptPdfHtml) or is not sent. Throwing keeps the dialog open to retry.
   const handleReceiptShareSend = useCallback(async (value, options) => {
-    if (!lastPaidInvoice) return;
-    const summary = `Receipt ${lastPaidInvoice.id} – ${formatCurrencyStr(lastPaidInvoice.total)}`;
-    if (receiptShareChannel === 'whatsapp') {
+    if (!shareSale) return;
+    const summary = `Receipt ${shareSale.id} – ${formatCurrencyStr(shareSale.total)}`;
+    if (shareChannel === 'whatsapp') {
       const digits = value.replace(/\D/g, '');
       window.open(`https://wa.me/${digits}?text=${encodeURIComponent(summary)}`, '_blank');
       setReceiptShareFeedback({ type: 'success', message: 'WhatsApp opened with the receipt message.' });
       return;
     }
-    if (receiptShareChannel === 'sms') {
-      // No SMS gateway is wired up yet; this keeps the previous stub behaviour
-      // (which used alert()) and only swaps the notice for the standard toast.
-      setReceiptShareFeedback({ type: 'success', message: `${summary} — SMS queued for ${value}.` });
+    if (shareChannel === 'sms') {
+      // No SMS gateway: the message (with the receipt page link once the sale has a server
+      // invoice) goes to the device's SMS app through an sms: link, and is copied for pasting.
+      const sms = await openReceiptSms({
+        phone: value,
+        documentNo: shareSale.offline ? '' : shareSale.id,
+        amountText: formatCurrencyStr(shareSale.total),
+        companyName: receiptArtifactTemplateSettings?.tplOutletName || company?.companyName || company?.name || '',
+        createLink: shareSale.offline || shareSale.invoice?.id == null ? null : createReceiptShareLink,
+      });
+      setReceiptShareFeedback({
+        type: 'success',
+        message: `SMS app opened for ${value}${sms.link ? ' with the receipt link' : ''}${sms.copied ? ' — message also copied' : ''}.`,
+      });
       return;
     }
-    if (receiptShareChannel === 'email') {
-      if (!lastPaidInvoice?.invoice?.id) throw new Error('Invoice is not available to email yet.');
-      const pdfHtml = await buildPosReceiptPdfHtml({ lastPaidInvoice, fetchInvoice: getSalesInvoiceById, paperForSale, buildInvoiceSheetHtml, company, tplInvoiceShowStamp, templateSettings: receiptArtifactTemplateSettings, posContext: { activeCurrency, cashierDisplayName, customerOptions, currentTerminal, currentSession } });
-      await sendSalesInvoiceEmail(lastPaidInvoice.invoice.id, {
+    if (shareChannel === 'email') {
+      if (!shareSale?.invoice?.id) throw new Error('Invoice is not available to email yet.');
+      // The email dialog hands over the receipt it previewed (options.pdfHtml), so the attachment is what the cashier saw.
+      const pdfHtml = options?.pdfHtml || await buildPosReceiptPdfHtml({ lastPaidInvoice: shareSale, fetchInvoice: getSalesInvoiceById, paperForSale, buildInvoiceSheetHtml, company, tplInvoiceShowStamp, templateSettings: receiptArtifactTemplateSettings, posContext: { activeCurrency, cashierDisplayName, customerOptions, currentTerminal, currentSession } });
+      await sendSalesInvoiceEmail(shareSale.invoice.id, {
         toEmail: value, pdfHtml, pdfKind: 'POS_RECEIPT',
-        subject: `Receipt ${lastPaidInvoice.id}`,
-        htmlBody: `${options?.messageHtml || ''}<p>Invoice: ${lastPaidInvoice.id}, Total: ${formatCurrencyStr(lastPaidInvoice.total)}</p>`,
+        subject: options?.subject?.trim() || `Receipt ${shareSale.id}`,
+        // The cashier's message already states the receipt facts; the one-line summary is only the fallback body.
+        htmlBody: options?.messageHtml || `<p>Invoice: ${shareSale.id}, Total: ${formatCurrencyStr(shareSale.total)}</p>`,
       });
       setReceiptShareFeedback({ type: 'success', message: `Receipt emailed to ${value}.` });
     }
-  }, [lastPaidInvoice, receiptShareChannel, paperForSale, buildInvoiceSheetHtml, company, tplInvoiceShowStamp, receiptArtifactTemplateSettings, activeCurrency, cashierDisplayName, customerOptions, currentTerminal, currentSession]);
+  }, [shareSale, shareChannel, createReceiptShareLink, paperForSale, buildInvoiceSheetHtml, company, tplInvoiceShowStamp, receiptArtifactTemplateSettings, activeCurrency, cashierDisplayName, customerOptions, currentTerminal, currentSession]);
 
   useEffect(() => {
     if (!receiptShareFeedback) return undefined;
     const t = setTimeout(() => setReceiptShareFeedback(null), 3500);
     return () => clearTimeout(t);
   }, [receiptShareFeedback]);
+
+  // Last Receipt after a reload: lastPaidInvoice is memory-only, so when the dialog opens without
+  // one, the session's newest invoice is looked up on the server (lastReceiptRecovery.js).
+  useEffect(() => {
+    const sessionId = currentSession?.id;
+    if (!showLastReceiptDialog || lastPaidInvoice || typeof sessionId !== 'number') return undefined;
+    let alive = true;
+    setLastReceiptLoading(true);
+    setLastReceiptError('');
+    (async () => {
+      try {
+        const list = await getPosInvoices({
+          dateFrom: sessionStartDate(currentSession),
+          dateTo: new Date().toLocaleDateString('en-CA'),
+          branchId: currentTerminal?.branchId || currentSession?.branchId || null,
+        });
+        const row = findLatestSessionInvoice(list, sessionId);
+        if (!row) return;
+        const full = await getSalesInvoiceById(row.id);
+        if (alive) setLastPaidInvoice(receiptFromStoredInvoice(full, { listRow: row, customerOptions, walkIn: WALK_IN_CUSTOMER }));
+      } catch (err) {
+        if (alive) setLastReceiptError(err?.response?.data?.message || err?.message || 'The server could not be reached.');
+      } finally {
+        if (alive) setLastReceiptLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+    // customerOptions only enriches the contact details; a change in it must not re-query.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showLastReceiptDialog, lastPaidInvoice, currentSession?.id, lastReceiptLookup]);
+
+  const closeLastReceipt = () => {
+    setShowLastReceiptDialog(false);
+    setReceiptShareChannel(null);
+  };
+
+  // Last Receipt → Reprint. reprintPosReceipt logs RECEIPT_REPRINTED and bumps the reprint count;
+  // an error is thrown to the dialog, which shows it and stays open.
+  const handleLastReceiptReprint = async () => {
+    if (!lastPaidInvoice?.invoice?.id || lastPaidInvoice.offline) return;
+    const reprintResult = await reprintPosReceipt(lastPaidInvoice.invoice.id, {
+      sessionId: currentSession?.id,
+      terminalId: currentTerminal?.terminalId,
+      branchId: currentTerminal?.branchId || currentSession?.branchId,
+    });
+    const full = reprintResult.invoice;
+    openCashDrawer('RECEIPT_PRINT');
+    if (isSheetPaper(paperForSale(full))) {
+      const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
+      const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
+      printHtml(await buildInvoiceSheetHtml(full, data, options));
+    } else {
+      // Reuse the credit-account figures snapshotted at checkout (lastPaidInvoice)
+      // rather than re-querying posCreditBalance — by now it already reflects
+      // this invoice and would be mislabeled as "previous balance".
+      const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
+        full,
+        isReprint: true,
+        // Same rule as the Reprint dialog: the tenders come from what was recorded
+        // against the invoice, so the voucher leg survives a page reload.
+        paymentBlock: buildReprintPaymentBlock(reprintResult, full),
+        cashGiven: lastPaidInvoice?.paidAmount,
+        changeAmount: lastPaidInvoice?.changeAmount,
+        customerPhone: lastPaidInvoice?.customer?.phone,
+        customerEmail: lastPaidInvoice?.customer?.email,
+        customerTrn: lastPaidInvoice?.customer?.trn,
+        customerAddress: lastPaidInvoice?.customer?.address,
+        creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null,
+        creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null,
+        creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null,
+        creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
+        cashierNameOverride: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName,
+      });
+      await printThermalReceiptWithConfiguredPrinter({
+        full,
+        text,
+        escPosBase64,
+        title: `Reprint ${full.invoiceNumber || ''}`.trim(),
+      });
+    }
+    closeLastReceipt();
+  };
 
   const handleCashDrop = async () => {
     // Cash drop / cash out are session-bound — refuse if no session is open even
@@ -7251,8 +7455,8 @@ export default function POSSales() {
     showQuickCustomerModal, setShowQuickCustomerModal, quickCustomerForm, setQuickCustomerForm, quickCustomerDuplicateWarning, setQuickCustomerDuplicateWarning, quickCustomerLoading, quickCustomerError, openQuickCustomerModal, handleSaveQuickCustomer,
     showQuickProductModal, setShowQuickProductModal, handleQuickProductCreated,
     setCurrentView, currentSession, sessionId, posSettings,
-    currentInvoice, currentInvoiceRef, invoiceCounter,
-    posProducts, filteredProducts, posProductsLoading, posProductsLoadingMore, posProductsError,
+    currentInvoice, currentInvoiceRef, invoiceCounter, previewInvoiceNo,
+    posProducts, filteredProducts, posProductsLoading, posProductsLoadingMore, posProductsError, posProductsSearchPending,
     posProductPage, posProductTotalPages, posProductTotalElements, loadMorePosProducts,
     productCategories, horizontalCategories, selectedCategory, setSelectedCategory,
     searchQuery, setSearchQuery, barcodeInput, setBarcodeInput, barcodeInputRef,
@@ -7474,6 +7678,9 @@ export default function POSSales() {
           </div>
         </div>
       )}
+
+      {/* ─── UNCONFIRMED CHECKOUTS (Phase 0 / M2.2.2) ─── */}
+      <PendingCheckoutNotice pending={pendingCheckoutsNotice} />
 
       {/* ─── BUSINESS DAY OVERLAYS (scheduled-end notice / closed) ───
            Renders nothing at all for a branch with no Business Day Window
@@ -8609,6 +8816,8 @@ export default function POSSales() {
                   initialValue={receiptShareInitialValue}
                   onClose={() => setReceiptShareChannel(null)}
                   onSend={handleReceiptShareSend}
+                  linkDoc={receiptLinkDoc}
+                  emailDoc={receiptEmailDoc}
                 />
               )}
             </div>
@@ -8643,6 +8852,8 @@ export default function POSSales() {
                 checkoutA4Html={checkoutA4Html}
                 checkoutA4BlobUrl={checkoutA4BlobUrl}
                 checkoutPreviewBlobUrl={checkoutPreviewBlobUrl}
+                thermalPaperSize={checkoutSheetPreview.thermalPaper}
+                sheetPageSize={checkoutSheetPreview.pageSize}
               />
             </div>
 
@@ -8716,6 +8927,7 @@ export default function POSSales() {
                   cancelCheckoutTenders();
                 }}
                 onSettle={() => processPayment()}
+                onDismissError={() => setCheckoutError(null)}
               />
 
             </div>
@@ -8741,6 +8953,8 @@ export default function POSSales() {
           setSupervisorPinValue={setSupervisorPinValue}
           supervisorPinError={supervisorPinError}
           setSupervisorPinError={setSupervisorPinError}
+          supervisorApprover={supervisorApprover}
+          setSupervisorApprover={setSupervisorApprover}
           onSubmit={handleSupervisorPinSubmit}
           onCancel={cancelApproval}
         />
@@ -8869,83 +9083,36 @@ export default function POSSales() {
       </Dialog>
 
       {/* Last Receipt Dialog */}
-      <Dialog open={showLastReceiptDialog} onOpenChange={setShowLastReceiptDialog}>
-        <DialogContent className="max-w-sm bg-white">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Receipt className="h-5 w-5 text-gray-600" /> Last Receipt</DialogTitle>
-            <DialogDescription>Most recent completed transaction</DialogDescription>
-          </DialogHeader>
-          <div className="py-2">
-            {!lastPaidInvoice ? (
-              <p className="text-sm text-gray-500 text-center py-6">No transactions yet in this session.</p>
-            ) : (
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between"><span className="text-gray-500">Invoice #</span><span className="font-semibold">{lastPaidInvoice.id}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Customer</span><span className="font-semibold">{lastPaidInvoice.customer?.name || 'Walk-in'}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Amount</span><span className="font-semibold text-[#F5C742]">{formatCurrency(lastPaidInvoice.total)}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Paid</span><span className="font-semibold">{formatCurrency(lastPaidInvoice.paidAmount ?? lastPaidInvoice.total)}</span></div>
-                {(lastPaidInvoice.changeAmount || 0) > 0 && <div className="flex justify-between"><span className="text-gray-500">Change</span><span className="font-semibold text-green-600">{formatCurrency(lastPaidInvoice.changeAmount)}</span></div>}
-                {(lastPaidInvoice.creditBalance || 0) > 0 && <div className="flex justify-between"><span className="text-gray-500">This Invoice Balance</span><span className="font-semibold text-orange-600">{formatCurrency(lastPaidInvoice.creditBalance)}</span></div>}
-                {(lastPaidInvoice.creditBalance || 0) > 0 && lastPaidInvoice.creditUpdatedBalance != null && <div className="flex justify-between"><span className="text-gray-500">Customer Total Outstanding</span><span className="font-semibold text-orange-600">{formatCurrency(lastPaidInvoice.creditUpdatedBalance)}</span></div>}
-                <div className="flex justify-between"><span className="text-gray-500">Pay Mode</span><span className="font-semibold">{lastPaidInvoice.paymentMode || 'Cash'}</span></div>
-                <Separator />
-                <p className="text-xs text-gray-400 text-center">{lastPaidInvoice.items?.length || 0} item(s) · Session {currentSession?.id}</p>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowLastReceiptDialog(false)}>Close</Button>
-            <Button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]" disabled={!lastPaidInvoice?.invoice?.id} onClick={async () => {
-              if (!lastPaidInvoice?.invoice?.id) return;
-              try {
-                const reprintResult = await reprintPosReceipt(lastPaidInvoice.invoice.id, {
-                  sessionId: currentSession?.id,
-                  terminalId: currentTerminal?.terminalId,
-                  branchId: currentTerminal?.branchId || currentSession?.branchId,
-                });
-                const full = reprintResult.invoice;
-                openCashDrawer('RECEIPT_PRINT');
-                if (isSheetPaper(paperForSale(full))) {
-                  const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
-                  const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-                  printHtml(await buildInvoiceSheetHtml(full, data, options));
-                } else {
-                  // Reuse the credit-account figures snapshotted at checkout (lastPaidInvoice)
-                  // rather than re-querying posCreditBalance — by now it already reflects
-                  // this invoice and would be mislabeled as "previous balance".
-                  const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
-                    full,
-                    isReprint: true,
-                    // Same rule as the Reprint dialog: the tenders come from what was recorded
-                    // against the invoice, so the voucher leg survives a page reload.
-                    paymentBlock: buildReprintPaymentBlock(reprintResult, full),
-                    cashGiven: lastPaidInvoice?.paidAmount,
-                    changeAmount: lastPaidInvoice?.changeAmount,
-                    customerPhone: lastPaidInvoice?.customer?.phone,
-                    customerEmail: lastPaidInvoice?.customer?.email,
-                    customerTrn: lastPaidInvoice?.customer?.trn,
-                    customerAddress: lastPaidInvoice?.customer?.address,
-                    creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null,
-                    creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null,
-                    creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null,
-                    creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
-                    cashierNameOverride: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName,
-                  });
-                  await printThermalReceiptWithConfiguredPrinter({
-                    full,
-                    text,
-                    escPosBase64,
-                    title: `Reprint ${full.invoiceNumber || ''}`.trim(),
-                  });
-                }
-                setShowLastReceiptDialog(false);
-              } catch (err) { console.warn('Last receipt reprint error', err); alert(`Reprint failed: ${err?.message || 'printer error'}.`); }
-            }}>
-              <Printer className="h-4 w-4 mr-2" />Reprint
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <LastReceiptDialog
+        open={showLastReceiptDialog}
+        receipt={lastPaidInvoice}
+        paymentRows={lastPaidInvoice?.paymentBlock ? paymentBlockRows(lastPaidInvoice.paymentBlock) : []}
+        loading={lastReceiptLoading}
+        loadError={lastReceiptError}
+        onRefresh={() => setLastReceiptLookup((n) => n + 1)}
+        onClose={closeLastReceipt}
+        onReprint={handleLastReceiptReprint}
+        onShare={(key) => setReceiptShareChannel(key)}
+        onOpenHistory={() => { closeLastReceipt(); setShowReprintModal(true); }}
+        formatCurrencyStr={formatCurrencyStr}
+        walkInId={WALK_IN_CUSTOMER.id}
+        sessionId={lastPaidInvoice?.invoice?.posSessionId ?? currentSession?.id ?? null}
+        cashierName={lastPaidInvoice?.invoice?.createdBy ? formatUserDisplayName(lastPaidInvoice.invoice.createdBy.includes('@') ? lastPaidInvoice.invoice.createdBy.split('@')[0] : lastPaidInvoice.invoice.createdBy) : cashierDisplayName}
+        terminalLabel={currentTerminal?.terminalId || ''}
+        shareOpen={Boolean(receiptShareChannel)}
+      />
+      {/* Its share dialogs — the same ReceiptShareModal and handlers as the Payment Complete screen. */}
+      {showLastReceiptDialog && receiptShareChannel && lastPaidInvoice && (
+        <ReceiptShareModal
+          key={`last-${receiptShareChannel}`}
+          channel={receiptShareChannel}
+          initialValue={receiptShareInitialValue}
+          onClose={() => setReceiptShareChannel(null)}
+          onSend={handleReceiptShareSend}
+          linkDoc={receiptLinkDoc}
+          emailDoc={receiptEmailDoc}
+        />
+      )}
 
       {/* Customer History — Invoice Preview Modal */}
       <Dialog open={showCustomerHistoryPreview} onOpenChange={(open) => { setShowCustomerHistoryPreview(open); if (!open) { setCustomerHistoryPreviewInvoice(null); setCustomerHistoryPreviewError(''); } }}>
@@ -9001,7 +9168,7 @@ export default function POSSales() {
                     const billDiscount = Number(inv.billDiscountAmount) || 0;
                     const totalDiscount = Number(inv.discountTotal) || (itemDiscountTotal + billDiscount) || 0;
                     const amountPaid = inv.amountPaid ?? (inv.invoiceTotal - (inv.balance || 0));
-                    const cashierName = inv.createdBy ? formatUserDisplayName(inv.createdBy.includes('@') ? inv.createdBy.split('@')[0] : inv.createdBy) : (inv.posCounterName || '—');
+                    const cashierName = inv.createdBy ? formatUserDisplayName(inv.createdBy.includes('@') ? inv.createdBy.split('@')[0] : inv.createdBy) : '—';
                     const invoiceTime = inv.createdAt ? new Date(inv.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : null;
 
                     return (
@@ -9013,7 +9180,7 @@ export default function POSSales() {
                           <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Customer</span><span className="text-[#1E293B] font-semibold truncate">{inv.customerName || 'Walk-in Customer'}</span></div>
                           <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Cashier</span><span className="text-[#1E293B] font-semibold truncate">{cashierName}</span></div>
                           {inv.posCounterName && (
-                            <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Terminal</span><span className="text-[#1E293B] font-semibold">{inv.posCounterName}</span></div>
+                            <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Counter</span><span className="text-[#1E293B] font-semibold">{inv.posCounterName}</span></div>
                           )}
                           <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Items</span><span className="text-[#1E293B] font-semibold">{items.length} item{items.length !== 1 ? 's' : ''}</span></div>
                         </div>
@@ -9096,7 +9263,7 @@ export default function POSSales() {
           date: inv.invoiceDate,
           time: inv.createdAt ? new Date(inv.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '—',
           customer: inv.customerName || 'Walk-in Customer',
-          cashier: inv.posCounterName || '—',
+          cashier: inv.createdBy ? formatUserDisplayName(inv.createdBy.includes('@') ? inv.createdBy.split('@')[0] : inv.createdBy) : '—',
           terminal: inv.posTerminalId || '—',
           payMode: inv.paymentMode || 'Cash',
           items: (inv.items || []).filter(i => !i.voided).length,
@@ -9340,6 +9507,21 @@ export default function POSSales() {
                         className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
                         <Download className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode === 'pdf' ? 'Downloading…' : 'Download PDF'}
                       </button>
+                      {/* Share the receipt the same way the sale-complete screen does (no reprint is recorded). */}
+                      <div className="w-full flex items-center gap-2 pt-1" role="group" aria-label="Send receipt">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mr-1">Send</span>
+                        {[
+                          { key: 'email', label: 'Email', Icon: Mail, cls: 'border-blue-200 text-blue-700 hover:bg-blue-50' },
+                          { key: 'whatsapp', label: 'WhatsApp', Icon: MessageCircle, cls: 'border-green-200 text-green-700 hover:bg-green-50' },
+                          { key: 'sms', label: 'SMS', Icon: Smartphone, cls: 'border-emerald-200 text-emerald-700 hover:bg-emerald-50' },
+                        ].map(({ key, label, Icon, cls }) => (
+                          <button key={key} type="button" onClick={() => openReprintShare(key, selected._raw)}
+                            disabled={selected.status === 'Cancelled' || !selected.dbId}
+                            className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded border bg-white disabled:opacity-40 disabled:cursor-not-allowed ${cls}`}>
+                            <Icon className="h-3.5 w-3.5" />{label}
+                          </button>
+                        ))}
+                      </div>
                       {selected.status === 'Cancelled' && (
                         <div className="w-full flex items-center gap-1 text-xs text-red-600 bg-red-50 rounded p-1.5 border border-red-200">
                           <AlertCircle className="h-3.5 w-3.5 shrink-0" />This invoice is cancelled. Printing is not allowed.
@@ -9358,6 +9540,18 @@ export default function POSSales() {
                 <button onClick={() => setShowReprintModal(false)} className="ml-auto border border-gray-300 text-gray-600 text-xs px-4 py-1.5 rounded hover:bg-gray-50">Close</button>
               </div>
             </div>
+            {/* Share a reprinted invoice: the same dialog, handler and receipt PDF as the sale-complete screen. */}
+            {reprintShare && (
+              <ReceiptShareModal
+                key={`reprint-${reprintShare.channel}-${reprintShare.sale.id}`}
+                channel={reprintShare.channel}
+                initialValue={receiptShareInitialValue}
+                onClose={() => setReprintShare(null)}
+                onSend={handleReceiptShareSend}
+                linkDoc={receiptLinkDoc}
+                emailDoc={receiptEmailDoc}
+              />
+            )}
           </div>
         );
       })()}
@@ -10738,6 +10932,7 @@ export default function POSSales() {
               if (supervisorOverride.email) payload.supervisorOverrideEmail = supervisorOverride.email;
               if (supervisorOverride.password) payload.supervisorOverridePassword = supervisorOverride.password;
               if (supervisorOverride.pin) payload.supervisorOverridePin = supervisorOverride.pin;
+              if (supervisorOverride.employeeId != null) payload.supervisorOverrideEmployeeId = supervisorOverride.employeeId;
             }
 
             const settledInvoice = await settleDeliveryOrder(sel.id, payload);

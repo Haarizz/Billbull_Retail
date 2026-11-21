@@ -40,18 +40,35 @@ public class PosPinAttemptLimiter {
 
     /** Seconds until this employee may try again on this till; 0 when allowed now. */
     public long secondsUntilAllowed(long deviceId, long employeeId) {
-        Instant now = clock.instant();
-        return Math.max(lockedFor(deviceKey(deviceId), now), lockedFor(employeeKey(deviceId, employeeId), now));
+        return secondsUntilAllowed(deviceKey(deviceId), employeeId);
     }
 
     public void recordFailure(long deviceId, long employeeId) {
-        Instant now = clock.instant();
-        bump(employeeKey(deviceId, employeeId), EMPLOYEE_MAX_FAILURES, EMPLOYEE_LOCK, now);
-        bump(deviceKey(deviceId), DEVICE_MAX_FAILURES, DEVICE_LOCK, now);
+        recordFailure(deviceKey(deviceId), employeeId);
     }
 
     public void recordSuccess(long deviceId, long employeeId) {
-        counters.remove(employeeKey(deviceId, employeeId));
+        recordSuccess(deviceKey(deviceId), employeeId);
+    }
+
+    /**
+     * Same limits under any scope key — e.g. {@code "approval:b<branchId>"} for supervisor PIN
+     * approvals, which have no enrolled till. The scope plays the till's part: 20 wrong PINs
+     * across everyone in it lock it, 5 for one employee lock that employee in it.
+     */
+    public long secondsUntilAllowed(String scope, long employeeId) {
+        Instant now = clock.instant();
+        return Math.max(lockedFor(scope, now), lockedFor(scope + ":e" + employeeId, now));
+    }
+
+    public void recordFailure(String scope, long employeeId) {
+        Instant now = clock.instant();
+        bump(scope + ":e" + employeeId, EMPLOYEE_MAX_FAILURES, EMPLOYEE_LOCK, now);
+        bump(scope, DEVICE_MAX_FAILURES, DEVICE_LOCK, now);
+    }
+
+    public void recordSuccess(String scope, long employeeId) {
+        counters.remove(scope + ":e" + employeeId);
     }
 
     private long lockedFor(String key, Instant now) {
@@ -75,10 +92,6 @@ public class PosPinAttemptLimiter {
             }
             return c;
         });
-    }
-
-    private static String employeeKey(long deviceId, long employeeId) {
-        return "d" + deviceId + ":e" + employeeId;
     }
 
     private static String deviceKey(long deviceId) {

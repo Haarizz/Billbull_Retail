@@ -66,7 +66,7 @@ class PosSessionTransferServiceTest {
     @Test
     void transferMovesSessionUpdatesHostingAndWritesTransferLog() {
         PosSession session = session(1L, 99L, "T1", PosSessionStatus.OPEN);
-        when(sessionRepository.findById(1L)).thenReturn(Optional.of(session));
+        when(sessionRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(session));
         PosTerminal destination = terminal(200L, "T2", null);
         when(terminalRepository.findByTerminalId("T2")).thenReturn(Optional.of(destination));
         when(terminalRepository.clearOpenSession(99L, 1L)).thenReturn(1);
@@ -99,7 +99,7 @@ class PosSessionTransferServiceTest {
     @Test
     void transferRejectsSessionThatIsNeitherOpenNorSuspended() {
         PosSession session = session(1L, 99L, "T1", PosSessionStatus.CLOSED);
-        when(sessionRepository.findById(1L)).thenReturn(Optional.of(session));
+        when(sessionRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(session));
 
         assertThrows(ResponseStatusException.class, () -> transferService.transfer(1L, "T2", 42L, false));
 
@@ -110,7 +110,7 @@ class PosSessionTransferServiceTest {
     @Test
     void transferRejectsWhenDestinationTerminalAlreadyHostsASession() {
         PosSession session = session(1L, 99L, "T1", PosSessionStatus.OPEN);
-        when(sessionRepository.findById(1L)).thenReturn(Optional.of(session));
+        when(sessionRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(session));
         PosTerminal destination = terminal(200L, "T2", 555L);
         when(terminalRepository.findByTerminalId("T2")).thenReturn(Optional.of(destination));
 
@@ -124,7 +124,7 @@ class PosSessionTransferServiceTest {
     @Test
     void transferRejectsWhenDestinationIsSameAsCurrentTerminal() {
         PosSession session = session(1L, 200L, "T2", PosSessionStatus.OPEN);
-        when(sessionRepository.findById(1L)).thenReturn(Optional.of(session));
+        when(sessionRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(session));
         PosTerminal destination = terminal(200L, "T2", 1L);
         when(terminalRepository.findByTerminalId("T2")).thenReturn(Optional.of(destination));
 
@@ -136,7 +136,7 @@ class PosSessionTransferServiceTest {
     @Test
     void transferAbortsWhenDestinationLockIsClaimedConcurrently() {
         PosSession session = session(1L, 99L, "T1", PosSessionStatus.OPEN);
-        when(sessionRepository.findById(1L)).thenReturn(Optional.of(session));
+        when(sessionRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(session));
         PosTerminal destination = terminal(200L, "T2", null);
         when(terminalRepository.findByTerminalId("T2")).thenReturn(Optional.of(destination));
         when(terminalRepository.clearOpenSession(99L, 1L)).thenReturn(1);
@@ -151,7 +151,7 @@ class PosSessionTransferServiceTest {
 
     @Test
     void transferRejectsUnknownSession() {
-        when(sessionRepository.findById(1L)).thenReturn(Optional.empty());
+        when(sessionRepository.findByIdForUpdate(1L)).thenReturn(Optional.empty());
 
         assertThrows(ResponseStatusException.class, () -> transferService.transfer(1L, "T2", 42L, false));
     }
@@ -159,7 +159,7 @@ class PosSessionTransferServiceTest {
     @Test
     void transferRejectsUnknownDestinationTerminal() {
         PosSession session = session(1L, 99L, "T1", PosSessionStatus.OPEN);
-        when(sessionRepository.findById(1L)).thenReturn(Optional.of(session));
+        when(sessionRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(session));
         when(terminalRepository.findByTerminalId("T2")).thenReturn(Optional.empty());
 
         assertThrows(ResponseStatusException.class, () -> transferService.transfer(1L, "T2", 42L, false));

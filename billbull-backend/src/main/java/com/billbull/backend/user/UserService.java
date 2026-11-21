@@ -9,6 +9,9 @@ import com.billbull.backend.hr.employees.EmployeeRepository;
 import com.billbull.backend.role.Role;
 import com.billbull.backend.role.RoleRepository;
 import com.billbull.backend.security.AdminSafeguardService;
+import com.billbull.backend.security.accessaudit.AccessAuditAction;
+import com.billbull.backend.security.accessaudit.AccessAuditService;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchRepository;
 
@@ -46,6 +49,14 @@ public class UserService {
         this.adminSafeguardService = adminSafeguardService;
         this.employeeRepository = employeeRepository;
         this.branchRepository = branchRepository;
+    }
+
+    /** Access-control audit ledger (setter-injected; constructor call sites unchanged). */
+    private AccessAuditService accessAudit;
+
+    @Autowired
+    public void setAccessAuditService(AccessAuditService accessAudit) {
+        this.accessAudit = accessAudit;
     }
 
     /**
@@ -128,7 +139,10 @@ public class UserService {
             user.setLinkedEmployee(linkedEmployee);
         }
 
-        return new UserSafeDto(userRepository.save(user));
+        User saved = userRepository.save(user);
+        auditUser(AccessAuditAction.USER_ROLES_ASSIGNED, saved, null, accessValue(saved),
+                "User " + saved.getUsername() + " created with roles " + roleNames(saved));
+        return new UserSafeDto(saved);
     }
 
     /**
@@ -180,6 +194,9 @@ public class UserService {
         user.setAdditionalBranches(nextAdditionalBranches);
 
         userRepository.save(user);
+        auditUser(AccessAuditAction.USER_ROLES_ASSIGNED, user, null, accessValue(user),
+                "Login access provisioned for employee " + employee.getId() + " with roles " + roleNames(user)
+                        + (alreadyActive ? "" : " (pending activation)"));
     }
 
     /**
@@ -228,6 +245,7 @@ public class UserService {
     @Transactional
     public UserSafeDto assignAdditionalBranches(Long userId, java.util.List<Long> branchIds) {
         User user = findUserById(userId);
+        java.util.Map<String, Object> before = accessValue(user);
         Set<Branch> next = new HashSet<>();
         StringBuilder branchIdsStr = new StringBuilder();
         if (branchIds != null) {
@@ -248,8 +266,14 @@ public class UserService {
             user.getLinkedEmployee().setAdditionalBranchIds(branchIdsStr.length() > 0 ? branchIdsStr.toString() : null);
             employeeRepository.save(user.getLinkedEmployee());
         }
-        
-        return new UserSafeDto(userRepository.save(user));
+
+        User saved = userRepository.save(user);
+        java.util.Map<String, Object> after = accessValue(saved);
+        if (!after.equals(before)) {
+            auditUser(AccessAuditAction.USER_BRANCHES_CHANGED, saved, before, after,
+                    "Additional branch access for " + saved.getUsername() + " changed");
+        }
+        return new UserSafeDto(saved);
     }
 
     /**
@@ -258,6 +282,7 @@ public class UserService {
     @Transactional
     public UserSafeDto assignRoles(Long userId, Set<Long> roleIds, Long primaryRoleId) {
         User user = findUserById(userId);
+        java.util.Map<String, Object> before = accessValue(user);
 
         boolean hadAdminRole = user.getRoles().stream()
                 .anyMatch(r -> r.getName().equals("ADMIN") || r.getName().equals("BRANCH_ADMIN"));
@@ -290,7 +315,13 @@ public class UserService {
             user.setPrimaryRole(null);
         }
 
-        return new UserSafeDto(userRepository.save(user));
+        User saved = userRepository.save(user);
+        java.util.Map<String, Object> after = accessValue(saved);
+        if (!after.equals(before)) {
+            auditUser(AccessAuditAction.USER_ROLES_CHANGED, saved, before, after,
+                    "Roles of " + saved.getUsername() + ": " + before.get("roles") + " -> " + after.get("roles"));
+        }
+        return new UserSafeDto(saved);
     }
 
     /**
@@ -300,8 +331,14 @@ public class UserService {
     public UserSafeDto freezeUser(Long id) {
         User user = findUserById(id);
         adminSafeguardService.validateFreezeUser(user);
+        java.util.Map<String, Object> before = accessValue(user);
         user.setActive(false);
-        return new UserSafeDto(userRepository.save(user));
+        User saved = userRepository.save(user);
+        if (Boolean.TRUE.equals(before.get("active"))) {
+            auditUser(AccessAuditAction.USER_SUSPENDED, saved, before, accessValue(saved),
+                    "User " + saved.getUsername() + " frozen");
+        }
+        return new UserSafeDto(saved);
     }
 
     /**
@@ -310,8 +347,14 @@ public class UserService {
     @Transactional
     public UserSafeDto unfreezeUser(Long id) {
         User user = findUserById(id);
+        java.util.Map<String, Object> before = accessValue(user);
         user.setActive(true);
-        return new UserSafeDto(userRepository.save(user));
+        User saved = userRepository.save(user);
+        if (!Boolean.TRUE.equals(before.get("active"))) {
+            auditUser(AccessAuditAction.USER_REACTIVATED, saved, before, accessValue(saved),
+                    "User " + saved.getUsername() + " unfrozen");
+        }
+        return new UserSafeDto(saved);
     }
 
     /**
@@ -338,6 +381,39 @@ public class UserService {
         user.setLinkedEmployee(null);
         userRepository.save(user);
         userRepository.delete(user);
+    }
+
+    // ─── Access audit helpers ────────────────────────────────────────────────
+
+    private void auditUser(AccessAuditAction action, User user,
+                           java.util.Map<String, Object> before, java.util.Map<String, Object> after,
+                           String summary) {
+        if (accessAudit == null) return;
+        accessAudit.record(AccessAuditService.Entry.of(action)
+                .target(user.getId(), user.getUsername())
+                .previous(before)
+                .next(after)
+                .summary(summary)
+                .affectedUser(user.getId(), user.getUsername()));
+    }
+
+    /** The access-relevant facts of a user: roles, primary role, branch scope, active flag. */
+    private static java.util.Map<String, Object> accessValue(User user) {
+        java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("roles", roleNames(user));
+        m.put("primaryRole", user.getPrimaryRole() != null ? user.getPrimaryRole().getName() : null);
+        m.put("branch", user.getBranch() != null ? user.getBranch().getCode() : null);
+        m.put("additionalBranches", user.getAdditionalBranches() == null ? List.of()
+                : user.getAdditionalBranches().stream()
+                    .map(b -> b.getCode() != null ? b.getCode() : String.valueOf(b.getId()))
+                    .sorted().toList());
+        m.put("active", user.isActive());
+        return m;
+    }
+
+    private static List<String> roleNames(User user) {
+        return user.getRoles() == null ? List.of()
+                : user.getRoles().stream().map(Role::getName).sorted().toList();
     }
 
     // Internal helper — returns entity (not DTO)

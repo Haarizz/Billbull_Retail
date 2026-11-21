@@ -30,8 +30,7 @@ import QRCode from 'qrcode';
 import { isTaxInvoiceDocument } from '../../../../../utils/documentTaxType';
 import { buildQrContent } from '../../../../../utils/printGenerator';
 import { buildPosPrintData, buildThermalReceiptHtml, USE_NEW_POS_PRINT_TEMPLATE } from '../../posPrintUtils';
-import { buildTemplate2Html } from '../../receiptTemplates/buildTemplate2Html';
-import { mapInvoiceToTxn, mapToTemplate2Data } from '../../receiptTemplates/billBullTaxInvoiceData';
+import { getReceiptTemplate } from '../../receiptTemplates';
 import { isSheetPaper } from './posSheetTemplates';
 
 const PX_PER_MM = 96 / 25.4;
@@ -188,7 +187,9 @@ export async function buildThermalReceiptHtmlForSale({
         showLoyalty: t2ReceiptShowLoyalty, showQRCode: t2ReceiptShowQRCode,
         showFooterText: t2ReceiptShowFooterText, showBarcode: t2ReceiptShowBarcode,
       };
-  const isTemplate2 = receiptTemplateId === 'billbull-ar';
+  // Template 2 and Template 3 (component templates) share one toggle set + data model.
+  const componentTemplate = getReceiptTemplate(receiptTemplateId);
+  const isTemplate2 = componentTemplate.kind === 'component';
   const showQr = isTemplate2 ? activeT2.showQRCode : activeShowQRCode;
   // An uploaded stamp takes the QR's place, as on the printed receipt.
   const stampDataUrl = showQr && tplStampDataUrl ? tplStampDataUrl : null;
@@ -205,7 +206,7 @@ export async function buildThermalReceiptHtmlForSale({
   const widthMm = thermalPaperWidthMm(thermalPaper);
 
   if (isTemplate2) {
-    const txn = mapInvoiceToTxn(full, {
+    const txn = componentTemplate.mapInvoiceToTxn(full, {
       currency: activeCurrency, terminalId, cashierName, salespersonName,
       branchName: full.branchName || currentTerminal?.branchName || currentSession?.branchName || '',
       customerPhone: resolvedPhone, customerEmail: resolvedEmail,
@@ -221,7 +222,7 @@ export async function buildThermalReceiptHtmlForSale({
       logoDataUrl: tplLogoDataUrl, qrDataUrl, stampDataUrl,
       footerText: activeFooter, titleEn: activeHeader, titleAr: activeHeaderAr,
     };
-    return { html: buildTemplate2Html(mapToTemplate2Data(outlet, txn, activeT2)), widthMm };
+    return { html: componentTemplate.buildHtml(componentTemplate.mapData(outlet, txn, activeT2)), widthMm };
   }
 
   const html = buildThermalReceiptHtml(thermalPaper, full, {

@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter, useHref } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@billbull/shared/assets/billBullLogo.png', () => ({ default: 'logo.png' }));
@@ -58,6 +58,30 @@ describe('till routes', () => {
   it('redirects an already signed-in user away from /login', () => {
     authState.authenticated = true;
     at('/login');
+    expect(screen.getByText(/POS WORKSPACE/)).toBeTruthy();
+  });
+});
+
+// The deployed router basename is '/pos/' (ROUTER_BASE_PATH). With '/pos' React Router writes the
+// home route as "/pos" (no slash), and reloading that leaves the till: Vite shows "did you mean to
+// visit /pos/?" and the offline service worker (scope /pos/) cannot serve it.
+describe('till router basename', () => {
+  function Hrefs() {
+    return <div>{`home=${useHref('/')} login=${useHref('/login')}`}</div>;
+  }
+
+  it('keeps the trailing slash on the till home and nests /login under it', () => {
+    render(<MemoryRouter basename="/pos/" initialEntries={['/pos/']}><Hrefs /></MemoryRouter>);
+    expect(screen.getByText('home=/pos/ login=/pos/login')).toBeTruthy();
+  });
+
+  it('serves the till routes under /pos/', () => {
+    authState.authenticated = false;
+    render(<MemoryRouter basename="/pos/" initialEntries={['/pos/']}><TillRoutes /></MemoryRouter>);
+    expect(screen.getByText('Sign in with PIN')).toBeTruthy();
+    cleanup();
+    authState.authenticated = true;
+    render(<MemoryRouter basename="/pos/" initialEntries={['/pos/login']}><TillRoutes /></MemoryRouter>);
     expect(screen.getByText(/POS WORKSPACE/)).toBeTruthy();
   });
 });

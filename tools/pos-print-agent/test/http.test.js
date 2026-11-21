@@ -44,6 +44,9 @@ test.describe("origin allow-list and CORS", () => {
     "https://evil.example",
     "https://acme.billbull.app.evil.example", // suffix trick
     "https://evil.acme.billbull.app",         // subdomain of a trusted host
+    "https://billbull.app",                   // the bare domain is not a client site
+    "https://acme-billbull.app",              // lookalike domain
+    "https://acme.billbull.app.",             // trailing-dot host
     "http://acme.billbull.app",               // wrong scheme
     "https://acme.billbull.app:8443",         // wrong port
     "null",                                   // sandboxed iframe / file://
@@ -507,10 +510,11 @@ test.describe("surface", () => {
       runCli(["--add-origin", bad], io);
     }
     assert.deepEqual(codes, [2, 2, 2, 2, 2]);
-    runCli(["--add-origin", "https://new.billbull.app/"], io);
-    assert.equal((await agent.request({ headers: { Origin: "https://new.billbull.app" } })).status, 200);
-    runCli(["--remove-origin", "https://new.billbull.app"], io);
-    assert.equal((await agent.request({ headers: { Origin: "https://new.billbull.app" } })).status, 403);
+    // Not a *.billbull.app client site, so trust comes only from config.json.
+    runCli(["--add-origin", "https://pos.partner.example/"], io);
+    assert.equal((await agent.request({ headers: { Origin: "https://pos.partner.example" } })).status, 200);
+    runCli(["--remove-origin", "https://pos.partner.example"], io);
+    assert.equal((await agent.request({ headers: { Origin: "https://pos.partner.example" } })).status, 403);
     // An unknown or mistyped command is refused; it never starts a second agent.
     codes.length = 0;
     assert.equal(runCli(["--not-a-command"], io), true);

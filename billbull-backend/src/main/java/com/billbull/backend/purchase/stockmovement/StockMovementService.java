@@ -349,8 +349,11 @@ public class StockMovementService {
 
         if (alreadyDecreased)
             throw new IllegalStateException(
-                    "Outbound stock already posted for " + sourceType + " #" + sourceId
-                            + " product #" + productId + " in the same stock identity. Duplicate deduction blocked.");
+                    "Duplicate stock deduction blocked: " + describeProduct(productId)
+                            + " was already deducted by " + describeSource(sourceType, sourceId, ref)
+                            + (normalizedBatchNumber != null ? " (batch " + normalizedBatchNumber + ")" : "")
+                            + ". The same item cannot be deducted twice from one document"
+                            + " — if it appears on more than one line, those lines must be combined.");
 
         StockMovement sm = new StockMovement();
         sm.setSourceType(sourceType);
@@ -390,6 +393,30 @@ public class StockMovementService {
         } catch (Exception e) {
             // Ignore notification errors to not block transaction
         }
+    }
+
+    /** "item 10583 - 1000 GLN WATER TANK" for messages users read; falls back to the id. */
+    private String describeProduct(Long productId) {
+        try {
+            return productRepository.findById(productId)
+                    .map(p -> {
+                        String code = p.getCode() != null && !p.getCode().isBlank() ? p.getCode() : null;
+                        String name = p.getName() != null && !p.getName().isBlank() ? p.getName() : null;
+                        if (code != null && name != null) return "item " + code + " - " + name;
+                        if (code != null) return "item " + code;
+                        if (name != null) return "item " + name;
+                        return "product #" + productId;
+                    })
+                    .orElse("product #" + productId);
+        } catch (RuntimeException e) {
+            return "product #" + productId;
+        }
+    }
+
+    /** "delivery note DN-2026-0121" rather than "DELIVERY_NOTE #121". */
+    private static String describeSource(StockSourceType sourceType, Long sourceId, String ref) {
+        String label = sourceType != null ? sourceType.name().toLowerCase().replace('_', ' ') : "document";
+        return ref != null && !ref.isBlank() ? label + " " + ref : label + " #" + sourceId;
     }
 
     // =========================================================

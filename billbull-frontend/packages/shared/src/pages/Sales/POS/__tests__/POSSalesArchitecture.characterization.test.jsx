@@ -303,7 +303,7 @@ describe('extracted child components stay extracted', () => {
       // CustomerPicker's only POSSales use moved into POS/features/customers/CreditBalance.jsx.
       ['CustomerView', 1], ['CustomerPicker', 0], ['POSItemEntryContainer', 1],
       ['SupervisorTakeoverDialog', 1], ['BusinessDayStatusBanner', 1],
-      ['ReceiptShareModal', 1], ['SalesReturnScreen', 1],
+      ['ReceiptShareModal', 3], ['SalesReturnScreen', 1],
     ]) {
       expect(SRC.match(new RegExp(`<${name}[\\s/>]`, 'g')) || [], name).toHaveLength(times);
     }
@@ -370,7 +370,7 @@ describe('render-tree region anchors, in source order', () => {
     ['lock pos dialog', '<LockPosDialog'],
     ['pos locked overlay', '{posLocked && ('],
     ['credit card balance dialog', '<Dialog open={showCreditCardBalance}'],
-    ['last receipt dialog', '<Dialog open={showLastReceiptDialog}'],
+    ['last receipt dialog', '<LastReceiptDialog'],
     ['customer history preview', '<Dialog open={showCustomerHistoryPreview}'],
     ['reprint modal', '{showReprintModal && (() => {'],
     ['feedback toasts', '<PosFeedbackToasts'],
@@ -559,23 +559,26 @@ describe('cross-feature orchestration handlers', () => {
  * the commit message.
  */
 describe('shape counters (update deliberately)', () => {
-  it('declares 235 top-level useState pairs (+2: the invoice template family and the reprint sheet format; +1 P3: checkoutQuickCash; +1: showCloseDayConfirm; +1: quickCheckoutEnabled; +1: openingCountSource)', () => {
-    expect(topLevel(/^ {2}const \[/)).toHaveLength(235);
+  it('declares 239 top-level useState pairs (+1: reprintShare, sharing a reprinted invoice; +2: the invoice template family and the reprint sheet format; +1 P3: checkoutQuickCash; +1: showCloseDayConfirm; +1: quickCheckoutEnabled; +1: openingCountSource; +3: the Last Receipt server lookup loading/error/retry)', () => {
+    expect(topLevel(/^ {2}const \[/)).toHaveLength(239);
   });
 
-  it('declares 18 top-level refs (+1: productEntryBlockedRef, the overlay gate on product entry; +1 P3: quickCashSeqRef)', () => {
-    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = (React\.)?useRef\(/)).toHaveLength(18);
+  it('declares 19 top-level refs (+1: productEntryBlockedRef, the overlay gate on product entry; +1 P3: quickCashSeqRef; +1 M2.2: the delivery checkout-key tracker)', () => {
+    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = (React\.)?useRef\(/)).toHaveLength(19);
   });
 
-  it('declares 35 top-level effects (+1: the Sales Invoice template family load; +1: the opening count default)', () => {
-    expect(topLevel(/^ {2}(React\.)?useEffect\(/)).toHaveLength(35);
+  it('declares 36 top-level effects (+1: the Sales Invoice template family load; +1: the opening count default; +1: the Last Receipt lookup after a reload)', () => {
+    expect(topLevel(/^ {2}(React\.)?useEffect\(/)).toHaveLength(36);
   });
 
-  it('declares 19 top-level memos and 26 top-level callbacks', () => {
-    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = useMemo\(/)).toHaveLength(19);
+  it('declares 20 top-level memos and 28 top-level callbacks', () => {
+    // 18 since the sheet checkout preview (the old dormant A4 memo) moved into useCheckoutSheetPreview;
+    // 19 since the WhatsApp receipt link: receiptLinkDoc; 20 since the email receipt dialog: receiptEmailDoc.
+    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = useMemo\(/)).toHaveLength(20);
     // 25 since Action Button Access: requestFunctionApproval and notifyPosFunctionDenied;
-    // 26 since P3: clearCheckoutQuickCash.
-    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = useCallback\(/)).toHaveLength(26);
+    // 26 since P3: clearCheckoutQuickCash; 27 since the WhatsApp receipt link: buildReceiptShareHtml;
+    // 28 since SMS carries the receipt link: createReceiptShareLink.
+    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = useCallback\(/)).toHaveLength(28);
   });
 
   it('all state is declared in the first 1,300 lines — the render tree below owns none', () => {

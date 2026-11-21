@@ -436,7 +436,7 @@ const AlterItemModal = ({
                     {locked && <Lock className="h-3.5 w-3.5" />}{s.short}
                   </span>
                   <span className={`mt-0.5 truncate text-[11px] tabular-nums ${isActive ? 'text-[#B8942E]' : 'text-gray-500'}`}>
-                    {draft ? `→ ${draft}` : (m === 'discount' && !(Number(item.discount) > 0) ? '—' : currentLabel(m))}
+                    {draft ? <>→ {draft}</> : (m === 'discount' && !(Number(item.discount) > 0) ? '—' : currentLabel(m))}
                   </span>
                 </button>
               );
@@ -519,7 +519,13 @@ const AlterItemModal = ({
   const deltaTone = delta > 0.0005 ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
     : delta < -0.0005 ? 'bg-red-50 text-red-600 ring-red-200'
       : 'bg-gray-100 text-gray-500 ring-gray-200';
-  const breakdown = `${preview.q} × ${formatCurrency(preview.p)}${preview.d > 0 ? ` − ${preview.d.toFixed(2).replace(/\.00$/, '')}%` : ''}`;
+  // formatCurrency returns a React node (dirham glyph), so never interpolate it into a string.
+  const breakdown = (
+    <>
+      {preview.q} × {formatCurrency(preview.p)}
+      {preview.d > 0 ? ` − ${preview.d.toFixed(2).replace(/\.00$/, '')}%` : null}
+    </>
+  );
   const kbd = 'inline-flex min-w-[1.25rem] items-center justify-center rounded-md border border-gray-200 bg-white px-1 py-px font-mono text-[10px] font-semibold text-gray-500 shadow-[0_1px_0_rgba(15,23,42,0.08)]';
 
   return (
@@ -583,7 +589,7 @@ const AlterItemModal = ({
             </div>
             <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold tabular-nums ring-1 ${deltaTone}`}>
               {preview.changed
-                ? `${delta >= 0 ? '+' : '−'}${formatCurrency(Math.abs(delta))}`
+                ? <>{delta >= 0 ? '+' : '−'}{formatCurrency(Math.abs(delta))}</>
                 : 'No changes'}
             </span>
           </div>
@@ -661,7 +667,7 @@ const AlterItemModal = ({
             <label className="block rounded-2xl border-2 border-[#327F74] bg-white px-4 pt-2.5 pb-2 ring-4 ring-[#327F74]/10">
               <span className="flex items-center justify-between gap-2">
                 <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#327F74]">{fieldLabel}</span>
-                <span className="text-[11px] tabular-nums text-gray-400">{mode === 'discount' && !(Number(item.discount) > 0) ? 'No discount yet' : `Current ${currentLabel(mode)}`}</span>
+                <span className="text-[11px] tabular-nums text-gray-400">{mode === 'discount' && !(Number(item.discount) > 0) ? 'No discount yet' : <>Current {currentLabel(mode)}</>}</span>
               </span>
               {field('mt-0.5 w-full bg-transparent text-right font-mono text-4xl font-bold tracking-tight text-[#1E293B] placeholder:text-gray-300 focus:outline-none')}
             </label>

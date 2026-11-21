@@ -3,7 +3,10 @@ package com.billbull.backend.security;
 import com.billbull.backend.role.Role;
 import com.billbull.backend.role.RoleRepository;
 import com.billbull.backend.user.User;
+import com.billbull.backend.security.accessaudit.AccessAuditAction;
+import com.billbull.backend.security.accessaudit.AccessAuditService;
 import com.billbull.backend.user.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.core.Authentication;
@@ -11,6 +14,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -39,6 +43,18 @@ public class RolePermissionService {
         this.rolePermissionRepository = rolePermissionRepository;
         this.roleRepository = roleRepository;
         this.userRepository = userRepository;
+    }
+
+    /**
+     * Access-control audit ledger. Setter-injected so existing constructor call sites (tests,
+     * other services) are unchanged; Spring always supplies it, and every mutation below records
+     * its before/after values in the same transaction as the change.
+     */
+    private AccessAuditService accessAudit;
+
+    @Autowired
+    public void setAccessAuditService(AccessAuditService accessAudit) {
+        this.accessAudit = accessAudit;
     }
 
     /**
@@ -83,6 +99,20 @@ public class RolePermissionService {
             Boolean canDelete,
             Boolean canApprove,
             Boolean canExport) {
+        return upsert(id, roleName, module, canView, canCreate, canEdit, canDelete, canApprove, canExport, null);
+    }
+
+    private RolePermissionDto upsert(
+            Long id,
+            String roleName,
+            String module,
+            Boolean canView,
+            Boolean canCreate,
+            Boolean canEdit,
+            Boolean canDelete,
+            Boolean canApprove,
+            Boolean canExport,
+            AccessAuditService.Affected affected) {
 
         RolePermission rp;
 
@@ -102,6 +132,9 @@ public class RolePermissionService {
                     });
         }
 
+        boolean isNew = rp.getId() == null;
+        Map<String, Object> before = isNew ? null : flagsOf(rp);
+
         if (canView != null)    rp.setCanView(canView);
         if (canCreate != null)  rp.setCanCreate(canCreate);
         if (canEdit != null)    rp.setCanEdit(canEdit);
@@ -111,7 +144,23 @@ public class RolePermissionService {
 
         validateNoAdminLockout(rp);
 
-        return new RolePermissionDto(rolePermissionRepository.save(rp));
+        Map<String, Object> after = flagsOf(rp);
+        RolePermission saved = rolePermissionRepository.save(rp);
+
+        if (accessAudit != null && (isNew || !after.equals(before))) {
+            String role = saved.getRole().getName();
+            accessAudit.record(AccessAuditService.Entry
+                    .of(isNew ? AccessAuditAction.PERMISSION_ADDED : AccessAuditAction.PERMISSION_CHANGED)
+                    .target(saved.getId(), role + " · " + saved.getModule())
+                    .role(role)
+                    .module(saved.getModule())
+                    .previous(before == null ? inheritedValue(saved.getModule()) : before)
+                    .next(after)
+                    .summary(describeChange(before, after, isNew))
+                    .affected(affected != null ? affected : accessAudit.affectedByRole(role)));
+        }
+
+        return new RolePermissionDto(saved);
     }
 
     /**
@@ -123,7 +172,10 @@ public class RolePermissionService {
     public RolePermissionDto delete(Long id) {
         RolePermission rp = rolePermissionRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("RolePermission not found with id: " + id));
+        return deleteRow(rp, null);
+    }
 
+    private RolePermissionDto deleteRow(RolePermission rp, AccessAuditService.Affected affected) {
         // Deleting ADMIN's top-level userManagement row would leave the ADMIN role
         // with no route into the configuration screen (there is no parent to fall
         // back to). Sub-resource rows may be deleted — they inherit from the parent.
@@ -134,8 +186,62 @@ public class RolePermissionService {
         }
 
         RolePermissionDto snapshot = new RolePermissionDto(rp);
+        Map<String, Object> before = flagsOf(rp);
         rolePermissionRepository.delete(rp);
+
+        if (accessAudit != null) {
+            String role = snapshot.getRoleName();
+            accessAudit.record(AccessAuditService.Entry.of(AccessAuditAction.PERMISSION_RESET)
+                    .target(snapshot.getId(), role + " · " + snapshot.getModule())
+                    .role(role)
+                    .module(snapshot.getModule())
+                    .previous(before)
+                    .next(inheritedValue(snapshot.getModule()))
+                    .summary(parentOf(snapshot.getModule()) != null
+                            ? "Explicit rule removed — now inherits from " + parentOf(snapshot.getModule())
+                            : "Explicit rule removed — no access")
+                    .affected(affected != null ? affected : accessAudit.affectedByRole(role)));
+        }
         return snapshot;
+    }
+
+    /**
+     * Apply one staged edit from the role configuration screen atomically: every upsert and
+     * every reset-to-inherit commits together or not at all, and each changed row gets its own
+     * audit entry sharing one change-set id and the reason supplied with the request.
+     *
+     * @param upserts       rows {module, canView?, ...} with partial-update semantics
+     * @param resetModules  modules whose explicit row is removed so they inherit again
+     * @return the role's complete permission rows after the change
+     */
+    @Transactional
+    public List<RolePermissionDto> applyChangeSet(String roleName,
+                                                  List<Map<String, Object>> upserts,
+                                                  List<String> resetModules) {
+        if (roleName == null || roleName.isBlank()) {
+            throw new IllegalArgumentException("roleName is required");
+        }
+        Role role = roleRepository.findByName(roleName)
+                .orElseThrow(() -> new IllegalArgumentException("Role not found: " + roleName));
+        AccessAuditService.Affected affected =
+                accessAudit != null ? accessAudit.affectedByRole(role.getName()) : null;
+
+        if (resetModules != null) {
+            for (String module : resetModules) {
+                String canonical = ModuleCatalog.canonicalize(module);
+                rolePermissionRepository.findByRoleAndModule(role, canonical)
+                        .ifPresent(rp -> deleteRow(rp, affected));
+            }
+        }
+        if (upserts != null) {
+            for (Map<String, Object> row : upserts) {
+                upsert(null, role.getName(), (String) row.get("module"),
+                        flag(row, "canView"), flag(row, "canCreate"), flag(row, "canEdit"),
+                        flag(row, "canDelete"), flag(row, "canApprove"), flag(row, "canExport"),
+                        affected);
+            }
+        }
+        return getByRoleName(role.getName());
     }
 
     /**
@@ -147,10 +253,12 @@ public class RolePermissionService {
         if (roleName == null || roleName.isBlank()) {
             throw new RuntimeException("roleName is required");
         }
+        AccessAuditService.Affected affected =
+                accessAudit != null ? accessAudit.affectedByRole(roleName) : null;
         List<RolePermissionDto> result = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             String module = (String) row.get("module");
-            result.add(createOrUpdate(
+            result.add(upsert(
                     null,
                     roleName,
                     module,
@@ -159,7 +267,8 @@ public class RolePermissionService {
                     flag(row, "canEdit"),
                     flag(row, "canDelete"),
                     flag(row, "canApprove"),
-                    flag(row, "canExport")));
+                    flag(row, "canExport"),
+                    affected));
         }
         return result;
     }
@@ -184,8 +293,10 @@ public class RolePermissionService {
         Role target = roleRepository.findByName(toRoleName)
                 .orElseThrow(() -> new RuntimeException("Role not found: " + toRoleName));
 
-        rolePermissionRepository.findByRole_Name(target.getName())
-                .forEach(rolePermissionRepository::delete);
+        Map<String, Object> before = new LinkedHashMap<>();
+        List<RolePermission> existing = rolePermissionRepository.findByRole_Name(target.getName());
+        existing.forEach(rp -> before.put(rp.getModule(), flagsOf(rp)));
+        existing.forEach(rolePermissionRepository::delete);
 
         List<RolePermissionDto> copies = new ArrayList<>();
         for (RolePermission src : rolePermissionRepository.findByRole_Name(source.getName())) {
@@ -199,6 +310,20 @@ public class RolePermissionService {
             copy.setCanApprove(src.isCanApprove());
             copy.setCanExport(src.isCanExport());
             copies.add(new RolePermissionDto(rolePermissionRepository.save(copy)));
+        }
+
+        if (accessAudit != null) {
+            Map<String, Object> after = new LinkedHashMap<>();
+            copies.forEach(c -> after.put(c.getModule(), AccessAuditService.flags(c.isCanView(), c.isCanCreate(),
+                    c.isCanEdit(), c.isCanDelete(), c.isCanApprove(), c.isCanExport())));
+            accessAudit.record(AccessAuditService.Entry.of(AccessAuditAction.PERMISSIONS_COPIED)
+                    .target(target.getId(), target.getName())
+                    .role(target.getName())
+                    .previous(before)
+                    .next(after)
+                    .summary("Permissions replaced with a copy of " + source.getName() + " ("
+                            + before.size() + " rules before, " + after.size() + " after)")
+                    .affected(accessAudit.affectedByRole(target.getName())));
         }
         return copies;
     }
@@ -295,6 +420,47 @@ public class RolePermissionService {
 
     private String moduleKey(RolePermission rp) {
         return rp.getModule() == null ? "" : rp.getModule().toLowerCase(Locale.ROOT);
+    }
+
+    private static Map<String, Object> flagsOf(RolePermission rp) {
+        return AccessAuditService.flags(rp.isCanView(), rp.isCanCreate(), rp.isCanEdit(),
+                rp.isCanDelete(), rp.isCanApprove(), rp.isCanExport());
+    }
+
+    /**
+     * The module a key inherits from, or null. {@code permissions.*} grants have a dot but no real
+     * parent ("permissions" never has a row), so removing one means "no access", not "inherits".
+     */
+    private static String parentOf(String module) {
+        if (module == null || !module.contains(".") || module.startsWith("permissions.")) return null;
+        return module.substring(0, module.indexOf('.'));
+    }
+
+    /** Audit value for "no explicit row": what the module falls back to. */
+    private static Map<String, Object> inheritedValue(String module) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("explicit", false);
+        m.put("inheritsFrom", parentOf(module));
+        return m;
+    }
+
+    private static final List<String> FLAG_ORDER =
+            List.of("view", "create", "edit", "delete", "approve", "export");
+
+    /** "+create +edit -delete" style summary, or the granted list for a brand-new rule. */
+    static String describeChange(Map<String, Object> before, Map<String, Object> after, boolean isNew) {
+        if (isNew || before == null) {
+            String granted = FLAG_ORDER.stream().filter(f -> Boolean.TRUE.equals(after.get(f)))
+                    .collect(Collectors.joining(", "));
+            return "Explicit rule added: " + (granted.isEmpty() ? "no access" : granted);
+        }
+        List<String> parts = new ArrayList<>();
+        for (String f : FLAG_ORDER) {
+            boolean was = Boolean.TRUE.equals(before.get(f));
+            boolean now = Boolean.TRUE.equals(after.get(f));
+            if (was != now) parts.add((now ? "+" : "-") + f);
+        }
+        return parts.isEmpty() ? "No change" : String.join(" ", parts);
     }
 
     private static Boolean flag(Map<String, Object> body, String key) {

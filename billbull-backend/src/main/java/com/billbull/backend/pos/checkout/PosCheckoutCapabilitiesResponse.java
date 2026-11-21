@@ -23,15 +23,25 @@ public class PosCheckoutCapabilitiesResponse {
     private final List<String> supportedAllocationTypes;
     /** Checkout contract version — bumped when the accepted request shape changes. */
     private final int checkoutApiVersion;
+    /**
+     * True when every checkout request must carry a caller-supplied {@code checkoutKey} (Phase 0 /
+     * M2.2.1). A request without one is refused with 409 {@code CHECKOUT_KEY_REQUIRED} before
+     * anything is written, whatever its tender, session or delivery workflow (PI-Flow delivery
+     * orders included). The client creates the key before the first attempt and sends the same key
+     * on every retry of that attempt, including after a timeout or a lost response; a new key means
+     * a new sale. A server whose response omits this field predates the rule.
+     */
+    private final boolean checkoutKeyRequired;
 
     public PosCheckoutCapabilitiesResponse(boolean paymentAllocations, boolean legacyPaymentScalars,
                                            int maxCardAllocations, List<String> supportedAllocationTypes,
-                                           int checkoutApiVersion) {
+                                           int checkoutApiVersion, boolean checkoutKeyRequired) {
         this.paymentAllocations = paymentAllocations;
         this.legacyPaymentScalars = legacyPaymentScalars;
         this.maxCardAllocations = maxCardAllocations;
         this.supportedAllocationTypes = supportedAllocationTypes;
         this.checkoutApiVersion = checkoutApiVersion;
+        this.checkoutKeyRequired = checkoutKeyRequired;
     }
 
     public boolean isPaymentAllocations() { return paymentAllocations; }
@@ -39,4 +49,5 @@ public class PosCheckoutCapabilitiesResponse {
     public int getMaxCardAllocations() { return maxCardAllocations; }
     public List<String> getSupportedAllocationTypes() { return supportedAllocationTypes; }
     public int getCheckoutApiVersion() { return checkoutApiVersion; }
+    public boolean isCheckoutKeyRequired() { return checkoutKeyRequired; }
 }

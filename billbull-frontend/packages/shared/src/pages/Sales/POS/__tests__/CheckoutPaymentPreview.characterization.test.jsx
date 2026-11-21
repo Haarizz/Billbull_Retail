@@ -34,11 +34,11 @@ import CheckoutPaymentPreview from '../features/checkout/CheckoutPaymentPreview'
  * the freeze declarations' location (CheckoutPaymentRegions).
  *
  * Known current behaviours/defects pinned as-is (do NOT fix here):
- *   - showA4CheckoutPreview is a hard-coded `false`; the A4 branch and checkoutA4Html are dormant and
- *     checkoutA4BlobUrl is always ''.
- *   - The dormant A4 branch guards on checkoutA4Html but renders checkoutA4BlobUrl, so for one commit
- *     it would mount an <iframe> with no src.
- *   - The dormant A4 memo's freeze returns checkoutPreviewFreezeRef.current — the THERMAL html.
+ *   - showA4CheckoutPreview now follows the sale's paper (useCheckoutSheetPreview): true on a sheet
+ *     paper (A4 / A5 / A5L / Pre-printed). The harness below still models the old hard-coded `false`
+ *     gate, which is the thermal-paper case; the sheet hook has its own suite.
+ *   - The A4 branch guards on checkoutA4Html but renders checkoutA4BlobUrl, so for one commit it
+ *     mounts an <iframe> with no src.
  *   - The freeze ref is written during render, inside the thermal memo.
  *   - A thermal builder throw returns '' WITHOUT clearing the ref, and useCheckout only snapshots a
  *     truthy checkoutThermalHtml, so settling then freezes the PREVIOUS html (a stale receipt).
@@ -845,6 +845,8 @@ const CALL = [
   '                checkoutA4Html={checkoutA4Html}',
   '                checkoutA4BlobUrl={checkoutA4BlobUrl}',
   '                checkoutPreviewBlobUrl={checkoutPreviewBlobUrl}',
+  '                thermalPaperSize={checkoutSheetPreview.thermalPaper}',
+  '                sheetPageSize={checkoutSheetPreview.pageSize}',
   '              />',
 ].join('\n');
 /** The live column in POSSales: the verbatim column with only its inner expression swapped for CALL. */
@@ -859,6 +861,16 @@ const CONTENT_AS_EXPRESSION = () => {
   lines[lines.length - 1] = lines[lines.length - 1].replace(/^( +)\)\}$/, '$1)');
   return lines.join('\n');
 };
+/**
+ * CONTENT_AS_EXPRESSION once the preview learned the sale's paper: the A4 frame takes the sheet's
+ * page box, the thermal preview takes the configured roll width, and the "always 80mm" comment goes.
+ * Nothing else in the expression changed.
+ */
+const PAPER_AWARE_EXPRESSION = () => CONTENT_AS_EXPRESSION()
+  .replace('<A4ScaledPreview src={checkoutA4BlobUrl} fillWidth />',
+    '<A4ScaledPreview src={checkoutA4BlobUrl} fillWidth pageWidth={sheetPageSize?.width} pageHeight={sheetPageSize?.height} />')
+  .replace('                // User request: always use 80mm print preview in the checkout window.\n', '')
+  .replace('paperSize="80mm"', 'paperSize={thermalPaperSize}');
 const COMPONENT = readSource('../features/checkout/CheckoutPaymentPreview.jsx');
 /** CheckoutPaymentPreview with whole-line `//` comments removed (its header prose names owner concepts). */
 const COMPONENT_CODE = COMPONENT.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
@@ -875,9 +887,9 @@ const PARENT_LOCALS = [
 const readsOf = (src) => PARENT_LOCALS.filter((id) => new RegExp(`\\b${id}\\b`).test(src));
 
 describe('F. source — boundaries', () => {
-  it('the verbatim column (23 lines) is now live as its unchanged outer <div> around the CheckoutPaymentPreview call (11 lines), once, framed by the root, LEFT comment and RIGHT comment', () => {
+  it('the verbatim column (23 lines) is now live as its unchanged outer <div> around the CheckoutPaymentPreview call (13 lines), once, framed by the root, LEFT comment and RIGHT comment', () => {
     expect(PREVIEW().split('\n')).toHaveLength(23);
-    expect(LIVE_COLUMN().split('\n')).toHaveLength(11);
+    expect(LIVE_COLUMN().split('\n')).toHaveLength(13);
     expect(count(POS_SALES, PREVIEW())).toBe(0);
     expect(count(POS_SALES, LIVE_COLUMN())).toBe(1);
     expect(PAYMENT_PHASE).toContain(
@@ -892,8 +904,9 @@ describe('F. source — boundaries', () => {
     const rightComment = lineOf(POS_SALES, '{/* ══ RIGHT: Payment & Settlement');
     expect(leftComment).toBe(rootLine + 2);
     expect(columnOpen).toBe(leftComment + 1);
-    // was columnOpen + 22 + 2 while the 18-line inner expression was inline
-    expect(rightComment).toBe(columnOpen + 10 + 2);
+    // was columnOpen + 22 + 2 while the 18-line inner expression was inline, + 10 + 2 before the
+    // call passed the paper props
+    expect(rightComment).toBe(columnOpen + 12 + 2);
   });
 
   it('Candidate A copy is exactly the column\'s inner expression (lines 5–22 of the column)', () => {
@@ -931,14 +944,14 @@ describe('F. source — preview state, freeze and lifecycle ownership', () => {
     return POS_SALES.indexOf(needle);
   };
 
-  it('top-level order in POSSales: settling state/ref → thermal memo → thermal blob → A4 gate/memo → A4 blob → unfreeze effect → useCheckout(previewFreeze) → region', () => {
+  it('top-level order in POSSales: settling state/ref → thermal memo → thermal blob → sheet preview hook → A4 blob → unfreeze effect → useCheckout(previewFreeze) → region', () => {
     const order = [
       '  const [checkoutSettling, setCheckoutSettling] = useState(false);\n',
       "  const checkoutPreviewFreezeRef = useRef('');\n",
       '  const checkoutThermalHtml = useMemo(() => {\n    if (checkoutSettling) return checkoutPreviewFreezeRef.current;\n    if (!currentInvoice) return \'\';\n    try {\n',
       '  const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);\n',
-      '  const showA4CheckoutPreview = false;\n',
-      "  const checkoutA4Html = useMemo(() => {\n    if (!showA4CheckoutPreview) return '';\n    if (checkoutSettling) return checkoutPreviewFreezeRef.current || '';\n    if (!currentInvoice) return '';\n",
+      '  const checkoutSheetPreview = useCheckoutSheetPreview({\n    open: showPaymentDialog,\n    settling: checkoutSettling,\n',
+      '  const showA4CheckoutPreview = checkoutSheetPreview.isSheet;\n  const checkoutA4Html = checkoutSheetPreview.html;\n',
       '  const checkoutA4BlobUrl = useA4BlobUrl(checkoutA4Html);\n',
       '  useEffect(() => {\n    if (!showPaymentDialog && checkoutSettling) setCheckoutSettling(false);\n  }, [showPaymentDialog, checkoutSettling]);\n',
       '    previewFreeze: { checkoutSettling, setCheckoutSettling, checkoutPreviewFreezeRef },\n',
@@ -954,19 +967,19 @@ describe('F. source — preview state, freeze and lifecycle ownership', () => {
     expect(memo.slice(memo.indexOf('} catch (e) {'))).not.toContain('checkoutPreviewFreezeRef');
   });
 
-  it('neither preview memo depends on showPaymentDialog or checkoutPhase (they run while hidden / across phases)', () => {
+  it('the thermal memo runs while hidden / across phases; the sheet preview is built only while the overlay is open', () => {
     const thermal = between(POS_SALES, '  const checkoutThermalHtml = useMemo(() => {\n', '  const checkoutPreviewBlobUrl');
-    const a4 = between(POS_SALES, '  const checkoutA4Html = useMemo(() => {\n', '  const checkoutA4BlobUrl');
-    for (const src of [thermal, a4]) {
-      expect(src).not.toMatch(/\bshowPaymentDialog\b|\bcheckoutPhase\b|\blastPaidInvoice\b/);
-    }
+    expect(thermal).not.toMatch(/\bshowPaymentDialog\b|\bcheckoutPhase\b|\blastPaidInvoice\b/);
     expect(thermal).toContain('  }, [checkoutSettling, currentInvoice,');
-    expect(a4).toContain('  }, [showA4CheckoutPreview, checkoutSettling, currentInvoice,');
+    const sheet = between(POS_SALES, '  const checkoutSheetPreview = useCheckoutSheetPreview({\n', '  const checkoutA4BlobUrl');
+    expect(sheet).toContain('    open: showPaymentDialog,\n');
+    expect(sheet).not.toMatch(/\bcheckoutPhase\b|\blastPaidInvoice\b/);
   });
 
-  it('POSSales token counts: setCheckoutSettling ×4 (decl, effect, previewFreeze, closeComplete); checkoutPreviewFreezeRef ×6; checkoutSettling read only outside the region', () => {
+  it('POSSales token counts: setCheckoutSettling ×4 (decl, effect, previewFreeze, closeComplete); checkoutPreviewFreezeRef ×5; checkoutSettling read only outside the region', () => {
     expect(POS_SALES.match(/\bsetCheckoutSettling\b/g)).toHaveLength(4);
-    expect(POS_SALES.match(/\bcheckoutPreviewFreezeRef\b/g)).toHaveLength(6);
+    // 6 while the dormant A4 memo also read it (its freeze returned the thermal html)
+    expect(POS_SALES.match(/\bcheckoutPreviewFreezeRef\b/g)).toHaveLength(5);
     expect(REGION.match(/\bsetCheckoutSettling\b/g)).toHaveLength(1);
     expect(REGION).not.toMatch(/\bcheckoutSettling\b|checkoutPreviewFreezeRef|checkoutThermalHtml|useA4BlobUrl/);
   });
@@ -1003,7 +1016,6 @@ describe('F. source — preview state, freeze and lifecycle ownership', () => {
     const pairs = [
       [POS_SALES, '    if (!showPaymentDialog && checkoutSettling) setCheckoutSettling(false);\n  }, [showPaymentDialog, checkoutSettling]);\n', 0],
       [POS_SALES, "    if (checkoutSettling) return checkoutPreviewFreezeRef.current;\n    if (!currentInvoice) return '';\n", 0],
-      [POS_SALES, "    if (!showA4CheckoutPreview) return '';\n    if (checkoutSettling) return checkoutPreviewFreezeRef.current || '';\n", 0],
       [USE_CHECKOUT, '    if (checkoutThermalHtml) checkoutPreviewFreezeRef.current = checkoutThermalHtml;\n    setCheckoutSettling(true);\n', 4],
       [POS_SALES, "            setShowPaymentDialog(false);\n            setCheckoutPhase('payment');\n            setCheckoutSettling(false);\n", -4],
     ];
@@ -1030,11 +1042,13 @@ describe('F. source — child components (read-only inventory)', () => {
     expect(typeof ThermalScaledPreview).toBe('function');
   });
 
-  it('A4ScaledPreview: module-level; owns a container ref, scale/size state and a ResizeObserver effect keyed on fillWidth; no handlers', () => {
-    const src = body(PRINT_PREVIEW, 'export function A4ScaledPreview({ src, fillWidth = false }) {');
-    expect(src.match(/React\.use\w+/g)).toEqual(['React.useRef', 'React.useState', 'React.useState', 'React.useEffect']);
-    expect(src).toContain('    return () => ro.disconnect();\n  }, [fillWidth]);\n');
-    expect(src).not.toMatch(/\bon[A-Z]\w*=|\bkey=/);
+  it('A4ScaledPreview: module-level; owns a container ref, scale/size state, a ResizeObserver effect keyed on fillWidth and the page box, and measured-height state; its only handler is the iframe onLoad measure', () => {
+    const src = body(PRINT_PREVIEW, 'export function A4ScaledPreview({ src, fillWidth = false, pageWidth = 794, pageHeight = 1055 }) {');
+    expect(src.match(/React\.use\w+/g)).toEqual(['React.useRef', 'React.useState', 'React.useState', 'React.useEffect', 'React.useState']);
+    expect(src).toContain('    return () => ro.disconnect();\n  }, [fillWidth, pageWidth, pageHeight]);\n');
+    expect(src.match(/\bon[A-Z]\w*=/g)).toEqual(['onLoad=']);
+    expect(src).toContain('          onLoad={measureDoc}\n');
+    expect(src).not.toMatch(/\bkey=/);
     expect(src).toContain('title="Invoice Preview"');
   });
 
@@ -1045,10 +1059,11 @@ describe('F. source — child components (read-only inventory)', () => {
     expect(src).toContain('      setTimeout(() => URL.revokeObjectURL(blobUrl), 100);\n    };\n  }, [html]);');
   });
 
-  it('no iframe load/doc wiring anywhere in the preview modules; DocumentA4Preview/A4PreviewFrame are not rendered by the region', () => {
-    for (const src of [PRINT_PREVIEW, DOC_A4_PREVIEW]) {
-      expect(src).not.toMatch(/onLoad|contentWindow|contentDocument|srcDoc/);
-    }
+  it('iframe load/doc wiring is only A4ScaledPreview\'s height measure; DocumentA4Preview/A4PreviewFrame are not rendered by the region', () => {
+    expect(DOC_A4_PREVIEW).not.toMatch(/onLoad|contentWindow|contentDocument|srcDoc/);
+    // A4ScaledPreview (fillWidth) reads the loaded document's height so a multi-page sheet
+    // scrolls in one container, not inside the iframe as well.
+    expect(PRINT_PREVIEW.match(/onLoad|contentWindow|contentDocument|srcDoc/g)).toEqual(['contentDocument', 'onLoad']);
     expect(REGION).not.toMatch(/<A4PreviewFrame|<DocumentA4Preview|<iframe/);
   });
 });
@@ -1270,15 +1285,16 @@ describe('G. CheckoutPaymentPreview renders exactly like the pre-extraction inne
 describe('H. source — CheckoutPaymentPreview', () => {
   const FOUR = ['showA4CheckoutPreview', 'checkoutA4Html', 'checkoutA4BlobUrl', 'checkoutPreviewBlobUrl'];
 
-  it('its return value is the column\'s inner expression byte for byte, minus only the JSX-container braces — no wrapper', () => {
+  it('its return value is the column\'s inner expression, minus the JSX-container braces, with only the paper props added — no wrapper', () => {
     expect(CONTENT_AS_EXPRESSION()).not.toBe(CONTENT());
     expect(CONTENT_AS_EXPRESSION().split('\n')).toHaveLength(18);
-    expect(count(COMPONENT, `  return (\n${CONTENT_AS_EXPRESSION()}\n  );\n}\n\nexport default CheckoutPaymentPreview;\n`)).toBe(1);
+    expect(PAPER_AWARE_EXPRESSION().split('\n')).toHaveLength(17);
+    expect(count(COMPONENT, `  return (\n${PAPER_AWARE_EXPRESSION()}\n  );\n}\n\nexport default CheckoutPaymentPreview;\n`)).toBe(1);
     expect(COMPONENT_CODE).not.toMatch(/<>|<\/>|Fragment/);
   });
 
-  it('props are exactly the four preview values, destructured in order; one module-level function', () => {
-    expect(COMPONENT).toContain('function CheckoutPaymentPreview({\n  showA4CheckoutPreview,\n  checkoutA4Html,\n  checkoutA4BlobUrl,\n  checkoutPreviewBlobUrl,\n}) {\n');
+  it('props are the four preview values in order, then the two paper props (defaults = the original 80mm / A4 frame); one module-level function', () => {
+    expect(COMPONENT).toContain("function CheckoutPaymentPreview({\n  showA4CheckoutPreview,\n  checkoutA4Html,\n  checkoutA4BlobUrl,\n  checkoutPreviewBlobUrl,\n  thermalPaperSize = '80mm',\n  sheetPageSize,\n}) {\n");
     expect(COMPONENT_CODE.match(/function \w+\(/g)).toEqual(['function CheckoutPaymentPreview(']);
     expect(readsOf(COMPONENT_CODE)).toEqual(FOUR);
     expect(typeof CheckoutPaymentPreview).toBe('function');
