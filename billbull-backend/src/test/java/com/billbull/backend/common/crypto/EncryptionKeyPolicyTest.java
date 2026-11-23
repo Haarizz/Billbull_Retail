@@ -71,7 +71,7 @@ class EncryptionKeyPolicyTest {
     @Test
     void everyRepositoryClientProfileAndAnyMixWithOneCountsAsADeployment() {
         for (String profile : new String[] {"prod", "qa", "testing", "demo", "client1", "geebu", "hilite",
-                "leroyalflowers", "leroyalgifts", "royaltools", "alfahad", "bikevillage"}) {
+                "leroyalflowers", "leroyalgifts", "royaltools", "alfahad", "bikevillage", "alamwag"}) {
             assertFalse(EncryptionKeyPolicy.devFallbackAllowed(new String[] {profile}), profile);
         }
         assertFalse(EncryptionKeyPolicy.devFallbackAllowed(new String[] {"dev", "royaltools"}));
