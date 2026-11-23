@@ -1,5 +1,8 @@
 package com.billbull.backend.config;
 
+import com.billbull.backend.platform.PlatformAgentAuthFilter;
+import com.billbull.backend.platform.PlatformPolicyFilter;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
@@ -26,14 +29,20 @@ public class SecurityConfig {
     private final JwtFilter jwtFilter;
     private final RateLimitFilter rateLimitFilter;
     private final CorsConfigurationSource corsConfigurationSource;
+    private final PlatformAgentAuthFilter platformAgentAuthFilter;
+    private final PlatformPolicyFilter platformPolicyFilter;
 
     // ✅ SINGLE constructor (this is important)
     public SecurityConfig(JwtFilter jwtFilter,
             RateLimitFilter rateLimitFilter,
-            CorsConfigurationSource corsConfigurationSource) {
+            CorsConfigurationSource corsConfigurationSource,
+            PlatformAgentAuthFilter platformAgentAuthFilter,
+            PlatformPolicyFilter platformPolicyFilter) {
         this.jwtFilter = jwtFilter;
         this.rateLimitFilter = rateLimitFilter;
         this.corsConfigurationSource = corsConfigurationSource;
+        this.platformAgentAuthFilter = platformAgentAuthFilter;
+        this.platformPolicyFilter = platformPolicyFilter;
     }
 
     @Bean
@@ -53,6 +62,8 @@ public class SecurityConfig {
                         // Customer-facing document links sent on WhatsApp (/d/:token): the 256-bit
                         // link token is the credential; DocumentShareLinkService checks it.
                         .requestMatchers("/api/public/documents/**").permitAll()
+                        // Control-plane agent: HMAC-signed by PlatformAgentAuthFilter, never a tenant JWT.
+                        .requestMatchers("/api/platform", "/api/platform/**").hasRole("PLATFORM_AGENT")
                         .anyRequest().authenticated())
                 // Without an explicit entry point Spring falls back to Http403ForbiddenEntryPoint,
                 // so a missing/expired JWT came back as 403 — indistinguishable from a real
@@ -64,17 +75,22 @@ public class SecurityConfig {
                         .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+                // Signed control-plane calls are authenticated before (and instead of) the JWT.
+                .addFilterBefore(platformAgentAuthFilter, JwtFilter.class)
                 // Rate limiter runs AFTER JwtFilter so the authenticated principal is available for
                 // per-user bucket keys (design §4/§6). No-op unless ratelimit.enabled=true.
-                .addFilterAfter(rateLimitFilter, JwtFilter.class);
+                .addFilterAfter(rateLimitFilter, JwtFilter.class)
+                // Suspension / read-only / module entitlements pushed by the control plane. No-op
+                // for a tenant the control plane has never managed.
+                .addFilterAfter(platformPolicyFilter, RateLimitFilter.class);
 
         return http.build();
     }
 
     /**
-     * BRANCH_ADMIN inherits all ADMIN authorities so every existing @PreAuthorize
-     * annotation works without modification. Branch scoping is enforced separately
-     * via BranchScope (BRANCH_ADMIN is not in JwtUtil.ALL_BRANCH_ROLES).
+     * ADMIN inherits every BRANCH_ADMIN authority (not the other way round): BRANCH_ADMIN does not
+     * pass hasRole(ADMIN), which is what keeps user/role administration ADMIN-only. Branch
+     * scoping is enforced separately via BranchScope (BRANCH_ADMIN is not in JwtUtil.ALL_BRANCH_ROLES).
      */
     @Bean
     public RoleHierarchy roleHierarchy() {

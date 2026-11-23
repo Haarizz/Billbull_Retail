@@ -197,11 +197,13 @@ public class GeneralLedgerController {
 
     @PostMapping("/accounts/{id}/archive")
     public Account archiveAccount(@PathVariable String id) {
+        modulePermissionService.requireCanEdit("finance.ledger");
         return ledgerService.archiveAccount(id);
     }
 
     @PostMapping("/accounts/{id}/unarchive")
     public Account unarchiveAccount(@PathVariable String id) {
+        modulePermissionService.requireCanEdit("finance.ledger");
         return ledgerService.unarchiveAccount(id);
     }
 
@@ -257,6 +259,7 @@ public class GeneralLedgerController {
 
     @GetMapping("/accounts/opening-balance-locks")
     public List<String> getOpeningBalanceLocks() {
+        modulePermissionService.requireCanView("finance.ledger");
         return ledgerService.getOpeningBalanceLockedAccountCodes();
     }
 
@@ -264,6 +267,8 @@ public class GeneralLedgerController {
     public OpeningBalanceSaveResponse saveOpeningBalances(
             @RequestBody List<OpeningBalanceRequest> payload,
             @RequestParam(required = false) String asOfDate) {
+        // Posts a GL journal, so it needs the same grant as any other ledger posting.
+        modulePermissionService.requireCanCreate("finance.ledger");
         // 1. Update Account.balanceAmount (existing behaviour — used for quick-balance display).
         OpeningBalanceSaveResponse result = ledgerService.saveOpeningBalances(payload);
         // 2. Also post a proper double-entry GL journal so the balances appear in

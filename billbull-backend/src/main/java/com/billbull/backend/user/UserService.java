@@ -59,6 +59,21 @@ public class UserService {
         this.accessAudit = accessAudit;
     }
 
+    /** Plan limits from the control plane (setter-injected; constructor call sites unchanged). */
+    private com.billbull.backend.platform.PlatformStateService platformState;
+
+    @Autowired(required = false)
+    public void setPlatformStateService(com.billbull.backend.platform.PlatformStateService platformState) {
+        this.platformState = platformState;
+    }
+
+    /** 409 when one more active user would exceed the plan's maxUsers. */
+    private void assertUserSeatAvailable() {
+        if (platformState == null) return;
+        platformState.assertWithinLimit(com.billbull.backend.platform.PlatformState.LIMIT_USERS,
+                userRepository.countByIsActiveTrue(), "active users");
+    }
+
     /**
      * Get all users as safe DTOs.
      */
@@ -103,6 +118,7 @@ public class UserService {
     @Transactional
     public UserSafeDto createUser(UserCreateRequest request) {
         validateUsernameAvailable(request.getUsername());
+        assertUserSeatAvailable();
 
         Employee linkedEmployee = null;
         if (request.getLinkedEmployeeId() != null) {
@@ -348,6 +364,9 @@ public class UserService {
     public UserSafeDto unfreezeUser(Long id) {
         User user = findUserById(id);
         java.util.Map<String, Object> before = accessValue(user);
+        if (!user.isActive()) {
+            assertUserSeatAvailable();
+        }
         user.setActive(true);
         User saved = userRepository.save(user);
         if (!Boolean.TRUE.equals(before.get("active"))) {

@@ -15,6 +15,7 @@ import Sidebar from "./layout/Sidebar";
 
 // Pages
 import Login from "./auth/login";
+import SupportLogin from "./auth/SupportLogin";
 // import Customers from "./pages/Customer/Customers";
 import Dashboard from "./pages/Dashboard";
 
@@ -94,6 +95,7 @@ import DocumentNumbering from "./pages/Settings/DocumentNumbering";
 import UserRoleConfig from "./pages/Settings/UserRoleConfig";import BranchSetup from "./pages/Settings/BranchSetup";
 import EmailSettings from "./pages/Settings/EmailSettings";
 import WhatsAppSettings from "./pages/Settings/WhatsAppSettings";
+import BillBullAccount from "./pages/Settings/BillBullAccount";
 import BranchOutlets from "./pages/Enterprise/BranchOutlets";
 import DataManagement from "./pages/Enterprise/DataManagement";
 import PosAdministration from "./pages/Enterprise/PosAdministration";
@@ -191,6 +193,8 @@ function App() {
         <Routes>
           {/* 🔓 Public Route */}
           <Route path="/login" element={<Login />} />
+          {/* 🔓 Time-boxed BillBull support sign-in opened from admin.billbull.app (token in the #fragment) */}
+          <Route path="/support-login" element={<SupportLogin />} />
           {/* 🔓 RFQ vendor portal — vendors sign in with an emailed one-time code, not a staff login */}
           <Route path="/vendor-portal/:token" element={<VendorPortal />} />
           {/* 🔓 Document link sent to a customer on WhatsApp (invoice / quotation / sales order + PDF) */}
@@ -788,6 +792,15 @@ function App() {
                       element={
                         <ResourceGuard module="userManagement.setup">
                           <WhatsAppSettings />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/settings/billbull-account"
+                      element={
+                        <ResourceGuard module="userManagement.setup">
+                          <BillBullAccount />
                         </ResourceGuard>
                       }
                     />

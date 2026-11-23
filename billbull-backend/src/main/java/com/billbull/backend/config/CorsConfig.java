@@ -12,11 +12,12 @@ import java.util.List;
 public class CorsConfig {
 
         @Bean
-        public CorsConfigurationSource corsConfigurationSource() {
+        public CorsConfigurationSource corsConfigurationSource(
+                        @org.springframework.beans.factory.annotation.Value("${billbull.cors.extra-origins:}") String extraOrigins) {
 
                 CorsConfiguration config = new CorsConfiguration();
 
-                config.setAllowedOrigins(List.of(
+                java.util.List<String> origins = new java.util.ArrayList<>(List.of(
                 "http://localhost:5173",
                 "http://77.37.49.42",
 
@@ -41,6 +42,13 @@ public class CorsConfig {
                 "https://bikevillage.billbull.app",
                 "https://alamwag.billbull.app"
                 ));
+                // A new client's origin comes from its environment (BILLBULL_CORS_EXTRA_ORIGINS,
+                // comma-separated) — onboarding no longer needs a code change and rebuild.
+                for (String o : extraOrigins == null ? new String[0] : extraOrigins.split(",")) {
+                        String origin = o.trim();
+                        if (!origin.isEmpty() && !origin.equals("*") && !origins.contains(origin)) origins.add(origin);
+                }
+                config.setAllowedOrigins(origins);
                 config.setAllowedMethods(List.of(
                                 "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
                 config.setAllowedHeaders(List.of("*"));

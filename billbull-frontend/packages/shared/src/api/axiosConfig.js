@@ -132,6 +132,21 @@ api.interceptors.response.use(
     }
 
     // Permission denied handling (403)
+    // Decisions made in the BillBull control plane (admin.billbull.app): the account is
+    // suspended or read-only (423), or the plan does not include the module (403
+    // MODULE_NOT_ENTITLED). Show the server's message instead of the generic permission text.
+    const platformCode = error.response?.data?.code;
+    if (error.response?.status === 423 && !isAuthEndpoint(error.config)) {
+      toast.error(error.response?.data?.message || "This BillBull account is not available right now.",
+        { id: "tenant-" + (platformCode || "locked"), duration: 8000 });
+      return Promise.reject(error);
+    }
+    if (error.response?.status === 403 && platformCode === "MODULE_NOT_ENTITLED") {
+      toast.error(error.response?.data?.message || "This module is not included in your BillBull plan.",
+        { id: "module-not-entitled", duration: 6000 });
+      return Promise.reject(error);
+    }
+
     if (error.response?.status === 403 && !isAuthEndpoint(error.config)) {
       const errMsg = error.response?.data?.message;
       if (errMsg !== 'SUPERVISOR_AUTHORIZATION_REQUIRED' && !isTerminalRegisterEndpoint(error.config)) {

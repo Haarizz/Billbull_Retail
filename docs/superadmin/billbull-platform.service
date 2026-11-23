@@ -1,0 +1,24 @@
+# /etc/systemd/system/billbull-platform.service
+# Build: cd /root/billbull/billbull-platform && mvn package -DskipTests
+#        install -D -m 640 target/billbull-platform-0.1.0.jar /opt/billbull-platform/billbull-platform.jar
+[Unit]
+Description=BillBull Platform Control Center (admin.billbull.app)
+After=network.target postgresql.service
+
+[Service]
+User=billbull-platform
+Group=billbull-platform
+WorkingDirectory=/opt/billbull-platform
+EnvironmentFile=/etc/billbull/platform.env
+ExecStart=/usr/bin/java -Xms128m -Xmx384m -jar /opt/billbull-platform/billbull-platform.jar
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
