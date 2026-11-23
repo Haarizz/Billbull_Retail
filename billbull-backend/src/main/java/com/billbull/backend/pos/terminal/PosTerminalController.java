@@ -41,21 +41,25 @@ public class PosTerminalController {
     private static final String PERM_KEEP_ACTIVE    = "permissions.pos.terminal.keepactive";
     private static final String PERM_ARCHIVE_NOW    = "permissions.pos.terminal.archive";
     private static final String PERM_SET_EXEMPT     = "permissions.pos.terminal.setautoarchiveexempt";
+    private static final String PERM_VIEW_ACTIVITY  = "permissions.pos.terminal.viewactivity";
     private static final String MODULE_TERMINALS    = "pos.terminals";
 
     private final PosTerminalService service;
     private final PosTerminalLifecycleService lifecycleService;
     private final PosTerminalActivityService activityService;
     private final ModulePermissionService modulePermissionService;
+    private final PosTerminalInsightService insightService;
 
     public PosTerminalController(PosTerminalService service,
                                   PosTerminalLifecycleService lifecycleService,
                                   PosTerminalActivityService activityService,
-                                  ModulePermissionService modulePermissionService) {
+                                  ModulePermissionService modulePermissionService,
+                                  PosTerminalInsightService insightService) {
         this.service = service;
         this.lifecycleService = lifecycleService;
         this.activityService = activityService;
         this.modulePermissionService = modulePermissionService;
+        this.insightService = insightService;
     }
 
     /**
@@ -234,7 +238,22 @@ public class PosTerminalController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<PosTerminal>> getAllForBranch(@PathVariable Long branchId) {
         modulePermissionService.requireCanView(MODULE_TERMINALS);
-        return ResponseEntity.ok(service.getAllForBranch(branchId));
+        return ResponseEntity.ok(insightService.enrich(service.getAllForBranch(branchId)));
+    }
+
+    /**
+     * Recent POS audit trail (sessions, checkouts, voids, cash drops, terminal lifecycle) for the
+     * branch, newest first. Supervisor-level only: gated by its own single-switch grant, seeded
+     * to ADMIN/BRANCH_ADMIN/MANAGER/SUPERVISOR, so cashiers never see other users' activity.
+     */
+    @GetMapping("/branch/{branchId}/activity")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<Map<String, Object>>> recentActivity(@PathVariable Long branchId,
+                                                                     @RequestParam(required = false) String terminalId,
+                                                                     @RequestParam(required = false) Integer limit) {
+        requireTerminalAction(PERM_VIEW_ACTIVITY);
+        com.billbull.backend.security.BranchScope.assertCanAccess(branchId);
+        return ResponseEntity.ok(insightService.recentActivity(branchId, terminalId, limit));
     }
 
     @GetMapping("/branch/{branchId}/pending")

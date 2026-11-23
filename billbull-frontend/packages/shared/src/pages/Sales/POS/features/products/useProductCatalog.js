@@ -299,7 +299,9 @@ export function useProductCatalog({ currentTerminal, currentSession, barcodeInpu
     } finally {
       if (append) {
         setPosProductsLoadingMore(false);
-      } else {
+      } else if (!signal?.aborted) {
+        // A superseded (aborted) load must not clear the flag: the load that replaced it
+        // has already set it, and clearing it here flashed "No items found" mid-search.
         setPosProductsLoading(false);
       }
     }
@@ -353,10 +355,14 @@ export function useProductCatalog({ currentTerminal, currentSession, barcodeInpu
     }
   }, [favouriteProductIds, favouriteTogglePending, selectedCategory]);
 
+  // True while the cashier is typing and the 300ms debounce has not yet fired the query —
+  // the grid shows its loading skeleton then instead of the stale (or empty) results.
+  const posProductsSearchPending = searchQuery.trim() !== debouncedSearchQuery;
+
   return {
     // Grid state + paging.
     posProducts, posProductPage, posProductTotalPages, posProductTotalElements,
-    posProductsLoading, posProductsLoadingMore, posProductsError,
+    posProductsLoading, posProductsLoadingMore, posProductsError, posProductsSearchPending,
     loadPosProducts, loadMorePosProducts,
     // Search.
     searchQuery, setSearchQuery, debouncedSearchQuery,

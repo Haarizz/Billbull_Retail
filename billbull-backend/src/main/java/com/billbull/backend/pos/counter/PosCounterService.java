@@ -52,7 +52,7 @@ public class PosCounterService {
                               Integer displayOrder) {
         String code = counterCode != null && !counterCode.isBlank()
                 ? counterCode.trim().toUpperCase()
-                : generateNextCode(branchId);
+                : nextCounterCode(repo, branchId);
 
         if (repo.existsByBranchIdAndCounterCode(branchId, code)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -76,7 +76,12 @@ public class PosCounterService {
     public PosCounter update(Long id, String counterName, String description,
                               String defaultCashDrawer, String defaultReceiptPrinter, Integer displayOrder) {
         PosCounter counter = getById(id);
-        if (counterName != null && !counterName.isBlank()) counter.setCounterName(counterName.trim());
+        if (counterName != null && !counterName.isBlank()
+                && !counterName.trim().equals(counter.getCounterName())) {
+            counter.setCounterName(counterName.trim());
+            // Terminals cache the name for receipts/sessions — keep them on the new one.
+            terminalRepo.syncCounterName(id, counter.getCounterName());
+        }
         if (description != null) counter.setDescription(description);
         if (defaultCashDrawer != null) counter.setDefaultCashDrawer(defaultCashDrawer);
         if (defaultReceiptPrinter != null) counter.setDefaultReceiptPrinter(defaultReceiptPrinter);
@@ -101,11 +106,15 @@ public class PosCounterService {
     @Transactional
     public void delete(Long id) {
         PosCounter counter = getById(id);
-        long terminalCount = terminalRepo.countByCounterId(id);
+        // Only terminals still in service block a delete. Archived/decommissioned ones used to
+        // block it forever; they now just let go of the counter.
+        long terminalCount = terminalRepo.countLiveByCounterIdExcluding(id, -1L);
         if (terminalCount > 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Cannot delete counter: " + terminalCount + " terminal(s) reference this counter.");
+                    "Cannot delete counter: " + terminalCount + " terminal(s) are assigned to it. "
+                            + "Move them to another counter first.");
         }
+        terminalRepo.detachRetiredFromCounter(id);
         counter.setActive(false);
         counter.setStatus(PosCounterStatus.INACTIVE);
         repo.save(counter);
@@ -123,7 +132,9 @@ public class PosCounterService {
         );
     }
 
-    private String generateNextCode(Long branchId) {
+    /** Next free CTR-NNN code for a branch. Shared with PosTerminalService, which creates a counter
+     *  when a terminal registers and every existing counter is already taken. */
+    public static String nextCounterCode(PosCounterRepository repo, Long branchId) {
         String maxCode = repo.findMaxCounterCodeByBranchId(branchId);
         if (maxCode == null) return "CTR-001";
         try {

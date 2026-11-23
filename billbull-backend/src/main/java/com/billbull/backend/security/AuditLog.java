@@ -11,7 +11,8 @@ import java.time.LocalDateTime;
 @Table(name = "audit_logs", indexes = {
     // ARCHFIX §3 — common audit filters; names match V3__missing_indexes.sql so fresh + existing DBs converge.
     @Index(name = "idx_audit_user_time",   columnList = "username, access_time"),
-    @Index(name = "idx_audit_branch_time", columnList = "branch_id, access_time")
+    @Index(name = "idx_audit_branch_time", columnList = "branch_id, access_time"),
+    @Index(name = "idx_audit_event_time",  columnList = "event_type, access_time")
 })
 public class AuditLog extends BaseEntity {
 

@@ -81,4 +81,15 @@ export const employeesApi = {
     const res = await api.post(`/api/employees/${id}/reject`);
     return res.data;
   },
+
+  // ================= POS PIN =================
+
+  /**
+   * Whether a till PIN is free. Returns { available, message? }. `employeeId` (when editing)
+   * excludes that employee's own current PIN. Never says who holds a taken PIN.
+   */
+  checkPosPin: async (pin, employeeId = null) => {
+    const res = await api.post("/api/employees/pos-pin/check", { pin, employeeId });
+    return res.data;
+  },
 };

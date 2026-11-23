@@ -36,7 +36,7 @@
 // buildPosCheckoutItems — the two were characterized as deliberately different.
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { computePosCartTotals, salesOrderLineFields, toNumber } from '../../posUtils';
+import { computePosCartTotals, inScanOrder, salesOrderLineFields, toNumber } from '../../posUtils';
 
 /** The empty-cart shape. Identical to the original initial state and to clearInvoice's. */
 const EMPTY_CART = {
@@ -105,7 +105,7 @@ export function useCart({ posSettings } = {}) {
   // (Voided lines are dropped — a layaway only reserves what's actually being sold.)
   const cartItemsToPayload = useCallback((items) => {
     const isDeleteMode = posSettings?.voidMode === 'DELETE';
-    return items
+    return inScanOrder(items)
       .filter(item => !isDeleteMode || !item.isVoided)
       .map(item => ({
         itemCode: item.code || item.productId || item.id,

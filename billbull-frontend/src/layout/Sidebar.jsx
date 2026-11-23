@@ -22,6 +22,7 @@ import { usePermissions } from "@billbull/shared/context/PermissionContext";
 import { useCompany } from "@billbull/shared/context/CompanyContext";
 import { formatUserDisplayName } from "@billbull/shared/utils/displayName";
 import BranchSelector from "../components/common/BranchSelector";
+import NotificationBell from "../components/common/NotificationBell";
 import { clientConfig } from "../config/clientConfig";
 
 const Sidebar = ({ children }) => {
@@ -270,8 +271,7 @@ const Sidebar = ({ children }) => {
       roles: ["ADMIN"],
       subItems: [
         { path: "/enterprise/branches",        label: "Branch / Outlets",  module: "userManagement.setup", icon: <Building2 size={14} /> },
-        { path: "/enterprise/administration",  label: "Administration",    module: "userManagement.role",  icon: <ShieldCheck size={14} /> },
-        { path: "/enterprise/data-management", label: "Data Management",   module: "userManagement.setup", icon: <FileSpreadsheet size={14} /> },
+        { path: "/enterprise/administration",  label: "Administration",    module: "userManagement.role",  icon: <ShieldCheck size={14} /> },        { path: "/enterprise/data-management", label: "Data Management",   module: "userManagement.setup", icon: <FileSpreadsheet size={14} /> },
         { path: "/enterprise/pos-admin",       label: "POS Administration",module: "pos.admin",             icon: <ShieldCheck size={14} /> },
       ],
     },
@@ -608,6 +608,9 @@ const Sidebar = ({ children }) => {
     .sidebar.collapsed .header-content { justify-content: center; flex-direction: column; gap: 8px; }
     .sidebar.collapsed .logo-box { padding: 0; }
     .sidebar.collapsed .collapse-trigger { margin-left: 0 !important; }
+
+    .header-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .sidebar.collapsed .header-actions { margin-left: 0 !important; flex-direction: column; gap: 8px; }
     
     .sidebar.collapsed .nav-item { justify-content: center; padding: 0; }
     .sidebar.collapsed .nav-icon { margin-right: 0; }
@@ -744,7 +747,8 @@ const Sidebar = ({ children }) => {
             </div>
             <span>BillBull</span>
           </div>
-          <div style={{ marginLeft: 'auto' }}>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <NotificationBell />
             <BranchSelector />
           </div>
         </header>
@@ -776,15 +780,18 @@ const Sidebar = ({ children }) => {
                 <p>Retail SaaS Platform</p>
               </div>
             )}
-            {/* DESKTOP COLLAPSE TRIGGER — always visible in header */}
+            {/* DESKTOP BELL + COLLAPSE TRIGGER — always visible in header */}
             {!isMobile && (
-              <button className="collapse-trigger" style={{ marginLeft: 'auto' }} onClick={() => {
-                const newVal = !collapsed;
-                setCollapsed(newVal);
-                localStorage.setItem("sidebarCollapsed", newVal);
-              }}>
-                {collapsed ? <FaChevronRight /> : <FaChevronDown style={{ transform: 'rotate(90deg)' }} />}
-              </button>
+              <div className="header-actions" style={{ marginLeft: 'auto' }}>
+                <NotificationBell />
+                <button className="collapse-trigger" onClick={() => {
+                  const newVal = !collapsed;
+                  setCollapsed(newVal);
+                  localStorage.setItem("sidebarCollapsed", newVal);
+                }}>
+                  {collapsed ? <FaChevronRight /> : <FaChevronDown style={{ transform: 'rotate(90deg)' }} />}
+                </button>
+              </div>
             )}
           </div>
           {!collapsed && (

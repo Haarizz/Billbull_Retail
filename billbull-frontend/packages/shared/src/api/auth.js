@@ -14,6 +14,7 @@ export const login = async (username, password) => {
 // Shared by the Retail and standalone POS login screens so both keep the same session keys.
 export const persistLoginSession = (data) => {
   sessionStorage.setItem("token", data.token);
+  sessionStorage.removeItem("billbull.pos.offlineEntry");
   sessionStorage.setItem("role", data.primaryRole || data.role);
   sessionStorage.setItem("primaryRole", data.primaryRole || data.role);
   sessionStorage.setItem("user", data.username);
@@ -65,9 +66,18 @@ export const hasRole = (role) => {
 // PrivateRoute kept rendering the POS while every request came back rejected. Decoding `exp`
 // here sends a stale session to /login instead of leaving the cashier on a screen whose
 // buttons all fail. A malformed token decodes to null and is treated as logged-out.
+// M3: the Standalone POS (/pos/) lets the session owner sign in offline under a server-issued
+// offline lease (offline/offlineRuntime.enterOffline). There is no token then; the till runs on
+// cached configuration and the offline catalogue, and the next real sign-in replaces it. Only the
+// /pos/ till ever sets this marker, and signing out (which clears "user") ends it.
+const OFFLINE_ENTRY_KEY = "billbull.pos.offlineEntry";
+const isOfflineTillEntry = () => sessionStorage.getItem(OFFLINE_ENTRY_KEY) === "1" && !!sessionStorage.getItem("user");
+/** A token, or (Standalone POS only) an offline sign-in. Contexts that only need to know whether to
+ *  load use this; the token itself is unchanged where present. */
+export const hasSessionCredentials = () => !!sessionStorage.getItem("token") || isOfflineTillEntry();
 export const isAuthenticated = () => {
   const decoded = getDecodedToken();
-  if (!decoded) return false;
+  if (!decoded) return isOfflineTillEntry();
   if (typeof decoded.exp !== "number") return true; // no expiry claim — let the server decide
   return decoded.exp * 1000 > Date.now();
 };

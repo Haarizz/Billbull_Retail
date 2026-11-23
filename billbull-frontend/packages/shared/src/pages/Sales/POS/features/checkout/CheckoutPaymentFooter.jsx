@@ -5,8 +5,9 @@
 // supplied by POSSales; this component must never receive processPayment itself.
 
 import React, { useRef } from 'react';
-import { AlertCircle, CheckCircle } from 'lucide-react';
+import { CheckCircle } from 'lucide-react';
 import { DirhamSymbol } from '../../POSCurrency';
+import CheckoutErrorDialog from './CheckoutErrorDialog';
 import { usePosFocusTarget, usePosShortcuts } from '../../input/PosOverlayContext';
 import { POS_FOCUS_TARGETS } from '../../input/posFocus';
 import { POS_OVERLAY_IDS, POS_SCOPES } from '../../input/posScope';
@@ -20,6 +21,7 @@ function CheckoutPaymentFooter({
   effectiveDue,
   onCancel,
   onSettle,
+  onDismissError,
 }) {
   // Settle is the checkout's SETTLE focus target; `ready` is what makes the focus controller
   // choose it over the method bar (fully allocated, server ready, nothing in flight).
@@ -51,13 +53,9 @@ function CheckoutPaymentFooter({
                     </span>
                   </div>
                 )}
-                {/* Error display */}
-                {checkoutError && (
-                  <div className="mb-3 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4 shrink-0" />
-                    {checkoutError}
-                  </div>
-                )}
+                {/* Error display: a modal (portalled to <body>) instead of an inline strip,
+                    so the cashier sees the whole message and has to acknowledge it. */}
+                <CheckoutErrorDialog message={checkoutError} onDismiss={onDismissError} />
                 {/* Action buttons */}
                 {(() => {
                   return (

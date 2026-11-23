@@ -1,6 +1,7 @@
-// QA-040: Reusable Send-Email modal for designed-template documents.
+// QA-040: Reusable Send-Email modal for designed-template documents, shared by
+// the back office and the POS till so both send email the same way.
 // Each module (Quotation, Sales Order, Sales Invoice, Delivery Note,
-// Proforma Invoice, Receipt Voucher) needs the same shape:
+// Proforma Invoice, Receipt Voucher, POS receipt) needs the same shape:
 //   - To / Subject / Message inputs
 //   - Live preview (iframe): the message above the document, as the customer
 //     will see the email plus its PDF
@@ -27,13 +28,26 @@
 //                     generatePrintHtmlAsync with that template + payload.
 //   onSent          : optional () => void on success
 //   onError         : optional (msg) => void on failure
+//
+// Prebuilt-document mode (the POS till's receipt, which is not a print template):
+//   buildDocumentHtml : async () => print HTML. Built once when the dialog opens; the
+//                       preview shows exactly that HTML and the same string is sent as
+//                       the PDF attachment, so what the cashier sees is what is attached.
+//                       No template lookup happens in this mode.
+//   onSend            : async ({ toEmail, subject, messageHtml, pdfHtml }) => void. Used
+//                       instead of apiFn; the caller sends and reports success itself.
+//                       Throwing keeps the dialog open with the error shown.
+//   title, defaultSubject, defaultMessage, attachmentName : override the document defaults
+//   zClassName        : stacking class (the POS completion screen needs z-[210])
 
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { AlertTriangle, AtSign, CheckCircle2, Eye, FileText, Loader2, Paperclip, RotateCcw, Send, X } from 'lucide-react';
-import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
-import { generateEmailHtml, generatePrintHtmlAsync } from '@billbull/shared/utils/printGenerator';
-import { defaultDocumentEmailMessage, emailMessageToHtml, withEmailMessage } from '@billbull/shared/utils/emailMessage';
-import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
+import { getTemplatesByCategory } from '../api/printTemplateApi';
+import { generateEmailHtml, generatePrintHtmlAsync } from '../utils/printGenerator';
+import { defaultDocumentEmailMessage, emailMessageToHtml, withEmailMessage } from '../utils/emailMessage';
+import { usePosOverlay } from '../pages/Sales/POS/input/PosOverlayContext';
+import { POS_SCOPES } from '../pages/Sales/POS/input/posScope';
+import billBullLogo from '../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -41,6 +55,14 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const FIELD = 'w-full px-3 py-2 border rounded-lg text-sm bg-white focus:outline-none focus:ring-2 disabled:bg-slate-50 disabled:text-slate-500';
 const FIELD_OK = 'border-slate-200 focus:border-yellow-400 focus:ring-yellow-100';
 const FIELD_BAD = 'border-red-300 focus:border-red-400 focus:ring-red-100';
+
+const noticeHtml = (text, color = '#888') =>
+    `<div style="padding:24px;font-family:Arial;color:${color};font-size:13px;">${text}</div>`;
+
+const escapeText = (value) => String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 
 const SendDocumentEmailModal = ({
     isOpen,
@@ -56,6 +78,13 @@ const SendDocumentEmailModal = ({
     buildPdfHtml,
     onSent,
     onError,
+    buildDocumentHtml,
+    onSend,
+    title,
+    defaultSubject,
+    defaultMessage,
+    attachmentName: attachmentNameProp,
+    zClassName = 'z-50',
 }) => {
     const [toEmail, setToEmail] = useState('');
     const [toEmailTouched, setToEmailTouched] = useState(false);
@@ -65,18 +94,40 @@ const SendDocumentEmailModal = ({
     const [docHtml, setDocHtml] = useState('');
     const [previewNotice, setPreviewNotice] = useState('');
     const [isSending, setIsSending] = useState(false);
+    const [sendError, setSendError] = useState('');
     const companyName = companyProfile?.companyName || companyProfile?.name || '';
     const label = docLabel || category;
+    const prebuilt = typeof buildDocumentHtml === 'function';
+    // Read through a ref: a caller's builder can change identity on any re-render (session or
+    // customer state refreshing), which must not rebuild the preview or wipe what was typed.
+    const buildDocumentHtmlRef = useRef(buildDocumentHtml);
+    buildDocumentHtmlRef.current = buildDocumentHtml;
+
+    const initialMessage = useCallback(
+        () => defaultMessage ?? defaultDocumentEmailMessage({ docLabel: label, docNumber, companyName }),
+        [defaultMessage, label, docNumber, companyName],
+    );
 
     const refreshPreview = useCallback(async () => {
         if (!isOpen) return;
         setDocHtml('');
         setPreviewNotice('');
+        if (prebuilt) {
+            try {
+                const html = await buildDocumentHtmlRef.current();
+                if (!html) throw new Error('The document is empty.');
+                setDocHtml(html);
+            } catch (err) {
+                console.warn('Email document render failed:', err);
+                setPreviewNotice(noticeHtml(`Preview unavailable: ${escapeText(err?.message || err)}`, '#c00'));
+            }
+            return;
+        }
         try {
             const templates = await getTemplatesByCategory(category);
             const template = templates?.find(t => t.isDefault) || templates?.[0];
             if (!template) {
-                setPreviewNotice(`<div style="padding:24px;font-family:Arial;color:#888;font-size:13px;">No "${category}" template found in Settings → Print &amp; Email Templates, so the PDF attachment cannot be prepared.</div>`);
+                setPreviewNotice(noticeHtml(`No "${category}" template found in Settings → Print &amp; Email Templates, so the PDF attachment cannot be prepared.`));
                 return;
             }
             const payload = buildPayload?.() || {};
@@ -84,23 +135,24 @@ const SendDocumentEmailModal = ({
             setDocHtml(html);
         } catch (err) {
             console.warn('Email preview render failed:', err);
-            setPreviewNotice(`<div style="padding:24px;font-family:Arial;color:#c00;font-size:13px;">Preview unavailable: ${err.message || err}</div>`);
+            setPreviewNotice(noticeHtml(`Preview unavailable: ${err.message || err}`, '#c00'));
         }
-    }, [isOpen, category, buildPayload, companyProfile]);
+    }, [isOpen, prebuilt, category, buildPayload, companyProfile]);
 
     useEffect(() => {
         if (!isOpen) return;
         setToEmail(customerEmail || '');
         setToEmailTouched(false);
-        setSubject(`${docLabel || category} ${docNumber || ''} from BillBull ERP`.trim());
+        setSendError('');
+        setSubject(defaultSubject ?? `${docLabel || category} ${docNumber || ''} from BillBull ERP`.trim());
         refreshPreview();
-    }, [isOpen, customerEmail, docNumber, docLabel, category, refreshPreview]);
+    }, [isOpen, customerEmail, docNumber, docLabel, category, defaultSubject, refreshPreview]);
 
     // Seeded when the dialog opens for a document, so a re-render never wipes what was typed.
     useEffect(() => {
         if (!isOpen) return;
-        setMessage(defaultDocumentEmailMessage({ docLabel: docLabel || category, docNumber, companyName }));
-    }, [isOpen, docNumber, docLabel, category, companyName]);
+        setMessage(initialMessage());
+    }, [isOpen, initialMessage]);
 
     const previewHtml = useMemo(() => {
         if (docHtml) return withEmailMessage(docHtml, message);
@@ -108,69 +160,102 @@ const SendDocumentEmailModal = ({
         return '';
     }, [docHtml, previewNotice, message]);
 
+    const close = () => !isSending && onClose?.();
+
+    // On the POS till the input controller owns Escape and holds scanner input back while
+    // this is open; elsewhere (no POS input provider) this registers nothing.
+    usePosOverlay({
+        open: Boolean(isOpen),
+        scope: POS_SCOPES.MODAL,
+        onEscape: (e) => { e.preventDefault(); close(); },
+    });
+
     if (!isOpen) return null;
 
+    const fail = (msg) => {
+        setSendError(msg);
+        if (!onSend) toast.error(msg);
+        onError?.(msg);
+    };
+
     const handleSend = async () => {
-        if (!docId) {
-            toast.error(`Please save the ${label} before sending.`);
+        if (!prebuilt && !docId) {
+            fail(`Please save the ${label} before sending.`);
             return;
         }
         if (!toEmail || !toEmail.trim()) {
             setToEmailTouched(true);
-            toast.error('Recipient email is required.');
+            fail('Recipient email is required.');
             return;
         }
         if (!EMAIL_RE.test(toEmail.trim())) {
             setToEmailTouched(true);
-            toast.error('Enter a valid recipient email address.');
+            fail('Enter a valid recipient email address.');
             return;
         }
         setIsSending(true);
+        setSendError('');
 
         // The sent email is the message only; the document travels as the PDF
         // attachment (the in-dialog preview still shows both). A cleared message
         // falls back to the default so the body is never empty.
-        const htmlBody = emailMessageToHtml(message)
-            || emailMessageToHtml(defaultDocumentEmailMessage({ docLabel: label, docNumber, companyName }));
+        const messageHtml = emailMessageToHtml(message) || emailMessageToHtml(initialMessage());
 
-        // The PDF attachment is rendered on the server from the PRINT HTML, using
-        // the same template the preview shows. Without it the email is not sent.
+        // The PDF attachment is rendered on the server from the PRINT HTML: the prebuilt
+        // document the preview shows, or the same template the preview uses. Without it
+        // the email is not sent.
         let pdfHtml = '';
-        try {
-            const templates = await getTemplatesByCategory(category);
-            const template = templates?.find(t => t.isDefault) || templates?.[0] || null;
-            if (buildPdfHtml) {
-                pdfHtml = await buildPdfHtml(template);
-            } else if (template) {
-                pdfHtml = await generatePrintHtmlAsync(template, buildPayload?.() || {}, { companyProfile, billBullLogo });
+        if (prebuilt) {
+            pdfHtml = docHtml;
+            if (!pdfHtml) {
+                try {
+                    pdfHtml = await buildDocumentHtmlRef.current();
+                    if (pdfHtml) setDocHtml(pdfHtml);
+                } catch (pdfErr) {
+                    console.warn('PDF attachment HTML could not be built:', pdfErr);
+                    fail(pdfErr?.message || 'Could not prepare the PDF attachment, so the email was not sent.');
+                    setIsSending(false);
+                    return;
+                }
             }
-        } catch (pdfErr) {
-            console.warn('PDF attachment HTML could not be built:', pdfErr);
+        } else {
+            try {
+                const templates = await getTemplatesByCategory(category);
+                const template = templates?.find(t => t.isDefault) || templates?.[0] || null;
+                if (buildPdfHtml) {
+                    pdfHtml = await buildPdfHtml(template);
+                } else if (template) {
+                    pdfHtml = await generatePrintHtmlAsync(template, buildPayload?.() || {}, { companyProfile, billBullLogo });
+                }
+            } catch (pdfErr) {
+                console.warn('PDF attachment HTML could not be built:', pdfErr);
+            }
         }
         if (!pdfHtml) {
-            const msg = `Could not prepare the PDF attachment. Check that a default "${category}" print template exists in Settings → Print & Email Templates.`;
-            toast.error(msg);
-            onError?.(msg);
+            fail(prebuilt
+                ? 'Could not prepare the PDF attachment, so the email was not sent.'
+                : `Could not prepare the PDF attachment. Check that a default "${category}" print template exists in Settings → Print & Email Templates.`);
             setIsSending(false);
             return;
         }
 
         try {
-            await apiFn(docId, { toEmail: toEmail.trim(), subject, htmlBody, inlineAttachments: [], pdfHtml });
-            toast.success(`Email sent to ${toEmail}`);
+            if (onSend) {
+                await onSend({ toEmail: toEmail.trim(), subject, messageHtml, pdfHtml });
+            } else {
+                await apiFn(docId, { toEmail: toEmail.trim(), subject, htmlBody: messageHtml, inlineAttachments: [], pdfHtml });
+                toast.success(`Email sent to ${toEmail}`);
+            }
             onSent?.();
             onClose?.();
         } catch (err) {
-            const msg = err.message || 'Failed to send email';
-            toast.error(msg);
-            onError?.(msg);
+            fail(err?.response?.data?.message || err?.message || 'Failed to send email');
         } finally {
             setIsSending(false);
         }
     };
 
-    const close = () => !isSending && onClose?.();
-    const resetMessage = () => setMessage(defaultDocumentEmailMessage({ docLabel: label, docNumber, companyName }));
+    const resetMessage = () => setMessage(initialMessage());
     const onKeyDown = (e) => {
         if (e.key === 'Escape') {
             e.stopPropagation();
@@ -182,16 +267,17 @@ const SendDocumentEmailModal = ({
     };
 
     // The server names the file from the stored number with this same filter.
-    const attachmentName = `${String(docNumber || docLabel || 'document').replace(/[^A-Za-z0-9._\- ]/g, '_')}.pdf`;
+    const attachmentName = attachmentNameProp
+        || `${String(docNumber || docLabel || 'document').replace(/[^A-Za-z0-9._\- ]/g, '_')}.pdf`;
     const emailInvalid = toEmailTouched && !EMAIL_RE.test(toEmail.trim());
     const attachment = docHtml
-        ? { cls: 'text-emerald-600', icon: <CheckCircle2 size={12} />, text: `Ready · default ${category} template` }
+        ? { cls: 'text-emerald-600', icon: <CheckCircle2 size={12} />, text: prebuilt ? 'Ready · same as the preview' : `Ready · default ${category} template` }
         : previewNotice
-            ? { cls: 'text-red-600', icon: <AlertTriangle size={12} />, text: 'No print template, so the PDF cannot be prepared' }
+            ? { cls: 'text-red-600', icon: <AlertTriangle size={12} />, text: prebuilt ? 'The PDF cannot be prepared' : 'No print template, so the PDF cannot be prepared' }
             : { cls: 'text-slate-400', icon: <Loader2 size={12} className="animate-spin" />, text: 'Preparing…' };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-[2px] p-2 sm:p-4"
+        <div className={`fixed inset-0 ${zClassName} flex items-center justify-center bg-slate-900/50 backdrop-blur-[2px] p-2 sm:p-4`}
              onClick={close}>
             <div
                 role="dialog"
@@ -210,7 +296,7 @@ const SendDocumentEmailModal = ({
                         </div>
                         <div className="min-w-0">
                             <h3 id="send-document-email-title" className="text-base font-bold text-slate-800 truncate">
-                                Email {label}
+                                {title || `Email ${label}`}
                             </h3>
                             <p className="text-xs text-slate-500 truncate">
                                 {docNumber && <span className="font-semibold text-slate-700">{docNumber} · </span>}
@@ -236,7 +322,7 @@ const SendDocumentEmailModal = ({
                                     id="send-document-email-to"
                                     type="email"
                                     value={toEmail}
-                                    onChange={e => setToEmail(e.target.value)}
+                                    onChange={e => { setToEmail(e.target.value); setSendError(''); }}
                                     onBlur={() => toEmail && setToEmailTouched(true)}
                                     placeholder="customer@example.com"
                                     autoFocus={!customerEmail}
@@ -300,6 +386,12 @@ const SendDocumentEmailModal = ({
                                 </div>
                             </div>
                         </div>
+
+                        {sendError && (
+                            <p role="alert" className="flex items-start gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                                <AlertTriangle size={13} className="shrink-0 mt-px" /> {sendError}
+                            </p>
+                        )}
                     </div>
 
                     {/* Preview */}

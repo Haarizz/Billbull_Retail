@@ -18,7 +18,8 @@ import java.time.LocalDateTime;
         indexes = {
                 @Index(name = "idx_notif_user_read", columnList = "target_username, is_read"),
                 @Index(name = "idx_notif_user_active", columnList = "target_username, is_active"),
-                @Index(name = "idx_notif_created", columnList = "created_at")
+                @Index(name = "idx_notif_created", columnList = "created_at"),
+                @Index(name = "idx_notif_user_created", columnList = "target_username, created_at")
         })
 public class Notification extends BaseEntity {
 
@@ -65,6 +66,17 @@ public class Notification extends BaseEntity {
     @Column(name = "reference_type", length = 50)
     private String referenceType;
 
+    /** Branch the triggering user was acting on (null for system/scheduled events). */
+    @Column(name = "branch_id")
+    private Long branchId;
+
+    /**
+     * Key facts of the event as a small JSON object (amount, customer, vendor, qty, ...).
+     * Rendered as detail chips by the inbox; the message text stays readable on its own.
+     */
+    @Column(name = "metadata", columnDefinition = "TEXT")
+    private String metadata;
+
     /** Optional TTL — cleanup job hard-deletes expired rows. */
     @Column(name = "expires_at")
     private LocalDateTime expiresAt;
@@ -103,6 +115,12 @@ public class Notification extends BaseEntity {
 
     public String getReferenceType() { return referenceType; }
     public void setReferenceType(String referenceType) { this.referenceType = referenceType; }
+
+    public Long getBranchId() { return branchId; }
+    public void setBranchId(Long branchId) { this.branchId = branchId; }
+
+    public String getMetadata() { return metadata; }
+    public void setMetadata(String metadata) { this.metadata = metadata; }
 
     public LocalDateTime getExpiresAt() { return expiresAt; }
     public void setExpiresAt(LocalDateTime expiresAt) { this.expiresAt = expiresAt; }

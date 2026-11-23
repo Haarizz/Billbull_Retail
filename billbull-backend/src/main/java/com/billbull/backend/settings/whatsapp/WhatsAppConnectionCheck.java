@@ -45,7 +45,7 @@ public class WhatsAppConnectionCheck {
 
     /** Per-template outcome. */
     public enum TemplateState {
-        /** No name saved for this document: it uses the manual flow. */
+        /** No name saved for this document: it uses the link flow. */
         MISSING,
         /** A name is saved but could not be looked up (no WABA ID, or the WABA could not be read). */
         NOT_CHECKED,
@@ -126,7 +126,7 @@ public class WhatsAppConnectionCheck {
         out.put("language", language);
         out.put("expectedBodyParameterCount", EXPECTED_BODY_PARAMETERS);
         if (name == null || name.isBlank()) {
-            return state(out, TemplateState.MISSING, "No template name saved: " + type.label() + " uses the manual flow.");
+            return state(out, TemplateState.MISSING, "No template name saved: " + type.label() + " uses the link flow (a link to the document, sent from the user's own WhatsApp).");
         }
         if (templates == null) {
             return state(out, TemplateState.NOT_CHECKED, notCheckedReason);

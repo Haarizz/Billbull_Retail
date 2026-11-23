@@ -910,7 +910,7 @@ const createAgentServer = ({
     let origin = null;
     if (originHeader !== undefined) {
       const normalized = normalizeOrigin(originHeader);
-      if (!normalized || !trustedOrigins(cfg).has(normalized)) {
+      if (!normalized || !(trustedOrigins(cfg).has(normalized) || cfg.isTrusted(normalized))) {
         refuse(403, "AGENT_ORIGIN_NOT_ALLOWED",
           "This print agent does not trust this site. Add the BillBull address on this PC with: BillBullPrintAgent.exe --add-origin <address> | more");
       }
@@ -1013,7 +1013,7 @@ const createAgentServer = ({
 const logStartup = (server) => {
   const { allowedOrigins, destinations, fileProblem } = server.agent.config.current();
   console.log(`[billbull-pos-print-agent] ${VERSION} listening on http://${HOST}:${PORT}`);
-  console.log(`[billbull-pos-print-agent] config ${server.agent.config.file}; trusted origins: ${[...allowedOrigins].join(", ") || "(none — run --add-origin)"}`);
+  console.log(`[billbull-pos-print-agent] config ${server.agent.config.file}; trusted origins: every BillBull client site${allowedOrigins.size ? `, ${[...allowedOrigins].join(", ")}` : ""}`);
   if (fileProblem) console.warn(`[billbull-pos-print-agent] config.json cannot be used (${fileProblem}); every request is refused until it is fixed`);
   if (!destinations.queues.size && !destinations.network.size) {
     console.warn('[billbull-pos-print-agent] no printer is set up for BillBull; every print is refused until one is (tray menu → Printers, or --set-printer "<name>" escpos|zpl)');

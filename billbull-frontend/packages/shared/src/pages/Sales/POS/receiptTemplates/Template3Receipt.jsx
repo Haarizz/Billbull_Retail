@@ -37,6 +37,7 @@ ${SHARE_TECH_MONO_FONT_FACE}
 .bbt3 .t{overflow-wrap:anywhere;white-space:pre-wrap}
 .bbt3 .sec{text-align:center;font-weight:400;letter-spacing:.4px;margin-bottom:2px}
 .bbt3 .gap{height:4px}
+.bbt3 .red,.bbt3 .red *{color:#dc2626}
 .bbt3 .tax{display:grid;grid-template-columns:.7fr .6fr 1fr 1fr .9fr;column-gap:4px;text-align:right}
 .bbt3 .tax>span:nth-child(5n+1){text-align:left}
 .bbt3 .qr{text-align:center;margin:4px 0}
@@ -52,7 +53,7 @@ export const TEMPLATE3_FONT_LINK =
   "https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@400;500;700&display=swap";
 
 const Row = ({ blk }) => (
-  <div className={`row${blk.bold ? " b" : ""}${blk.sm ? " sm" : ""}`}>
+  <div className={`row${blk.bold ? " b" : ""}${blk.sm ? " sm" : ""}${blk.red ? " red" : ""}`}>
     <span className="l">{blk.l}</span>
     {blk.r ? <span className={`r${blk.rAr ? " ar" : ""}`}>{blk.r}</span> : null}
   </div>
@@ -69,7 +70,7 @@ function renderBlock(blk, i) {
     case "text":
       return <div key={i} className={`t${blk.sm ? " sm" : ""}`}>{blk.text}</div>;
     case "ar":
-      return <div key={i} className="ar arl">{blk.text}</div>;
+      return <div key={i} className={`ar arl${blk.red ? " red" : ""}`}>{blk.text}</div>;
     case "row":
       return <Row key={i} blk={blk} />;
     case "wrow":

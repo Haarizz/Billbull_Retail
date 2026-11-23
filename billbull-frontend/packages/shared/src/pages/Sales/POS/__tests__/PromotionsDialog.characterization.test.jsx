@@ -563,8 +563,8 @@ describe('source contract', () => {
   it('finds the region exactly once, at the pinned boundary', () => {
     expect(START).toBeGreaterThan(-1);
     expect(LINES.indexOf(ANCHOR, START + 1)).toBe(-1);
-    expect(START + 1).toBe(9417); // 1-indexed line 9417 (P2 overlay declarations: +30; P2.6 scanner-field import: +1; P3 shortcuts: +11; history preview items extracted: -52; POS → Orders take-up + PI Flow delivery: +39; Close Day confirm modal: +9; Mandatory Customer checkout gate: +5; Closing Approval: +10; POS packing units + price levels: +35; POS home page redesign: -5; Quick Checkout layout toggle: +4; X/Z returns + card refund rows: +4; opening count defaults to the last closing count: +57)
-    expect(END + 1).toBe(9455);
+    expect(START + 1).toBe(9611); // 1-indexed line 9611 (share from Reprint Previous Invoices: +63; Last Receipt redesign: +61; P2 overlay declarations: +30; P2.6 scanner-field import: +1; P3 shortcuts: +11; history preview items extracted: -52; POS → Orders take-up + PI Flow delivery: +39; Close Day confirm modal: +9; Mandatory Customer checkout gate: +5; Closing Approval: +10; POS packing units + price levels: +35; POS home page redesign: -5; Quick Checkout layout toggle: +4; X/Z returns + card refund rows: +4; opening count defaults to the last closing count: +57; M2.2 delivery checkout key + explicit shift handover: +8; M2.2.1 delivery key pinned until resolved: +23; M2.2.2 durable pending checkouts (shared operation, recovery notice): +20; Personal PIN approvals: +5; checkout preview follows the paper size: -38; checkout error dialog: +1; WhatsApp receipt link (document share links): +28; email receipt dialog (receiptEmailDoc + pdfHtml reuse): +14; WhatsApp-style receipt email message: +9)
+    expect(END + 1).toBe(9649);
     expect(LIVE_REGION.split('\n')).toHaveLength(39);
   });
 
@@ -635,7 +635,7 @@ describe('source contract', () => {
 
   it('`Zap` is used ONLY by this region in POSSales — it becomes the child\'s import', () => {
     const zapLines = LINES.map((l, i) => [i + 1, l]).filter(([, l]) => l.includes('Zap'));
-    expect(zapLines.map(([n]) => n)).toEqual([104, 9421, 9445]);
+    expect(zapLines.map(([n]) => n)).toEqual([104, 9615, 9639]);
     expect(LINES[103]).toBe('  Zap,'); // the lucide import entry, line 104
     expect(LIVE_REGION.split('<Zap ').length - 1).toBe(2);
   });

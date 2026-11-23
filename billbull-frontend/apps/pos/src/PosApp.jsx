@@ -13,7 +13,7 @@ import RequirePosAccess from './shell/RequirePosAccess';
 import PosBootGate from './shell/PosBootGate';
 import PosErrorBoundary from './shell/PosErrorBoundary';
 import SessionLock from './shell/SessionLock';
-import { ROUTER_BASENAME } from './shell/posPaths';
+import { ROUTER_BASE_PATH } from './shell/posPaths';
 import TillWorkspace from './workspace/TillWorkspace';
 
 // Standalone POS. Only what a till needs: no Retail sidebar, dashboards, notification centre,
@@ -52,7 +52,7 @@ export function TillRoutes() {
 
 export default function PosApp() {
   return (
-    <BrowserRouter basename={ROUTER_BASENAME}>
+    <BrowserRouter basename={ROUTER_BASE_PATH}>
       <CompanyProvider>
         <BranchProvider>
           <AedSymbolRenderer />

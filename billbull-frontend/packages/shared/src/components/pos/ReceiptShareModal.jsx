@@ -1,9 +1,14 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Mail, MessageCircle, Smartphone, X } from 'lucide-react';
 
 import { usePosInputV2, usePosOverlay } from '../../pages/Sales/POS/input/PosOverlayContext';
 import { POS_SCOPES } from '../../pages/Sales/POS/input/posScope';
-import { defaultReceiptEmailMessage, emailMessageToHtml } from '../../utils/emailMessage';
+import { buildReceiptEmailMessage, defaultReceiptEmailMessage, emailMessageToHtml } from '../../utils/emailMessage';
+import { formatLinkDate } from '../../utils/whatsappLinkMessages';
+import WhatsAppLinkShareDialog from '../whatsapp/WhatsAppLinkShareDialog';
+import WhatsAppApiSendDialog from '../whatsapp/WhatsAppApiSendDialog';
+import SendDocumentEmailModal from '../SendDocumentEmailModal';
+import { isWhatsAppApiReady, loadWhatsAppStatus } from '../../api/whatsappSendApi';
 
 /**
  * One modal drives all three POS "Share Receipt" channels (SMS, WhatsApp,
@@ -85,8 +90,101 @@ const RECEIPT_SHARE_CHANNELS = {
  * @param {Function} onSend  async (value, { messageHtml }) => void; messageHtml only for
  *                           email ('' when the message was cleared); throwing keeps the dialog open
  * @param {Function} onClose
+ * @param {object}   linkDoc  WhatsApp only: when set (the sale has a server invoice), the channel
+ *                           sends the receipt itself instead of a one-line text — through the
+ *                           WhatsApp Business API when it is on and the POS Receipt template is
+ *                           set (PDF attached from the business number), otherwise as a link to
+ *                           the receipt page (summary + PDF) from the cashier's own WhatsApp
+ * @param {object}   emailDoc  Email only: when set (the sale has a server invoice), the channel opens
+ *                           the back office's Send Email dialog (To / Subject / Message, attachment,
+ *                           live preview of the receipt PDF). `buildHtml` is built once on open and
+ *                           the same HTML is sent as the attachment; `onSend` gets it as `pdfHtml`.
+ *                           { docNumber, buildHtml, companyName }
  */
-export default function ReceiptShareModal({ channel, initialValue = '', onSend, onClose }) {
+export default function ReceiptShareModal({ linkDoc = null, emailDoc = null, ...props }) {
+  if (props.channel === 'whatsapp' && linkDoc) {
+    return <PosWhatsAppReceipt linkDoc={linkDoc} onClose={props.onClose} />;
+  }
+  if (props.channel === 'email' && emailDoc) {
+    return <PosEmailReceipt emailDoc={emailDoc} {...props} />;
+  }
+  return <ReceiptShareForm {...props} />;
+}
+
+/** The back-office email dialog, fed the till's receipt PDF instead of a print template. */
+function PosEmailReceipt({ emailDoc, initialValue = '', onSend, onClose }) {
+  const number = emailDoc.docNumber || '';
+  // Stable: the dialog re-seeds its fields whenever its preview inputs change identity.
+  const companyProfile = useMemo(() => ({ companyName: emailDoc.companyName || '' }), [emailDoc.companyName]);
+  // Worded like the WhatsApp receipt message; computed once so a re-render never re-seeds it.
+  const [defaultMessage] = useState(() => buildReceiptEmailMessage({
+    customerName: emailDoc.customerName,
+    documentNo: number,
+    dateText: formatLinkDate(emailDoc.date),
+    amountText: emailDoc.amountText,
+    balanceText: emailDoc.balanceText,
+    companyName: emailDoc.companyName,
+  }));
+  return (
+    <SendDocumentEmailModal
+      isOpen
+      onClose={onClose}
+      docLabel="Receipt"
+      docNumber={number}
+      customerEmail={initialValue || ''}
+      companyProfile={companyProfile}
+      title="Send by Email"
+      defaultSubject={`Receipt ${number}`.trim()}
+      defaultMessage={defaultMessage}
+      attachmentName={`POS_Receipt_${String(number || 'receipt').replace(/[^A-Za-z0-9._\- ]/g, '_')}.pdf`}
+      buildDocumentHtml={emailDoc.buildHtml}
+      onSend={({ toEmail, subject, messageHtml, pdfHtml }) => onSend?.(toEmail, { messageHtml, subject, pdfHtml })}
+      zClassName="z-[210]"
+    />
+  );
+}
+
+/** Meta API when ready for POS_RECEIPT, else the link flow; "Share a link instead" switches. */
+function PosWhatsAppReceipt({ linkDoc, onClose }) {
+  const [status, setStatus] = useState(null);
+  const [mode, setMode] = useState(null); // 'api' | 'link'
+  const [phone, setPhone] = useState(linkDoc.phone || '');
+
+  useEffect(() => {
+    let alive = true;
+    loadWhatsAppStatus().then((s) => {
+      if (!alive) return;
+      setStatus(s);
+      setMode(isWhatsAppApiReady(s, 'POS_RECEIPT') ? 'api' : 'link');
+    });
+    return () => { alive = false; };
+  }, []);
+
+  if (mode === 'api') {
+    return (
+      <WhatsAppApiSendDialog
+        doc={{ ...linkDoc, documentType: 'POS_RECEIPT', phone }}
+        status={status}
+        zClassName="z-[210]"
+        onClose={onClose}
+        onShareLink={({ phone: typed }) => { setPhone(typed); setMode('link'); }}
+      />
+    );
+  }
+  if (mode === 'link') {
+    return (
+      <WhatsAppLinkShareDialog
+        doc={{ ...linkDoc, phone }}
+        defaultCountryCode={status?.defaultCountryCode}
+        zClassName="z-[210]"
+        onClose={onClose}
+      />
+    );
+  }
+  return null; // status is cached after the first look, so this is a moment at most
+}
+
+function ReceiptShareForm({ channel, initialValue = '', onSend, onClose }) {
   const config = channel ? RECEIPT_SHARE_CHANNELS[channel] : null;
   const [value, setValue] = useState(initialValue || '');
   const [message, setMessage] = useState(() => (config?.hasMessage ? defaultReceiptEmailMessage() : ''));

@@ -45,4 +45,19 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<Long> findLinkedEmployeeIdByUsername(@Param("username") String username);
 
     List<User> findByBranchIsNull();
+
+    /**
+     * {@code [username, fullName]} pairs for display: the notification inbox and the activity feed
+     * label a page of rows with one query instead of loading each User (and its EAGER roles).
+     */
+    @Query("SELECT u.username, u.fullName FROM User u WHERE u.username IN :usernames")
+    List<Object[]> findDisplayNamesByUsernameIn(@Param("usernames") java.util.Collection<String> usernames);
+
+    /** Usernames of active users holding a role — the notification fan-out target list. */
+    @Query("SELECT DISTINCT u.username FROM User u JOIN u.roles r WHERE u.isActive = true AND r.name = :roleName")
+    List<String> findActiveUsernamesByRoleName(@Param("roleName") String roleName);
+
+    /** {@code [id, username]} of active users holding a role — the "affected users" of a role change. */
+    @Query("SELECT DISTINCT u.id, u.username FROM User u JOIN u.roles r WHERE u.isActive = true AND r.name = :roleName ORDER BY u.username")
+    List<Object[]> findActiveIdAndUsernameByRoleName(@Param("roleName") String roleName);
 }

@@ -10,6 +10,7 @@
 import { useState } from 'react';
 
 import { getPosSettings, savePosSettings } from '../../../../../api/posApi';
+import { normalizeApprovalMode } from '../../lib/approvalMode';
 import { mergeSavedPosSettings } from '../../posUtils';
 
 /**
@@ -30,7 +31,7 @@ export function usePosBehaviourSettings({ posSettings, setPosSettings, businessD
       // Closing Approval — an administrator must approve session (X) / Business Day (Z) closes.
       requireAdminApprovalForSessionClose: !!posSettings?.requireAdminApprovalForSessionClose,
       requireAdminApprovalForDayClose: !!posSettings?.requireAdminApprovalForDayClose,
-      supervisorApprovalMode: posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN',
+      supervisorApprovalMode: normalizeApprovalMode(posSettings?.supervisorApprovalMode),
       requirePriceOverrideApproval: !!posSettings?.requirePriceOverrideApproval,
       // Who may use the POS Actions/Functions buttons — ALL_USERS | SUPERVISOR_PASSWORD |
       // SUPERVISOR_ONLY. Seeded from the stored value rather than defaulted blind, so saving an

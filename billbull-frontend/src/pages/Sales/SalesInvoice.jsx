@@ -75,7 +75,7 @@ import { generateOverlayInvoiceHtml } from '@billbull/shared/utils/overlayInvoic
 import { applyTaxAwareDisplayOptions } from '@billbull/shared/pages/Sales/POS/posPrintUtils';
 import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '@billbull/shared/utils/documentTaxType';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
-import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
+import SendDocumentEmailModal from '@billbull/shared/components/SendDocumentEmailModal';
 import InvoicePreviewModal from './components/InvoicePreviewModal';
 import InvoiceSettlementModal from './components/InvoiceSettlementModal';
 import { getImageUrl } from '@billbull/shared/utils/urlUtils';
@@ -212,6 +212,10 @@ import { customerLevelOf, customerPricingSummary, isWalkInCode, levelHasTiers, p
 import useCustomerPricingStatus from '@billbull/shared/hooks/useCustomerPricingStatus';
 import PriceSourceTag from '@billbull/shared/components/pricing/PriceSourceTag';
 import { OwnershipIndicator } from '../../components/common/OwnershipIndicator';
+// Blank search row pinned on top, filled lines below numbered 1, 2, 3 (display only)
+import { isBlankEntryRow as isBlankInvoiceRow, orderRowsForEntryDisplay, entryRowAttrs, placeEntryLine, findOpenEntryRow } from '../../utils/entryRowOrder';
+import { findStackableLine, addQtyToLine } from '../../utils/lineMerge';
+import useEntryRowTable from '../../hooks/useEntryRowTable';
 
 // ==========================================
 // COMPONENT
@@ -525,6 +529,7 @@ const SalesInvoice = () => {
     const [items, setItems] = useState([
         { id: 1, code: '', image: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 0, taxAmt: 0, gross: 0, net: 0, cost: 0, gp: 0 }
     ]);
+    const entryTableRef = useEntryRowTable(items);
 
     // Price level (Pricing Phase 1): explicit choice → customer default → default prices, resolved
     // by the backend. Only lines added from the product master in this editor (priceLevelAuto) are
@@ -915,7 +920,8 @@ const SalesInvoice = () => {
         if (targetId == null) return;
         const raf = requestAnimationFrame(() => {
             const el = inlineSearchRefs.current[targetId];
-            if (el) el.focus();
+            // the search row is pinned, so keep the latest lines in view
+            if (el) el.focus({ preventScroll: true });
             focusNextInlineSearchRef.current = null;
         });
         return () => cancelAnimationFrame(raf);
@@ -2002,6 +2008,26 @@ const SalesInvoice = () => {
         }));
     };
 
+    // A repeat add of an item stacks onto its existing line (qty + n) when price,
+    // discount, tax, unit and warehouse all match; its batches/serials are then
+    // allocated across that one line. Not when the user is replacing a filled
+    // row in place, nor on invoices generated from Delivery Notes.
+    const stackTargetFor = (newItem, targetRowId) => {
+        if (isGeneratedFromDN) return null;
+        if (targetRowId != null) {
+            const target = items.find(it => it.id === targetRowId);
+            if (target && !isBlankInvoiceRow(target)) return null;
+        }
+        return findStackableLine(items, newItem);
+    };
+
+    const stackOntoLine = (line, qty) => {
+        const added = Number(qty) || 1;
+        setItems(prev => addQtyToLine(prev, line.id, added).map(it => (it.id === line.id ? calculateRow(it) : it)));
+        const nextQty = Math.round(((Number(line.qty) || 0) + added) * 1e6) / 1e6;
+        toast.success(`${line.name || line.code}: qty ${nextQty} ${line.unit || ''}`.trim(), { id: `stack-${line.id}`, duration: 1800 });
+    };
+
     // ✅ PRODUCT SELECTOR HANDLER
     const handleAddSingleProduct = (product) => {
         if (isReadOnlyInvoice) return;
@@ -2044,7 +2070,7 @@ const SalesInvoice = () => {
             name: product.name || '',
             desc: product.name || product.description || '',
             sku: product.sku || '',
-            brand: product.brandName || product.brand || '',
+            brand: product.brandName || product.brand?.name || (typeof product.brand === 'string' ? product.brand : ''),
             shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
             localName: product.localName || '',
@@ -2086,12 +2112,26 @@ const SalesInvoice = () => {
 
         // QA-FAST-ENTRY: replace-in-place when triggered by inline row search.
         const targetRowId = pendingFastEntryRowId;
+
+        // Same item already on the invoice: stack onto that line instead of a new row.
+        const stackOnto = stackTargetFor(newItem, targetRowId);
+        if (stackOnto) {
+            stackOntoLine(stackOnto, newItem.qty);
+            setPendingFastEntrySearch('');
+            setPendingFastEntryRowId(null);
+            setIsProductSelectorOpen(false);
+            setTimeout(() => {
+                const qtyEl = document.getElementById(`qty-${stackOnto.id}`);
+                if (qtyEl) { qtyEl.focus(); qtyEl.select?.(); }
+            }, 100);
+            return;
+        }
+
         setItems(prev => {
             if (targetRowId != null) {
                 return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
             }
-            const hasData = prev.some(i => i.code || i.name);
-            return hasData ? [...prev, newItem] : [newItem];
+            return placeEntryLine(prev, newItem, isBlankInvoiceRow);
         });
         const filledItem = { ...newItem, id: targetRowId != null ? targetRowId : newItem.id };
         setPendingFastEntrySearch('');
@@ -2148,9 +2188,13 @@ const SalesInvoice = () => {
         };
         const newItem = calculateRow(rawItem);
         if (newItem.code) fetchItemContext(newItem.code);
+        const stackOnto = stackTargetFor(newItem, null);
+        if (stackOnto) {
+            stackOntoLine(stackOnto, newItem.qty);
+            return;
+        }
         setItems(prev => {
-            const hasData = prev.some(i => i.code || i.name);
-            return hasData ? [...prev, newItem] : [newItem];
+            return placeEntryLine(prev, newItem, isBlankInvoiceRow);
         });
     };
 
@@ -4366,7 +4410,7 @@ const SalesInvoice = () => {
                                         </div>
                                         <div className="border border-slate-100 rounded-lg overflow-hidden">
                                             {/* Show more rows (closer to the left column height), then scroll inside for long invoices */}
-                                            <div className="min-h-[320px] md:min-h-[420px] xl:min-h-[520px] max-h-[380px] md:max-h-[520px] xl:max-h-[680px] overflow-auto">
+                                            <div ref={entryTableRef} className="min-h-[320px] md:min-h-[420px] xl:min-h-[520px] max-h-[380px] md:max-h-[520px] xl:max-h-[680px] overflow-auto">
                                                 <table className="bb-nowrap-table w-full text-[11px] text-left min-w-[860px]">
                                                     <thead className="sticky top-0 z-10 bg-[#FBFBFD] border-b border-slate-200 text-[10px] font-semibold text-slate-600">
                                                         <tr>
@@ -4389,13 +4433,13 @@ const SalesInvoice = () => {
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y divide-slate-100/50">
-                                                        {items.map((item, index) => {
+                                                        {orderRowsForEntryDisplay(items).map(({ item, rowNo, blank }) => {
                                                             const isVoided = Boolean(item.voided ?? item.isVoided ?? false);
                                                             return (
                                                             <React.Fragment key={item.id}>
-                                                                <tr className={`group transition-colors align-middle ${isVoided ? 'bg-red-50/50' : 'hover:bg-slate-50/50 bg-white'}`}>
+                                                                <tr {...entryRowAttrs({ item, blank })} className={`group transition-colors align-middle ${isVoided ? 'bg-red-50/50' : 'hover:bg-slate-50/50 bg-white'}`}>
                                                                     {/* Index */}
-                                                                    <td className="px-3 py-2 text-center text-slate-400 text-[11px] font-medium">{index + 1}</td>
+                                                                    <td className="px-3 py-2 text-center text-slate-400 text-[11px] font-medium">{rowNo}</td>
 
                                                                     {/* Item / Description */}
                                                                     <td className="px-3 py-2">
@@ -4403,7 +4447,7 @@ const SalesInvoice = () => {
                                                                             <span className="inline-block mb-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-600 border border-red-200">VOID</span>
                                                                         )}
                                                                         {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
-                                                                        {(!item.code && !item.name && !item.desc) ? (
+                                                                        {isBlankInvoiceRow(item) ? (
                                                                             <InlineProductSearchCell
                                                                                 value={pendingFastEntryRowId === item.id ? pendingFastEntrySearch : ''}
                                                                                 inputRef={(el) => {
@@ -4556,6 +4600,8 @@ const SalesInvoice = () => {
                                                                                 if (e.key === 'Tab' && !e.shiftKey && !isReadOnlyInvoice && !isGeneratedFromDN) {
                                                                                     e.preventDefault();
                                                                                     const newRow = createBlankInvoiceItem();
+                                                                                    const openRow = findOpenEntryRow(items, isBlankInvoiceRow);
+                                                                                    if (openRow) { inlineSearchRefs.current[openRow.id]?.focus({ preventScroll: true }); return; }
                                                                                     focusNextInlineSearchRef.current = newRow.id;
                                                                                     setItems(prev => [...prev, newRow]);
                                                                                 }

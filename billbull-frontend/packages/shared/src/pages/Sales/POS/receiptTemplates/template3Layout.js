@@ -175,7 +175,8 @@ export function mapEscPosOptsToTemplate3Data(invoice = {}, opts = {}) {
 //   center  { text, ar?, bold?, sm? }   centred, wrapping
 //   text    { text, sm? }               left, wrapping
 //   ar      { text }                    right-aligned Arabic line
-//   row     { l, r, bold?, sm?, rAr? }  label left (wraps), value right
+//   row     { l, r, bold?, sm?, rAr?, red? }  label left (wraps), value right
+//   (`red` — voided lines; HTML only, the thermal canvas prints black)
 //   wrow    { l, r }                    label left, long value right-aligned & wrapping
 //   title   { text }                    centred bold section heading
 //   rule    {}                          dashed separator
@@ -221,10 +222,13 @@ export function buildTemplate3Blocks(data = {}) {
   items.forEach((it, i) => {
     const sgn = (s) => (it.voided ? `-${s}` : s);
     const gross = num(it.qty) * num(it.rate);
+    // Voided lines show red in the HTML (as Templates 1 & 2); the thermal
+    // canvas is monochrome and ignores `red`.
+    const red = it.voided ? { red: true } : {};
     if (i > 0) push({ t: "gap" });
-    push({ t: "row", l: [it.sku, `${fmtQty(it.qty)} x`].filter(Boolean).join("  "), r: sgn(fmt2(it.rate)) });
-    if (showAr && it.nameAr) push({ t: "ar", text: it.nameAr });
-    push({ t: "row", l: `${it.nameEn || "Item"}${it.voided ? " [VOID]" : ""}`, r: sgn(fmt2(gross)) });
+    push({ t: "row", ...red, l: [it.sku, `${fmtQty(it.qty)} x`].filter(Boolean).join("  "), r: sgn(fmt2(it.rate)) });
+    if (showAr && it.nameAr) push({ t: "ar", ...red, text: it.nameAr });
+    push({ t: "row", ...red, l: `${it.nameEn || "Item"}${it.voided ? " [VOID]" : ""}`, r: sgn(fmt2(gross)) });
     if (!it.voided && num(it.discountAmount) > 0.004) {
       const pct = num(it.discountPercent);
       push({
@@ -249,7 +253,7 @@ export function buildTemplate3Blocks(data = {}) {
   if (num(totals.deliveryCharge) > 0.004) push({ t: "row", l: "Delivery charge", r: fmt2(totals.deliveryCharge) });
   if (Math.abs(num(totals.roundOff)) >= 0.005) push({ t: "row", l: "Round off", r: fmt2(totals.roundOff) });
   if (num(totals.voidedCount) > 0) {
-    push({ t: "row", l: `Voided items (${totals.voidedCount})`, r: `-${fmt2(totals.voidedTotal)}` });
+    push({ t: "row", red: true, l: `Voided items (${totals.voidedCount})`, r: `-${fmt2(totals.voidedTotal)}` });
   }
   push({ t: "row", l: "Total", r: fmt2(totals.totalToPay), bold: true });
 

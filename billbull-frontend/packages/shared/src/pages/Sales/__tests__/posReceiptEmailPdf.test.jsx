@@ -297,10 +297,11 @@ const extractHandler = () => {
 };
 
 const HANDLER_DEPS = [
-  'useCallback', 'lastPaidInvoice', 'receiptShareChannel', 'formatCurrencyStr', 'setReceiptShareFeedback',
+  'useCallback', 'shareSale', 'shareChannel', 'formatCurrencyStr', 'setReceiptShareFeedback',
   'buildPosReceiptPdfHtml', 'getSalesInvoiceById', 'sendSalesInvoiceEmail', 'paperForSale', 'buildInvoiceSheetHtml',
   'company', 'tplInvoiceShowStamp', 'receiptArtifactTemplateSettings', 'activeCurrency', 'cashierDisplayName',
   'customerOptions', 'currentTerminal', 'currentSession', 'WALK_IN_CUSTOMER',
+  'openReceiptSms', 'createReceiptShareLink',
 ];
 
 const makeHandler = (over = {}) => {
@@ -325,10 +326,14 @@ const makeHandler = (over = {}) => {
     currentTerminal: POS_CONTEXT.currentTerminal,
     currentSession: POS_CONTEXT.currentSession,
     WALK_IN_CUSTOMER: { id: 'walk-in' },
+    openReceiptSms: vi.fn(async () => ({ body: '', link: 'https://shop.example/d/tok', copied: true, linkError: null })),
+    createReceiptShareLink: vi.fn(async () => 'https://shop.example/d/tok'),
     ...over,
   };
   const declare = new Function(...HANDLER_DEPS, `${extractHandler()}\nreturn handleReceiptShareSend;`);
-  return { handler: declare(...HANDLER_DEPS.map((k) => deps[k])), deps };
+  // The handler reads the active share sale/channel: the completed sale, or a reprinted invoice.
+  const value = (k) => (k === 'shareSale' ? deps.lastPaidInvoice : k === 'shareChannel' ? deps.receiptShareChannel : deps[k]);
+  return { handler: declare(...HANDLER_DEPS.map(value)), deps };
 };
 
 describe('handleReceiptShareSend — email channel (POSSales source, executed)', () => {
@@ -361,11 +366,10 @@ describe('handleReceiptShareSend — email channel (POSSales source, executed)',
     expect(Object.keys(payload).sort()).toEqual(['htmlBody', 'pdfHtml', 'pdfKind', 'subject', 'toEmail']);
   });
 
-  it('puts the cashier\'s message above the receipt summary', async () => {
+  it('sends the cashier\'s message as the whole body (it already states the receipt facts)', async () => {
     const { handler, deps } = makeHandler();
     await handler('customer@example.com', { messageHtml: '<div><p>Thanks!</p></div>' });
-    expect(deps.sendSalesInvoiceEmail.mock.calls[0][1].htmlBody)
-      .toBe('<div><p>Thanks!</p></div><p>Invoice: SI-POS-000124, Total: AED 378.00</p>');
+    expect(deps.sendSalesInvoiceEmail.mock.calls[0][1].htmlBody).toBe('<div><p>Thanks!</p></div>');
   });
 
   it('a sheet-paper till attaches its sheet print HTML', async () => {
@@ -397,6 +401,131 @@ describe('handleReceiptShareSend — email channel (POSSales source, executed)',
   });
 });
 
+describe('handleReceiptShareSend — an invoice shared from Reprint Previous Invoices', () => {
+  // The snapshot openReprintShare builds from a stored invoice: no tender or credit figures.
+  const reprintSale = () => ({
+    id: 'SI-POS-000124', total: 378, invoice: storedInvoice(), offline: null,
+    customer: { id: 'c1', name: 'Fatima Hassan', email: 'fatima@example.com', phone: '' },
+    paymentMode: 'Cash + Card', paymentBlock: null, paidAmount: null, changeAmount: null, depositAmount: 0,
+    creditPreviousBalance: null, creditInvoiceCredit: null, creditAmountPaid: null, creditUpdatedBalance: null,
+  });
+
+  it('emails the stored invoice\'s receipt PDF', async () => {
+    const { handler, deps } = makeHandler({ lastPaidInvoice: reprintSale() });
+    await handler('fatima@example.com');
+    expect(deps.getSalesInvoiceById).toHaveBeenCalledWith(42);
+    const [id, payload] = deps.sendSalesInvoiceEmail.mock.calls[0];
+    expect(id).toBe(42);
+    expect(payload.pdfKind).toBe('POS_RECEIPT');
+    expect(payload.pdfHtml).toContain('SI-POS-000124');
+    expect(payload.pdfHtml).toContain('Discounted Widget');
+    expect(deps.setReceiptShareFeedback).toHaveBeenCalledWith({ type: 'success', message: 'Receipt emailed to fatima@example.com.' });
+  });
+
+  it('SMS links the stored invoice\'s receipt page', async () => {
+    const { handler, deps } = makeHandler({ lastPaidInvoice: reprintSale(), receiptShareChannel: 'sms' });
+    await handler('0501112222');
+    expect(deps.openReceiptSms).toHaveBeenCalledWith(expect.objectContaining({
+      phone: '0501112222', documentNo: 'SI-POS-000124', createLink: deps.createReceiptShareLink,
+    }));
+  });
+});
+
+describe('handleReceiptShareSend — HTML and subject from the email dialog', () => {
+  it('attaches the receipt the dialog previewed instead of building it again', async () => {
+    const { handler, deps } = makeHandler();
+    await handler('customer@example.com', { messageHtml: '<p>Hi</p>', pdfHtml: '<html>PREVIEWED</html>' });
+    expect(deps.getSalesInvoiceById).not.toHaveBeenCalled();
+    expect(deps.sendSalesInvoiceEmail.mock.calls[0][1].pdfHtml).toBe('<html>PREVIEWED</html>');
+  });
+
+  it('uses the subject the cashier typed, and the default when it was cleared', async () => {
+    const { handler, deps } = makeHandler();
+    await handler('customer@example.com', { subject: '  Your receipt from us  ', pdfHtml: '<html>r</html>' });
+    await handler('customer@example.com', { subject: '   ', pdfHtml: '<html>r</html>' });
+    expect(deps.sendSalesInvoiceEmail.mock.calls[0][1].subject).toBe('Your receipt from us');
+    expect(deps.sendSalesInvoiceEmail.mock.calls[1][1].subject).toBe('Receipt SI-POS-000124');
+  });
+});
+
+describe('Send by Email — back-office dialog on the till (emailDoc)', () => {
+  const renderDialog = ({ handler, buildHtml }) => {
+    const onClose = vi.fn();
+    render(
+      <ReceiptShareModal
+        channel="email"
+        initialValue="customer@example.com"
+        onSend={handler}
+        onClose={onClose}
+        emailDoc={{
+          docNumber: 'SI-POS-000124', companyName: 'BillBull Trading LLC', buildHtml,
+          customerName: 'Fatima Hassan', date: '2026-10-12', amountText: 'AED 378.00', balanceText: '',
+        }}
+      />,
+    );
+    return onClose;
+  };
+
+  it('shows Subject, the attachment name and the receipt preview, then sends exactly the previewed HTML', async () => {
+    const buildHtml = vi.fn(async () => '<html><body>RECEIPT-PREVIEW SI-POS-000124</body></html>');
+    const { handler, deps } = makeHandler();
+    const onClose = renderDialog({ handler, buildHtml });
+
+    expect(screen.getByRole('dialog', { name: 'Send by Email' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Subject')).toHaveValue('Receipt SI-POS-000124');
+    expect(screen.getByLabelText('To')).toHaveValue('customer@example.com');
+    // Worded like the WhatsApp receipt message.
+    const message = screen.getByLabelText('Message').value;
+    expect(message.startsWith('Hi Fatima,\n\nThank you for shopping with BillBull Trading LLC! 🛍️')).toBe(true);
+    expect(message).toContain('🧾 Receipt: *SI-POS-000124*\n📅 Date: 12 Oct 2026\n💳 Amount: *AED 378.00*\n✅ Paid in full');
+    expect(message).toContain('📎 Your receipt is attached to this email as a PDF.');
+    expect(screen.getByText('POS_Receipt_SI-POS-000124.pdf')).toBeInTheDocument();
+    await screen.findByText(/Ready · same as the preview/);
+    expect(screen.getByTitle('Email Preview').getAttribute('srcdoc')).toContain('RECEIPT-PREVIEW');
+
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Thanks for visiting' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /send email/i })); });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+
+    expect(buildHtml).toHaveBeenCalledTimes(1);
+    expect(deps.getSalesInvoiceById).not.toHaveBeenCalled();
+    const payload = deps.sendSalesInvoiceEmail.mock.calls[0][1];
+    expect(payload.pdfHtml).toBe('<html><body>RECEIPT-PREVIEW SI-POS-000124</body></html>');
+    expect(payload.pdfKind).toBe('POS_RECEIPT');
+    expect(payload.subject).toBe('Thanks for visiting');
+    expect(payload.htmlBody).toContain('Hi Fatima,');
+    expect(payload.htmlBody).toContain('Amount: <strong style="color:#111827;">AED 378.00</strong>');
+    expect(payload.htmlBody).toContain('background:#ffffff;');
+    expect(payload.htmlBody).not.toContain('<p>Invoice: SI-POS-000124');
+    expect(deps.setReceiptShareFeedback).toHaveBeenCalledWith({ type: 'success', message: 'Receipt emailed to customer@example.com.' });
+  });
+
+  it('a receipt that cannot be built is shown in the preview and never sent', async () => {
+    const buildHtml = vi.fn(async () => { throw new Error('Could not prepare the receipt PDF, so the email was not sent.'); });
+    const { handler, deps } = makeHandler();
+    const onClose = renderDialog({ handler, buildHtml });
+    await screen.findByText(/The PDF cannot be prepared/);
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /send email/i })); });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not prepare the receipt PDF, so the email was not sent.');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(deps.sendSalesInvoiceEmail).not.toHaveBeenCalled();
+  });
+
+  it('an SMTP failure keeps the dialog open with the server message', async () => {
+    const buildHtml = vi.fn(async () => '<html>r</html>');
+    const { handler, deps } = makeHandler({
+      sendSalesInvoiceEmail: vi.fn(async () => { throw new Error('Failed to send email: 535 Authentication failed'); }),
+    });
+    const onClose = renderDialog({ handler, buildHtml });
+    await screen.findByText(/Ready · same as the preview/);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /send email/i })); });
+    expect(await screen.findByRole('alert')).toHaveTextContent('535 Authentication failed');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(deps.setReceiptShareFeedback).not.toHaveBeenCalled();
+  });
+});
+
 describe('handleReceiptShareSend — the other channels are untouched', () => {
   it('WhatsApp still opens wa.me and builds no PDF', async () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
@@ -407,11 +536,27 @@ describe('handleReceiptShareSend — the other channels are untouched', () => {
     expect(deps.sendSalesInvoiceEmail).not.toHaveBeenCalled();
   });
 
-  it('SMS keeps its stub notice and builds no PDF', async () => {
+  it('SMS opens the SMS app with the receipt link and builds no PDF itself', async () => {
     const { handler, deps } = makeHandler({ receiptShareChannel: 'sms' });
     await handler('0501112222');
-    expect(deps.setReceiptShareFeedback).toHaveBeenCalledWith({ type: 'success', message: 'Receipt SI-POS-000124 – AED 378.00 — SMS queued for 0501112222.' });
+    expect(deps.openReceiptSms).toHaveBeenCalledWith({
+      phone: '0501112222', documentNo: 'SI-POS-000124', amountText: 'AED 378.00',
+      companyName: 'BillBull Trading LLC', createLink: deps.createReceiptShareLink,
+    });
+    expect(deps.setReceiptShareFeedback).toHaveBeenCalledWith({ type: 'success', message: 'SMS app opened for 0501112222 with the receipt link — message also copied.' });
     expect(deps.getSalesInvoiceById).not.toHaveBeenCalled();
+    expect(deps.sendSalesInvoiceEmail).not.toHaveBeenCalled();
+  });
+
+  it('SMS for an offline sale sends no link and no provisional number', async () => {
+    const { handler, deps } = makeHandler({
+      receiptShareChannel: 'sms',
+      lastPaidInvoice: lastPaid({ offline: { ref: 'R1' }, invoice: null }),
+      openReceiptSms: vi.fn(async () => ({ body: '', link: '', copied: false, linkError: null })),
+    });
+    await handler('0501112222');
+    expect(deps.openReceiptSms.mock.calls[0][0]).toMatchObject({ documentNo: '', createLink: null });
+    expect(deps.setReceiptShareFeedback).toHaveBeenCalledWith({ type: 'success', message: 'SMS app opened for 0501112222.' });
   });
 });
 

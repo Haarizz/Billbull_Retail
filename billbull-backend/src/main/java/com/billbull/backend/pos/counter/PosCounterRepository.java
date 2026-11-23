@@ -23,6 +23,9 @@ public interface PosCounterRepository extends JpaRepository<PosCounter, Long> {
 
     boolean existsByBranchIdAndCounterNameIgnoreCase(Long branchId, String counterName);
 
+    /** Live counter a terminal names (rename / registration with an explicit counter name). */
+    Optional<PosCounter> findFirstByBranchIdAndCounterNameIgnoreCaseAndIsActiveTrueOrderByIdAsc(Long branchId, String counterName);
+
     @Query("SELECT COUNT(c) FROM PosCounter c WHERE c.branchId = :branchId AND c.status = 'ACTIVE'")
     long countActiveByBranchId(@Param("branchId") Long branchId);
 

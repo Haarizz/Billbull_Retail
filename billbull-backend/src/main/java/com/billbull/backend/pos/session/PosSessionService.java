@@ -148,6 +148,65 @@ public class PosSessionService {
     @org.springframework.beans.factory.annotation.Autowired
     private com.billbull.backend.pos.auth.PosClosureAuthorizationRegistry closureAuthorizationRegistry;
 
+    /** Phase 0 / M2: refuses close, begin-closure and suspend while a checkout attempt holds the
+     *  session. Field-injected like its neighbours; null only in hand-built unit-test instances. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptBarrier checkoutBarrier;
+
+    void setCheckoutBarrier(com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptBarrier checkoutBarrier) {
+        this.checkoutBarrier = checkoutBarrier;
+    }
+
+    /** M2 barrier for a transition. The caller must already hold the session row lock. */
+    private void assertNoBlockingCheckouts(Long sessionId, String transition) {
+        if (checkoutBarrier != null) checkoutBarrier.assertNoBlockingCheckouts(sessionId, transition);
+        // M3: the same transitions are refused while a till holds an unsettled offline lease on
+        // this session (its offline sales may not have reached the server yet).
+        if (offlineLeaseBarrier != null) offlineLeaseBarrier.assertNoOutstandingLease(sessionId, transition);
+    }
+
+    /** M3 offline lease register gate. Field-injected like its neighbours; null only in hand-built
+     *  unit-test instances. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.billbull.backend.pos.offline.PosOfflineLeaseBarrier offlineLeaseBarrier;
+
+    void setOfflineLeaseBarrier(com.billbull.backend.pos.offline.PosOfflineLeaseBarrier offlineLeaseBarrier) {
+        this.offlineLeaseBarrier = offlineLeaseBarrier;
+    }
+
+    /**
+     * The session row, locked for the rest of the caller's transaction — the Phase 0 / M2 session
+     * lock that checkout claims, transitions and delivery settlement all serialise on. Must be the
+     * first load of the session in the transaction, so the entity returned is the locked row's
+     * current state and not an earlier read cached in the persistence context.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public PosSession lockById(Long sessionId) {
+        // Phase 0 / M2.1: the wait for this one lock is bounded, transaction-locally, and the
+        // previous setting is restored straight after, so nothing else in the caller's transaction
+        // (posting, the close journal) inherits the bound and nothing leaks into the pool.
+        String previous = repo.currentLockTimeout();
+        repo.setLocalLockTimeout(sessionLockTimeoutMs + "ms");
+        PosSession locked;
+        try {
+            locked = repo.findByIdForUpdate(sessionId).orElseThrow(() ->
+                    new ResponseStatusException(HttpStatus.NOT_FOUND, "POS session not found: " + sessionId));
+        } catch (RuntimeException ex) {
+            if (com.billbull.backend.pos.checkout.attempt.PosCheckoutAttemptService.isLockUnavailable(ex)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "SESSION_BUSY: Session #" + sessionId
+                        + " is being changed by another operation (a checkout, close, suspend or transfer). "
+                        + "Nothing was changed. Try again in a moment.");
+            }
+            throw ex;
+        }
+        if (previous != null) repo.setLocalLockTimeout(previous);
+        return locked;
+    }
+
+    /** Upper bound on the session-row lock wait in {@link #lockById}. */
+    @org.springframework.beans.factory.annotation.Value("${pos.session.lock-timeout-ms:5000}")
+    private long sessionLockTimeoutMs = 5000;
+
     /** Verifies a second user's credentials at the till — the same service the Session Owner
      *  Verification modal uses. Only consulted by {@code cancelClosure}. */
     @org.springframework.beans.factory.annotation.Autowired
@@ -752,7 +811,9 @@ public class PosSessionService {
     /**
      * Reassigns the open session on a terminal to a new cashier after a supervisor-authorized
      * shift handover, so the incoming cashier can resume the existing session (its cash drawer,
-     * invoices, etc.) instead of being forced into "Start Session".
+     * invoices, etc.) instead of being forced into "Start Session". An ownership change: refused
+     * while a checkout attempt is ACTIVE or STALLED on the session. Never call this to authorize
+     * an action; that is {@code PosSettingsService.verifySupervisorCredentials}.
      */
     @Transactional
     public void reassignSessionOwner(String terminalId, String newOwnerUsername) {
@@ -762,9 +823,18 @@ public class PosSessionService {
         Branch branch = branchAccessService.getRequiredCurrentUserBranch();
         sessionResolutionStrategy.resolveByTerminal(branch.getId(), terminalId)
                 .ifPresent(session -> {
-                    session.setOpenedBy(newOwnerUsername);
-                    session.setOpenedByDisplayName(resolveDisplayName(newOwnerUsername));
-                    repo.save(session);
+                    // Phase 0 / M2.2: reached only from the explicit shift handover
+                    // (PosSettingsService.authorizeShiftHandover, POST /settings/supervisor-handover).
+                    // Supervisor approvals no longer come here. A handover to the user who already
+                    // owns the session stays a no-op: no lock, no barrier, no write.
+                    if (newOwnerUsername.equals(session.getOpenedBy())) return;
+                    // An actual change of owner re-attributes the drawer: locked, and refused while a
+                    // checkout attempt holds the session (same rule as supervisorTakeover).
+                    PosSession locked = lockById(session.getId());
+                    assertNoBlockingCheckouts(locked.getId(), "REASSIGN_OWNER");
+                    locked.setOpenedBy(newOwnerUsername);
+                    locked.setOpenedByDisplayName(resolveDisplayName(newOwnerUsername));
+                    repo.save(locked);
                 });
     }
 
@@ -885,15 +955,17 @@ public class PosSessionService {
         // closes therefore serialise, and the loser sees a CLOSED session and gets the
         // deterministic "already closed" refusal below rather than interleaving through the
         // finalization.
-        PosSession session = repo.findByIdForUpdate(sessionId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "POS session not found: " + sessionId));
+        // (M2.1: through lockById, so the wait for the lock is bounded.)
+        PosSession session = lockById(sessionId);
         if (session.getStatus() == PosSessionStatus.CLOSED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session is already closed.");
         }
         if (session.getStatus() != PosSessionStatus.OPEN && session.getStatus() != PosSessionStatus.SUSPENDED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session cannot be closed from status: " + session.getStatus());
         }
+        // Phase 0 / M2: under the row lock taken above, refuse while a checkout attempt holds the
+        // session. Before anything is consumed (the closure and variance grants are single-use).
+        assertNoBlockingCheckouts(sessionId, "CLOSE");
 
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated()) {
@@ -1238,7 +1310,9 @@ public class PosSessionService {
      */
     @Transactional
     public PosSession beginClosure(Long sessionId, String closureAuthToken) {
-        PosSession session = getById(sessionId);
+        // Locked (Phase 0 / M2): starting closure stops the session taking sales, so it serialises
+        // with checkout claims on the session row like close and suspend do.
+        PosSession session = lockById(sessionId);
 
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated()) {
@@ -1273,6 +1347,7 @@ public class PosSessionService {
         if (!authResult.authorized()) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, authResult.message());
         }
+        assertNoBlockingCheckouts(sessionId, "BEGIN_CLOSURE");
 
         // Deliberately NOT gated by businessDayContinuationGate. That gate refuses to let a
         // previous-Business-Day session keep being *used* — resume, selling, checkout, cash
@@ -1305,7 +1380,9 @@ public class PosSessionService {
     @Transactional
     public PosSession cancelClosure(Long sessionId, String reason,
                                     String supervisorUsernameOrEmail, String supervisorPassword) {
-        PosSession session = getById(sessionId);
+        // Locked (Phase 0 / M2) so it serialises with checkout claims; not blocked by attempts,
+        // because it returns the session to service rather than taking it out.
+        PosSession session = lockById(sessionId);
 
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated()) {
@@ -1364,17 +1441,21 @@ public class PosSessionService {
 
     @Transactional
     public PosSession suspendSession(Long sessionId) {
-        PosSession session = getById(sessionId);
+        // Phase 0 / M2: locked, then refused while a checkout attempt holds the session.
+        PosSession session = lockById(sessionId);
         if (session.getStatus() != PosSessionStatus.OPEN) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only OPEN sessions can be suspended.");
         }
+        assertNoBlockingCheckouts(sessionId, "SUSPEND");
         session.setStatus(PosSessionStatus.SUSPENDED);
         return repo.save(session);
     }
 
     @Transactional
     public PosSession resumeSession(Long sessionId) {
-        PosSession session = getById(sessionId);
+        // Locked (Phase 0 / M2); not blocked by attempts — a SUSPENDED session cannot have a live
+        // one, because suspend is refused while it does.
+        PosSession session = lockById(sessionId);
         if (session.getStatus() != PosSessionStatus.SUSPENDED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only SUSPENDED sessions can be resumed.");
         }
@@ -1402,7 +1483,11 @@ public class PosSessionService {
      */
     @Transactional
     public PosSession supervisorTakeover(Long sessionId, String supervisorPin) {
-        PosSession session = getById(sessionId);
+        // Locked (Phase 0 / M2). Since M2.1 also refused while a checkout attempt holds the session:
+        // a takeover changes the drawer's owner, which an in-flight sale was claimed under and is
+        // attributed to. Until the owner/terminal policy (decision B2) is approved, the safe default
+        // is to let that sale finish (or a supervisor resolve a stalled one) before the owner moves.
+        PosSession session = lockById(sessionId);
         if (session.getStatus() == PosSessionStatus.CLOSED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot take over a closed session.");
         }
@@ -1418,6 +1503,7 @@ public class PosSessionService {
                 }
             }
         }
+        assertNoBlockingCheckouts(sessionId, "TAKEOVER");
 
         session.setOpenedBy(currentUser());
         session.setStatus(PosSessionStatus.OPEN);
@@ -1450,9 +1536,13 @@ public class PosSessionService {
     @Transactional
     public PosSessionTransferResponse transferSession(Long sessionId, String destinationTerminalId,
                                                         String reason, String supervisorPin) {
-        PosSession before = getById(sessionId);
+        // Locked first (Phase 0 / M2), so PosSessionTransferService#transfer works on the locked
+        // row. Since M2.1 refused while a checkout attempt holds the session: the move changes the
+        // terminal (and counter) the in-flight sale was claimed on. Safe default until decision B2.
+        PosSession before = lockById(sessionId);
         Long sourceTerminalPk = before.getTerminalPk();
         boolean supervisorAuthorized = verifySupervisorPinIfProvided(before, supervisorPin);
+        assertNoBlockingCheckouts(sessionId, "TRANSFER");
 
         // Session Roaming Phase 9 — evaluate the transfer policy before attempting the move.
         // PosSessionTransferService#transfer stays business-operation only: it never decides
@@ -1880,6 +1970,14 @@ public class PosSessionService {
     @Transactional
     public Map<String, Object> generateXReport(Long sessionId) {
         PosSession session = getById(sessionId);
+        // M3: the first X-Report starts the closure workflow, which would refuse the offline sales
+        // a till may still be holding for this session. Refused while a lease is outstanding.
+        if (session.getStatus() == PosSessionStatus.OPEN && session.getXReportGeneratedAt() == null
+                && offlineLeaseBarrier != null && offlineLeaseBarrier.hasOutstandingLease(sessionId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "OFFLINE_LEASE_OUTSTANDING: Session #" + sessionId
+                    + " has an offline lease that is not settled, so its X-Report cannot be generated yet. "
+                    + "Bring the till online so it synchronises and settles the lease first.");
+        }
         if (session.getStatus() == PosSessionStatus.OPEN && session.getXReportGeneratedAt() == null) {
             LocalDateTime generatedAt = businessDayWindowService.clock().now();
             String generatedBy = currentUser();
@@ -2464,6 +2562,9 @@ public class PosSessionService {
         if (range.resolvedSessions.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot close day: no sessions found for this business date.");
         }
+        // M3: an offline lease of this branch-date that is not settled may still hold sales that
+        // have not reached the server. Judged from the server's lease register only.
+        if (offlineLeaseBarrier != null) offlineLeaseBarrier.assertDayCloseAllowed(branchId, date);
         // Every session inside the resolved range is guaranteed CLOSED at this point —
         // the two checks above already forbid OPEN/SUSPENDED anywhere on the date, and
         // those are the only other statuses.

@@ -2,6 +2,8 @@ package com.billbull.backend.pos.terminal;
 
 import com.billbull.backend.pos.counter.PosCounter;
 import com.billbull.backend.pos.counter.PosCounterRepository;
+import com.billbull.backend.pos.counter.PosCounterService;
+import com.billbull.backend.pos.counter.PosCounterStatus;
 import com.billbull.backend.pos.settings.PosSettings;
 import com.billbull.backend.pos.settings.PosSettingsRepository;
 import com.billbull.backend.settings.branch.Branch;
@@ -15,9 +17,12 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class PosTerminalService {
@@ -43,6 +48,17 @@ public class PosTerminalService {
     private String currentUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return auth != null ? auth.getName() : "system";
+    }
+
+    /** Records who is signed in on the terminal. Only real authenticated principals count —
+     *  scheduler/system threads and anonymous calls must never overwrite the last cashier. */
+    private void stampUser(PosTerminal terminal) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated()) return;
+        String name = auth.getName();
+        if (name == null || name.isBlank() || "anonymousUser".equals(name)) return;
+        terminal.setLastUser(name.length() > 100 ? name.substring(0, 100) : name);
+        terminal.setLastUserAt(LocalDateTime.now());
     }
 
     /**
@@ -85,6 +101,7 @@ public class PosTerminalService {
                         }
                         t.setLastSeenAt(LocalDateTime.now());
                         t.setLastHeartbeatAt(LocalDateTime.now());
+                        stampUser(t);
                         if (deviceInfo != null) t.setDeviceInfo(deviceInfo);
                         if (operatingSystem != null) t.setOperatingSystem(operatingSystem);
                         if (browser != null) t.setBrowser(browser);
@@ -112,6 +129,7 @@ public class PosTerminalService {
             }
             t.setLastSeenAt(LocalDateTime.now());
             t.setLastHeartbeatAt(LocalDateTime.now());
+            stampUser(t);
             if (deviceInfo != null) t.setDeviceInfo(deviceInfo);
             if (operatingSystem != null) t.setOperatingSystem(operatingSystem);
             if (browser != null) t.setBrowser(browser);
@@ -141,7 +159,7 @@ public class PosTerminalService {
         terminal.setBranchName(branch.getName());
         terminal.setTerminalId(newTerminalId);
         terminal.setTerminalName(requestedTerminalName != null ? requestedTerminalName : "Terminal " + seq);
-        terminal.setCounterName(counterName != null ? counterName : "Counter " + seq);
+        linkCounter(terminal, counterName);
         terminal.setDeviceFingerprint(deviceFingerprint);
         terminal.setDeviceInfo(deviceInfo);
         terminal.setOperatingSystem(operatingSystem);
@@ -151,6 +169,7 @@ public class PosTerminalService {
         terminal.setRegisteredBy(currentUser());
         terminal.setLastSeenAt(LocalDateTime.now());
         terminal.setLastHeartbeatAt(LocalDateTime.now());
+        stampUser(terminal);
 
         if (requireApproval) {
             terminal.setStatus(PosTerminalStatus.PENDING_REGISTRATION);
@@ -191,6 +210,7 @@ public class PosTerminalService {
 
         LocalDateTime now = LocalDateTime.now();
         terminal.setLastHeartbeatAt(now);
+        stampUser(terminal);
         terminal.setLastSeenAt(now);
         if (ipAddress != null && !ipAddress.isBlank()) terminal.setIpAddress(ipAddress);
 
@@ -269,6 +289,10 @@ public class PosTerminalService {
         terminal.setArchivedAt(null);
         terminal.setArchiveReason(null);
         terminal.setActive(true);
+        // Its old counter may have been deleted while it sat archived: put it on a live one.
+        boolean counterGone = terminal.getCounterId() == null
+                || counterRepo.findById(terminal.getCounterId()).filter(PosCounter::isActive).isEmpty();
+        if (counterGone) linkCounter(terminal, null);
         // Land directly in ACTIVE/IDLE using the same recent-heartbeat check keepActive() already
         // uses, rather than INACTIVE — the device's next heartbeat would have promoted it there
         // anyway, so this just skips the one throwaway cycle (BillBull-POS-Terminal-Archive-Lifecycle-Review.html Part 09/10).
@@ -327,6 +351,57 @@ public class PosTerminalService {
         return repo.save(terminal);
     }
 
+    /**
+     * Points {@code terminal} at a real counter row in its branch; counterName is always copied
+     * from that row, never stored on its own. A requested name picks that counter, creating it if
+     * the branch has none by that name. Without a name the terminal takes the first active counter
+     * no other in-service terminal holds, so a replacement PC lands on the counter its archived
+     * predecessor freed. A new "Counter N" is created only when every counter is taken.
+     */
+    private void linkCounter(PosTerminal terminal, String requestedName) {
+        Long branchId = terminal.getBranchId();
+        String name = requestedName == null ? "" : requestedName.trim();
+        if (name.length() > 100) name = name.substring(0, 100);
+        PosCounter counter;
+        if (!name.isEmpty()) {
+            String wanted = name;
+            counter = counterRepo.findFirstByBranchIdAndCounterNameIgnoreCaseAndIsActiveTrueOrderByIdAsc(branchId, wanted)
+                    .orElseGet(() -> createCounter(terminal, wanted));
+        } else {
+            long excludePk = terminal.getId() != null ? terminal.getId() : -1L;
+            counter = counterRepo.findByBranchIdAndStatusAndIsActiveTrueOrderByDisplayOrderAsc(branchId, PosCounterStatus.ACTIVE)
+                    .stream()
+                    .filter(c -> repo.countLiveByCounterIdExcluding(c.getId(), excludePk) == 0)
+                    .findFirst()
+                    .orElseGet(() -> createCounter(terminal, nextFreeCounterName(branchId)));
+        }
+        terminal.setCounterId(counter.getId());
+        terminal.setCounterName(counter.getCounterName());
+    }
+
+    private PosCounter createCounter(PosTerminal terminal, String name) {
+        Long branchId = terminal.getBranchId();
+        PosCounter c = new PosCounter();
+        c.setBranchId(branchId);
+        c.setBranchName(terminal.getBranchName());
+        c.setCounterCode(PosCounterService.nextCounterCode(counterRepo, branchId));
+        c.setCounterName(name);
+        c.setStatus(PosCounterStatus.ACTIVE);
+        c.setDisplayOrder((int) counterRepo.countByBranchId(branchId) + 1);
+        return counterRepo.save(c);
+    }
+
+    /** Lowest "Counter N" not already used by a live counter in the branch. */
+    private String nextFreeCounterName(Long branchId) {
+        Set<String> taken = counterRepo.findByBranchIdAndIsActiveTrueOrderByDisplayOrderAscCounterNameAsc(branchId)
+                .stream()
+                .map(c -> c.getCounterName() == null ? "" : c.getCounterName().trim().toLowerCase(Locale.ROOT))
+                .collect(Collectors.toSet());
+        int n = 1;
+        while (taken.contains("counter " + n)) n++;
+        return "Counter " + n;
+    }
+
     // -------------------------------------------------------------------------
     // Existing read/mutation methods
     // -------------------------------------------------------------------------
@@ -351,7 +426,9 @@ public class PosTerminalService {
         PosTerminal terminal = repo.findByTerminalId(terminalId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalId));
         if (terminalName != null && !terminalName.isBlank()) terminal.setTerminalName(terminalName.trim());
-        if (counterName != null && !counterName.isBlank()) terminal.setCounterName(counterName.trim());
+        // A counter name here picks that counter (creating it if new). It used to overwrite the
+        // text only, leaving counterId on the old counter, so reports and receipts disagreed.
+        if (counterName != null && !counterName.isBlank()) linkCounter(terminal, counterName);
         return repo.save(terminal);
     }
 

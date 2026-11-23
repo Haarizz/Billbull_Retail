@@ -1,4 +1,5 @@
 import api from "@billbull/shared/api/axiosConfig";
+import { reasonConfig } from "@billbull/shared/api/rolePermissionsApi";
 
 /**
  * User management API — ADMIN only (except getEmployeeAccess which is also admin-only).
@@ -84,19 +85,20 @@ export const usersApi = {
    * Create a new role (ADMIN only).
    * payload: { name, description }
    */
-  createRole: (payload) =>
-    api.post("/api/roles", payload).then((r) => r.data),
+  createRole: (payload, reason) =>
+    api.post("/api/roles", payload, reasonConfig(reason)).then((r) => r.data),
 
   /**
    * Update a role's description (ADMIN only). The name is immutable.
+   * reason (optional) is recorded in the access audit log.
    */
-  updateRole: (id, description) =>
-    api.put(`/api/roles/${id}`, { description }).then((r) => r.data),
+  updateRole: (id, description, reason) =>
+    api.put(`/api/roles/${id}`, { description }, reasonConfig(reason)).then((r) => r.data),
 
   /**
    * Delete a custom role (ADMIN only).
    * Fails for system roles or roles still assigned to active users.
    */
-  deleteRole: (id) =>
-    api.delete(`/api/roles/${id}`),
+  deleteRole: (id, reason) =>
+    api.delete(`/api/roles/${id}`, reasonConfig(reason)),
 };

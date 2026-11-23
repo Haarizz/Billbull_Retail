@@ -75,6 +75,8 @@ import api from "@billbull/shared/api/axiosConfig";
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
 // QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
 import InlineProductSearchCell from '../../components/InlineProductSearchCell';
+import { orderRowsForEntryDisplay, entryRowAttrs, isBlankByCodeDesc, placeEntryLine, findOpenEntryRow } from '../../utils/entryRowOrder';
+import useEntryRowTable from '../../hooks/useEntryRowTable';
 import PaginationFooter from '../../components/common/PaginationFooter';
 
 // ✅ PRODUCT SELECTOR — self-fetching, server-side search
@@ -684,6 +686,7 @@ const Quotations = () => {
     const [items, setItems] = useState([
         { id: Date.now(), code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 0, taxAmt: 0.00, total: 0.00, remarks: '', isProductSelected: false }
     ]);
+    const entryTableRef = useEntryRowTable(items, isBlankByCodeDesc);
     const createBlankQuotationItem = () => ({
         id: Date.now() + Math.random(),
         code: '',
@@ -723,7 +726,8 @@ const Quotations = () => {
         if (targetId == null) return;
         const raf = requestAnimationFrame(() => {
             const el = inlineSearchRefs.current[targetId];
-            if (el) el.focus();
+            // the search row is pinned, so keep the latest lines in view
+            if (el) el.focus({ preventScroll: true });
             focusNextInlineSearchRef.current = null;
         });
         return () => cancelAnimationFrame(raf);
@@ -1341,7 +1345,7 @@ const Quotations = () => {
             priceLevelAuto: true,
             name: product.name || '',
             sku: product.sku || product.skuCode || product.productSku || '',
-            brand: product.brandName || product.brand || '',
+            brand: product.brandName || product.brand?.name || (typeof product.brand === 'string' ? product.brand : ''),
             shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
             barcode: product.barcode || '',
@@ -1384,8 +1388,7 @@ const Quotations = () => {
                 return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
             }
             // If the first row is empty, replace it
-            const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
-            return isFirstItemEmpty ? [newItem] : [...prev, newItem];
+            return placeEntryLine(prev, newItem, isBlankByCodeDesc);
         });
         const filledItemId = targetRowId != null ? targetRowId : newItem.id;
         setPendingFastEntrySearch('');
@@ -1437,7 +1440,7 @@ const Quotations = () => {
             priceLevelAuto: Number(price) === Number(pickSalesItemPrice(product, salesSettings?.salesItemPricePolicy)),
             name: product.name || '',
             sku: product.sku || product.skuCode || product.productSku || '',
-            brand: product.brandName || product.brand || '',
+            brand: product.brandName || product.brand?.name || (typeof product.brand === 'string' ? product.brand : ''),
             shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
             barcode: product.barcode || '',
@@ -1463,8 +1466,7 @@ const Quotations = () => {
         };
         const newItem = calculateRow(rawItem);
         setItems(prev => {
-            const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
-            return isFirstItemEmpty ? [newItem] : [...prev, newItem];
+            return placeEntryLine(prev, newItem, isBlankByCodeDesc);
         });
         setFocusedRowId(newItem.id);
         if (newItem.code) {
@@ -3910,7 +3912,7 @@ const Quotations = () => {
                                         </div>
                                     </div>
 
-                                    <div className="overflow-auto max-h-[380px]">
+                                    <div ref={entryTableRef} className="overflow-auto max-h-[380px]">
                                         <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
                                             <thead className="sticky top-0 z-10 bg-white border-b border-slate-100/80 text-[11px] font-semibold text-slate-500">
                                                 <tr>
@@ -3940,11 +3942,11 @@ const Quotations = () => {
                                                             </div>
                                                         </td>
                                                     </tr>
-                                                ) : items.map((item, index) => (
+                                                ) : orderRowsForEntryDisplay(items, isBlankByCodeDesc).map(({ item, rowNo, blank }) => (
                                                     <React.Fragment key={item.id}>
-                                                        <tr className="group hover:bg-slate-50/50 transition-colors bg-white align-middle" onClick={() => setFocusedRowId(item.id)}>
+                                                        <tr {...entryRowAttrs({ item, blank })} className="group hover:bg-slate-50/50 transition-colors bg-white align-middle" onClick={() => setFocusedRowId(item.id)}>
                                                             {/* Index */}
-                                                            <td className="p-2 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
+                                                            <td className="p-2 text-center text-slate-400 text-xs font-medium">{rowNo}</td>
 
                                                             {/* Item / Description */}
                                                             <td className="p-2">
@@ -4034,6 +4036,8 @@ const Quotations = () => {
                                                                             if (e.key === 'Tab' && !e.shiftKey && !isViewMode) {
                                                                                 e.preventDefault();
                                                                                 const newRow = createBlankQuotationItem();
+                                                                                const openRow = findOpenEntryRow(items, isBlankByCodeDesc);
+                                                                                if (openRow) { inlineSearchRefs.current[openRow.id]?.focus({ preventScroll: true }); return; }
                                                                                 focusNextInlineSearchRef.current = newRow.id;
                                                                                 setItems(prev => [...prev, newRow]);
                                                                             }

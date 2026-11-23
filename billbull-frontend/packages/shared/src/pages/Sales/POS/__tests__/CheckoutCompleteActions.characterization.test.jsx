@@ -745,6 +745,10 @@ const AFTER_BLOCK = [
   '                  initialValue={receiptShareInitialValue}',
   '                  onClose={() => setReceiptShareChannel(null)}',
   '                  onSend={handleReceiptShareSend}',
+  // WhatsApp receipt link (document share links): ReceiptShareModal opens WhatsAppLinkShareDialog with it.
+  '                  linkDoc={receiptLinkDoc}',
+  // Email receipt (back-office Send Email dialog with the receipt PDF): ReceiptShareModal opens it with this.
+  '                  emailDoc={receiptEmailDoc}',
   '                />',
   '              )}',
   '            </div>',
@@ -1047,7 +1051,7 @@ describe('6. source — ownership stays in POSSales', () => {
     expect(count(POS_SALES, '  const [showReprintModal, setShowReprintModal] = useState(false);')).toBe(1);
     expect(count(POS_SALES, '  const [receiptShareChannel, setReceiptShareChannel] = useState(null);')).toBe(1);
     expect(count(POS_SALES, '  const handleReceiptShareSend = useCallback(async (value, options) => {')).toBe(1);
-    expect(POS_SALES).toMatch(/\n {4}lastPaidInvoice,\n[\s\S]*?\} = useCheckout\(\{/);
+    expect(POS_SALES).toMatch(/\n {4}lastPaidInvoice, setLastPaidInvoice,\n[\s\S]*?\} = useCheckout\(\{/);
     expect(POS_SALES).toMatch(/^import \{[^}]*\bgetSalesInvoiceById\b[^}]*\} from '\.\.\/\.\.\/api\/salesInvoiceApi';$/m);
   });
 
@@ -1056,13 +1060,18 @@ describe('6. source — ownership stays in POSSales', () => {
     for (const dep of BLOCK_DEPENDENCIES) expect(words(outside, dep), dep).toBeGreaterThan(0);
   });
 
-  it('ReceiptShareModal: rendered once, conditionally, keyed by receiptShareChannel — outside the call site and the component', () => {
+  it('ReceiptShareModal: rendered conditionally, keyed by receiptShareChannel — outside the call site and the component', () => {
     const outside = POS_SALES.replace(callSite(), '');
-    expect(count(POS_SALES, '<ReceiptShareModal')).toBe(1);
-    expect(count(outside, '<ReceiptShareModal')).toBe(1);
+    // Three times: the Payment Complete screen and the Last Receipt dialog (same channel state and
+    // handler), and Reprint Previous Invoices (its own reprintShare state, the same handler).
+    expect(count(POS_SALES, '<ReceiptShareModal')).toBe(3);
+    expect(count(outside, '<ReceiptShareModal')).toBe(3);
+    expect(count(outside, '{reprintShare && (\n              <ReceiptShareModal\n                key={`reprint-${reprintShare.channel}-${reprintShare.sale.id}`}')).toBe(1);
+    expect(count(outside, 'onClose={() => setReprintShare(null)}')).toBe(1);
     expect(count(outside, '{receiptShareChannel && (\n                <ReceiptShareModal\n                  key={receiptShareChannel}')).toBe(1);
-    expect(count(outside, 'onClose={() => setReceiptShareChannel(null)}')).toBe(1);
-    expect(count(outside, 'onSend={handleReceiptShareSend}')).toBe(1);
+    expect(count(outside, '{showLastReceiptDialog && receiptShareChannel && lastPaidInvoice && (\n        <ReceiptShareModal\n          key={`last-${receiptShareChannel}`}')).toBe(1);
+    expect(count(outside, 'onClose={() => setReceiptShareChannel(null)}')).toBe(2);
+    expect(count(outside, 'onSend={handleReceiptShareSend}')).toBe(3);
     expect(codeOnly(COMPONENT)).not.toContain('ReceiptShareModal');
   });
 });

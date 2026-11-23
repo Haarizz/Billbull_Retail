@@ -61,10 +61,29 @@ public class EmployeeServiceImpl implements EmployeeService {
             target.setPosPinHash(null);
             target.setPosPinLength(null);
         } else if (newPin != null && !newPin.isBlank()) {
+            posPinPolicy.validate(newPin.trim());
+            if (isPosPinInUse(newPin.trim(), target.getId())) {
+                throw new IllegalArgumentException(
+                        "This POS PIN is already used by another employee. Choose a different PIN.");
+            }
             target.setPosPinHash(posPinPolicy.hash(newPin.trim()));
             target.setPosPinLength(newPin.trim().length());
         }
         target.setPosPin(null);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean isPosPinInUse(String pin, Long excludeEmployeeId) {
+        if (pin == null || pin.isBlank()) {
+            return false;
+        }
+        String candidate = pin.trim();
+        // BCrypt is deliberately slow (~50–100 ms per compare); compare in parallel so a branch
+        // with dozens of PIN holders still answers in well under a second.
+        return repository.findByPosPinHashIsNotNull().parallelStream()
+                .filter(e -> excludeEmployeeId == null || !excludeEmployeeId.equals(e.getId()))
+                .anyMatch(e -> posPinPolicy.matches(candidate, e.getPosPinHash()));
     }
 
     @Override

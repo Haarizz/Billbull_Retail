@@ -50,7 +50,7 @@ import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
 import { generatePrintHtmlAsync, printHtml } from '@billbull/shared/utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { sendProformaEmail } from '../../api/proformaApi';
-import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
+import SendDocumentEmailModal from '@billbull/shared/components/SendDocumentEmailModal';
 import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
@@ -116,6 +116,8 @@ import useShortcuts from '../../hooks/useShortcuts';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
 // QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
 import InlineProductSearchCell from '../../components/InlineProductSearchCell';
+import { orderRowsForEntryDisplay, entryRowAttrs, isBlankByCodeDesc, placeEntryLine, findOpenEntryRow } from '../../utils/entryRowOrder';
+import useEntryRowTable from '../../hooks/useEntryRowTable';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 import TableSkeleton from '../../components/common/TableSkeleton';
@@ -229,6 +231,7 @@ const ProformaInvoice = () => {
   });
 
   const [items, setItems] = useState([createBlankProformaItem()]);
+  const entryTableRef = useEntryRowTable(items, isBlankByCodeDesc);
 
   // Customer-specific prices (Pricing Phase 2): lines added from the product master follow the
   // customer's negotiated price → their default level → the default price, valid on the PI date,
@@ -317,7 +320,8 @@ const ProformaInvoice = () => {
     if (targetId == null) return;
     const raf = requestAnimationFrame(() => {
       const el = inlineSearchRefs.current[targetId];
-      if (el) el.focus();
+      // the search row is pinned, so keep the latest lines in view
+      if (el) el.focus({ preventScroll: true });
       focusNextInlineSearchRef.current = null;
     });
     return () => cancelAnimationFrame(raf);
@@ -789,7 +793,7 @@ const ProformaInvoice = () => {
       code: product.code,
       name: product.name || '',
       sku: product.sku || product.skuCode || product.productSku || '',
-      brand: product.brandName || product.brand || '',
+      brand: product.brandName || product.brand?.name || (typeof product.brand === 'string' ? product.brand : ''),
       localName: product.localName || product.arabicName || '',
       shortDesc: product.shortDesc || '',
       detailedDesc: product.detailedDesc || '',
@@ -821,8 +825,7 @@ const ProformaInvoice = () => {
       if (targetRowId != null) {
         return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
       }
-      const hasData = prev.some(i => i.code || i.desc);
-      return hasData ? [...prev, newItem] : [newItem];
+      return placeEntryLine(prev, newItem, isBlankByCodeDesc);
     });
     const filledItem = { ...newItem, id: targetRowId != null ? targetRowId : newItem.id };
     setPendingFastEntrySearch('');
@@ -846,7 +849,7 @@ const ProformaInvoice = () => {
       code: product.code,
       name: product.name || '',
       sku: product.sku || product.skuCode || product.productSku || '',
-      brand: product.brandName || product.brand || '',
+      brand: product.brandName || product.brand?.name || (typeof product.brand === 'string' ? product.brand : ''),
       localName: product.localName || product.arabicName || '',
       shortDesc: product.shortDesc || '',
       detailedDesc: product.detailedDesc || '',
@@ -870,8 +873,7 @@ const ProformaInvoice = () => {
     });
 
     setItems(prev => {
-      const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
-      return isFirstItemEmpty ? [newItem] : [...prev, newItem];
+      return placeEntryLine(prev, newItem, isBlankByCodeDesc);
     });
   };
 
@@ -2067,7 +2069,7 @@ const ProformaInvoice = () => {
                     </div>
                   </div>
 
-                  <div
+                  <div ref={entryTableRef}
                     className="overflow-auto"
                     style={items.length > 5 ? { maxHeight: '380px', overflowY: 'auto' } : {}}
                   >
@@ -2100,10 +2102,10 @@ const ProformaInvoice = () => {
                               </div>
                             </td>
                           </tr>
-                        ) : items.map((item, index) => (
+                        ) : orderRowsForEntryDisplay(items, isBlankByCodeDesc).map(({ item, rowNo, blank }) => (
                           <React.Fragment key={item.id}>
-                            <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isReadOnly ? 'opacity-80' : ''}`}>
-                              <td className="p-2 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
+                            <tr {...entryRowAttrs({ item, blank })} className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isReadOnly ? 'opacity-80' : ''}`}>
+                              <td className="p-2 text-center text-slate-400 text-xs font-medium">{rowNo}</td>
                               <td className="p-2">
                                 {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
                                 {(!item.code && !item.desc) ? (
@@ -2191,6 +2193,8 @@ const ProformaInvoice = () => {
                                       if (e.key === 'Tab' && !e.shiftKey && !isReadOnly) {
                                         e.preventDefault();
                                         const newRow = createBlankProformaItem();
+                                        const openRow = findOpenEntryRow(items, isBlankByCodeDesc);
+                                        if (openRow) { inlineSearchRefs.current[openRow.id]?.focus({ preventScroll: true }); return; }
                                         focusNextInlineSearchRef.current = newRow.id;
                                         setItems(prev => [...prev, newRow]);
                                       }

@@ -46,8 +46,12 @@ const normalizeAlert = (input) => {
 
 const getAlertTone = (message) => {
   const value = message.toLowerCase();
+  // Checked before the success words: a rejection like "Duplicate stock deduction blocked: …
+  // already posted" contains "posted" and was rendered as a green "Done".
   if (value.includes('failed') || value.includes('error') || value.includes('cannot')
-      || value.includes('invalid') || value.includes('required')) {
+      || value.includes('invalid') || value.includes('required') || value.includes('blocked')
+      || value.includes('insufficient') || value.includes('duplicate') || value.includes('short by')
+      || value.includes('not allowed') || value.includes('denied')) {
     return 'error';
   }
   if (value.includes('success') || value.includes('saved') || value.includes('created')

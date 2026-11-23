@@ -125,6 +125,9 @@ const normalizeRecentProduct = (product, detail = null) => {
             detailProduct?.department?.name ||
             'General',
         departmentName: product?.departmentName || detailProduct?.department?.name || null,
+        // GET /api/products/{id} returns the raw entity, whose `brand` is an object.
+        // Callers send brand on as a String (e.g. QuotationItem.brandName), so expose the name.
+        brandName: product?.brandName || detailProduct?.brandName || detailProduct?.brand?.name || null,
         unitName: product?.unitName || detailProduct?.unitName || detailProduct?.unit || primaryUnitName || '',
         availableUnits: product?.availableUnits || derivedUnits,
         unitConversions: product?.unitConversions || derivedConversions,

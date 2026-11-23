@@ -5,8 +5,27 @@
 // Enter and the keypad call onSubmit() with no arguments; Authorize and Cancel pass onSubmit/onCancel
 // by reference. Known approval defects are preserved on purpose — see the characterization test.
 
-import React from 'react';
-import { AlertCircle, Shield } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { AlertCircle, Loader2, Shield } from 'lucide-react';
+
+import { getPosPinApprovers } from '../../../../../api/posApi';
+
+/**
+ * Personal PIN mode: who may approve here. Loaded once per dialog opening; a failure leaves
+ * an empty list with a message rather than blocking the dialog.
+ */
+function useApprovers(enabled) {
+  const [state, setState] = useState({ loading: enabled, list: [], error: '' });
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let cancelled = false;
+    getPosPinApprovers()
+      .then(list => { if (!cancelled) setState({ loading: false, list, error: '' }); })
+      .catch(() => { if (!cancelled) setState({ loading: false, list: [], error: 'Could not load supervisors. Try again.' }); });
+    return () => { cancelled = true; };
+  }, [enabled]);
+  return state;
+}
 
 function SupervisorPinDialog({
   pendingPriceOverride,
@@ -24,9 +43,20 @@ function SupervisorPinDialog({
   setSupervisorPinValue,
   supervisorPinError,
   setSupervisorPinError,
+  supervisorApprover = null,
+  setSupervisorApprover = () => {},
   onSubmit,
   onCancel,
 }) {
+  const isForceClose = pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION';
+  const usesPersonalPin = supervisorApprovalMode === 'PERSONAL_PIN';
+  // Force Close has to name the approver, which the shared Branch PIN cannot, so in Branch PIN
+  // mode it asks for the supervisor's own username + password instead (Personal PIN names them).
+  const usesPassword = supervisorApprovalMode === 'PASSWORD' || (isForceClose && !usesPersonalPin);
+  const approvers = useApprovers(usesPersonalPin);
+  const pinMax = usesPersonalPin ? 6 : 8;
+  const showPinEntry = !usesPersonalPin || !!supervisorApprover;
+
   return (
         <div className="fixed inset-0 bg-black/50 z-[300] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[480px] flex flex-col max-h-[90vh]">
@@ -113,8 +143,59 @@ function SupervisorPinDialog({
               {/* Own <form> + explicit autocomplete hints keep Chrome's password manager out:
                   without them it autofilled the saved login password into the PIN field and
                   paired the nearest text input — the POS product search — as the "username". */}
+              {usesPersonalPin && !supervisorApprover && (
+                <div>
+                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">Who is approving?</p>
+                  {approvers.loading ? (
+                    <div className="flex items-center gap-2 text-xs text-gray-500 py-3"><Loader2 className="h-3.5 w-3.5 animate-spin" />Loading supervisors…</div>
+                  ) : approvers.list.length === 0 ? (
+                    <p className="text-[11px] text-gray-500 py-2">
+                      {approvers.error || 'No supervisor at this branch has a POS PIN. Set one in HR → Employees → Access (supervisor, manager or admin role).'}
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2 max-h-56 overflow-y-auto">
+                      {approvers.list.map(a => (
+                        <button
+                          key={a.employeeId}
+                          type="button"
+                          onClick={() => { setSupervisorApprover(a); setSupervisorPinValue(''); setSupervisorPinError(''); }}
+                          className="flex items-center gap-2 rounded-lg border border-gray-200 hover:border-amber-400 hover:bg-amber-50 px-2.5 py-2 text-left transition-colors"
+                        >
+                          <span className="h-8 w-8 shrink-0 rounded-full bg-[#1E293B] text-white text-[11px] font-bold flex items-center justify-center">{a.initials || '?'}</span>
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold text-[#1E293B] truncate">{a.name}</span>
+                            {a.role && <span className="block text-[10px] text-gray-500 truncate">{a.role}</span>}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {supervisorPinError && (
+                    <p className="text-[11px] font-medium text-red-500 mt-1 flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3 shrink-0" />{supervisorPinError}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {usesPersonalPin && supervisorApprover && (
+                <div className="flex items-center gap-2 rounded-lg bg-amber-50/60 border border-amber-100 px-2.5 py-2">
+                  <span className="h-8 w-8 shrink-0 rounded-full bg-[#1E293B] text-white text-[11px] font-bold flex items-center justify-center">{supervisorApprover.initials || '?'}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-[#1E293B] truncate">{supervisorApprover.name}</span>
+                    <span className="block text-[10px] text-gray-500">Enter your POS PIN</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setSupervisorApprover(null); setSupervisorPinValue(''); setSupervisorPinError(''); }}
+                    className="text-[11px] font-semibold text-amber-700 hover:text-amber-900"
+                  >Change</button>
+                </div>
+              )}
+
+              {showPinEntry && (
               <form className="space-y-3" autoComplete="off" onSubmit={e => e.preventDefault()}>
-                {supervisorApprovalMode === 'PASSWORD' && (
+                {usesPassword && (
                   <div>
                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1 block">
                       Supervisor Email / Username
@@ -132,19 +213,24 @@ function SupervisorPinDialog({
                 )}
                 <div>
                   <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1 block">
-                    {supervisorApprovalMode === 'PASSWORD' ? 'Supervisor Password' : 'Supervisor PIN'}
+                    {usesPassword ? 'Supervisor Password' : usesPersonalPin ? 'Your POS PIN' : 'Supervisor PIN'}
                   </label>
                   <input
                     type="password"
                     value={supervisorPinValue}
-                    onChange={e => { setSupervisorPinValue(e.target.value); setSupervisorPinError(''); }}
+                    onChange={e => {
+                      // A personal POS PIN is digits only. The branch PIN was never restricted, so
+                      // it (and a password) is taken as typed.
+                      setSupervisorPinValue(usesPersonalPin ? e.target.value.replace(/\D/g, '').slice(0, pinMax) : e.target.value);
+                      setSupervisorPinError('');
+                    }}
                     onKeyDown={e => { if (e.key === 'Enter') onSubmit(); }}
-                    autoFocus={supervisorApprovalMode !== 'PASSWORD'}
-                    maxLength={supervisorApprovalMode === 'PASSWORD' ? 64 : 8}
-                    autoComplete={supervisorApprovalMode === 'PASSWORD' ? 'new-password' : 'one-time-code'}
-                    inputMode={supervisorApprovalMode === 'PASSWORD' ? undefined : 'numeric'}
-                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 ${supervisorApprovalMode === 'PASSWORD' ? 'text-sm' : 'text-center text-lg tracking-[0.5em]'}`}
-                    placeholder={supervisorApprovalMode === 'PASSWORD' ? '' : '····'}
+                    autoFocus={!usesPassword}
+                    maxLength={usesPassword ? 64 : pinMax}
+                    autoComplete={usesPassword ? 'new-password' : 'one-time-code'}
+                    inputMode={usesPassword ? undefined : 'numeric'}
+                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 ${usesPassword ? 'text-sm' : 'text-center text-lg tracking-[0.5em]'}`}
+                    placeholder={usesPassword ? '' : '····'}
                   />
                   {supervisorPinError && (
                     <p className="text-[11px] font-medium text-red-500 mt-1 flex items-center gap-1">
@@ -153,8 +239,9 @@ function SupervisorPinDialog({
                   )}
                 </div>
               </form>
+              )}
 
-              {supervisorApprovalMode !== 'PASSWORD' && (
+              {!usesPassword && showPinEntry && (
                 <div className="grid grid-cols-3 gap-2">
                   {[1, 2, 3, 4, 5, 6, 7, 8, 9, 'C', 0, '✓'].map(k => (
                     <button
@@ -164,7 +251,7 @@ function SupervisorPinDialog({
                       onClick={() => {
                         if (k === 'C') { setSupervisorPinValue(''); setSupervisorPinError(''); }
                         else if (k === '✓') onSubmit();
-                        else setSupervisorPinValue(p => (p + k).slice(0, 8));
+                        else setSupervisorPinValue(p => (p + k).slice(0, pinMax));
                       }}
                       className={`py-2 rounded-lg text-sm font-bold transition-colors ${k === '✓' ? 'bg-amber-500 hover:bg-amber-600 text-white' :
                           k === 'C' ? 'bg-red-100 hover:bg-red-200 text-red-600' :
@@ -177,13 +264,13 @@ function SupervisorPinDialog({
             </div>
 
             <div className="p-5 border-t border-gray-100 shrink-0 space-y-2">
-              {supervisorApprovalMode === 'PASSWORD' && (
+              {usesPassword && (
                 <button
                   type="button"
                   onClick={onSubmit}
                   disabled={
                     !supervisorPinEmail || !supervisorPinValue ||
-                    (pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION' && (!forceCloseReason || forceCloseReason === '' || !forceCloseAuditAcknowledged))
+                    (isForceClose && (!forceCloseReason || forceCloseReason === '' || !forceCloseAuditAcknowledged))
                   }
                   className="w-full py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-bold transition-colors"
                 >

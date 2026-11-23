@@ -283,6 +283,37 @@ class EmployeeServiceImplTest {
     }
 
     @Test
+    void createEmployeeRejectsAPosPinAnotherEmployeeAlreadyHas() {
+        Employee holder = new Employee();
+        holder.setId(5L);
+        holder.setPosPinHash(new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder(4).encode("2580"));
+        when(repository.findByPosPinHashIsNotNull()).thenReturn(java.util.List.of(holder));
+
+        EmployeeUpsertRequest request = validCreateRequest();
+        request.setPosAccess(true);
+        request.setPosPin("2580");
+
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class,
+                () -> employeeService.createEmployee(request, null));
+
+        assertTrue(ex.getMessage().contains("already used"));
+        verify(repository, never()).save(any(Employee.class));
+    }
+
+    @Test
+    void posPinInUseIgnoresTheEmployeesOwnPin() {
+        Employee self = new Employee();
+        self.setId(70L);
+        self.setPosPinHash(new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder(4).encode("2580"));
+        when(repository.findByPosPinHashIsNotNull()).thenReturn(java.util.List.of(self));
+
+        assertTrue(!employeeService.isPosPinInUse("2580", 70L));
+        assertTrue(employeeService.isPosPinInUse("2580", null));
+        assertTrue(!employeeService.isPosPinInUse("3691", null));
+    }
+
+    @Test
     void updateEmployeeKeepsThePinWhenTheFieldIsBlankAndClearsItWhenPosAccessIsOff() {
         Employee existing = new Employee();
         existing.setId(70L);

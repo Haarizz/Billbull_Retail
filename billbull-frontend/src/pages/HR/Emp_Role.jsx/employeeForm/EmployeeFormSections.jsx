@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertCircle,
   Camera,
@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { validatePassword } from '../../../../utils/passwordValidation';
+import { employeesApi } from '../../../../api/employeesApi';
 import {
   AutocompleteField,
   CheckCard,
@@ -380,10 +381,52 @@ export const AccessSection = ({
   selectedBranch,
   warehouses,
   formatBranchLabel,
+  employeeId = null,
 }) => {
   const bind = makeBinder(form, setField);
   const [showPin, setShowPin] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  // Live "is this PIN free?" check. idle | checking | available | taken. Save enforces it too.
+  // The server's answer is stored with the PIN it was for, so a stale answer is never shown.
+  const [pinResult, setPinResult] = useState({ pin: null, state: 'idle' });
+  const pinCheckable = Boolean(form.posAccess && /^\d{4,6}$/.test(form.posPin || '') && !errors.posPin);
+  const pinCheck = !pinCheckable
+    ? { state: 'idle' }
+    : pinResult.pin === form.posPin ? pinResult : { state: 'checking' };
+
+  useEffect(() => {
+    if (!pinCheckable) return undefined;
+    const pin = form.posPin;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await employeesApi.checkPosPin(pin, employeeId);
+        if (!cancelled) {
+          setPinResult(res?.available ? { pin, state: 'available' } : { pin, state: 'taken', message: res?.message });
+        }
+      } catch {
+        if (!cancelled) setPinResult({ pin, state: 'idle' }); // save still checks server-side
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [pinCheckable, form.posPin, employeeId]);
+
+  // Generate a PIN nobody else has (a few tries; the live check still runs on the result).
+  const generateFreePin = async () => {
+    let pin = generatePosPin();
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      try {
+        const res = await employeesApi.checkPosPin(pin, employeeId);
+        if (res?.available) break;
+      } catch {
+        break;
+      }
+      pin = generatePosPin();
+    }
+    setField('posPin', pin);
+    setShowPin(true);
+  };
+  const pinError = errors.posPin || (pinCheck.state === 'taken' ? (pinCheck.message || 'PIN already in use — choose another') : undefined);
 
   const otherBranches = branches.filter((b) => !selectedBranch || b.id !== selectedBranch.id);
   const toggleId = (field, id) => {
@@ -403,23 +446,34 @@ export const AccessSection = ({
           />
           {form.posAccess && (
             <div className={grid2}>
-              <Field label="POS PIN" optional error={errors.posPin}>
+              <Field label="POS PIN" optional error={pinError}>
                 {(id) => (
                   <>
                     <InputWithAction
                       id={id}
                       {...bind('posPin')}
+                      // Digits only: anything else is dropped as it is typed or pasted.
+                      onChange={(e) => setField('posPin', e.target.value.replace(/\D/g, '').slice(0, 6))}
                       type={showPin ? 'text' : 'password'}
                       inputMode="numeric"
+                      pattern="[0-9]*"
                       autoComplete="new-password"
                       maxLength={6}
-                      error={errors.posPin}
+                      error={pinError}
                       actionLabel="Generate"
-                      onAction={() => { setField('posPin', generatePosPin()); setShowPin(true); }}
+                      onAction={generateFreePin}
                     />
-                    {!errors.posPin && (
+                    {!pinError && (
                       <div className="mt-1 flex items-center justify-between text-[11px] text-slate-400">
-                        <span>{form.hasExistingPin && !form.posPin ? 'A PIN is set — type a new one to change it' : '4–6 digits, used for till PIN sign-in'}</span>
+                        <span>
+                          {form.hasExistingPin && !form.posPin
+                            ? 'A PIN is set — type a new one to change it'
+                            : pinCheck.state === 'checking'
+                              ? 'Checking PIN…'
+                              : pinCheck.state === 'available'
+                                ? <span className="text-emerald-600">PIN is available</span>
+                                : '4–6 digits, used for till PIN sign-in'}
+                        </span>
                         {form.posPin && (
                           <button type="button" onClick={() => setShowPin((v) => !v)} className="flex items-center gap-1 hover:text-slate-600">
                             {showPin ? <EyeOff size={12} /> : <Eye size={12} />} {showPin ? 'Hide' : 'Show'}

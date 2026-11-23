@@ -29,7 +29,8 @@ public class PosSettings extends BaseEntity {
     private Boolean requireCashMovementCategory = false;
 
     @Column(name = "supervisor_approval_mode", length = 20)
-    private String supervisorApprovalMode = "PIN"; // PIN or PASSWORD
+    // PIN (shared branch PIN) | PASSWORD (approver's login) | PERSONAL_PIN (approver's own till PIN)
+    private String supervisorApprovalMode = "PIN";
 
     @Column(name = "supervisor_pin", length = 100)
     private String supervisorPin;

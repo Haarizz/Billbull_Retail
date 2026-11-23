@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { getCompanyProfile } from '../api/companyProfileApi';
+import { hasSessionCredentials } from '../api/auth';
 import { getImageUrl } from '../utils/urlUtils';
 
 const CompanyContext = createContext(null);
@@ -27,7 +28,7 @@ export const CompanyProvider = ({ children }) => {
     const [company, setCompany] = useState(null);
 
     useEffect(() => {
-        if (!sessionStorage.getItem("token")) return;
+        if (!hasSessionCredentials()) return;
         getCompanyProfile()
             .then(res => {
                 const profile = res.data;

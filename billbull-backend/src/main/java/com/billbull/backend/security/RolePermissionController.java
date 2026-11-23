@@ -22,13 +22,16 @@ public class RolePermissionController {
     private final RolePermissionService rolePermissionService;
     private final AuditLogService auditLogService;
     private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
+    private final com.billbull.backend.security.accessaudit.AccessAuditService accessAuditService;
 
     public RolePermissionController(RolePermissionService rolePermissionService,
                                     AuditLogService auditLogService,
-                                    com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService) {
+                                    com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
+                                    com.billbull.backend.security.accessaudit.AccessAuditService accessAuditService) {
         this.rolePermissionService = rolePermissionService;
         this.auditLogService = auditLogService;
         this.ownershipAccessService = ownershipAccessService;
+        this.accessAuditService = accessAuditService;
     }
 
     /**
@@ -170,6 +173,36 @@ public class RolePermissionController {
                 "Permissions copied from role " + request.fromRole + " to " + request.toRole
                         + " (" + result.size() + " rows)");
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Apply one staged edit from the role configuration screen atomically — ADMIN only.
+     * Body: { roleName, reason, upserts: [{ module, canView?, ... }], resets: [module, ...] }
+     * A reason is mandatory; it is stored on every resulting access-audit entry.
+     * Returns the role's full permission rows after the change.
+     */
+    @PostMapping("/changeset")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<List<RolePermissionDto>> applyChangeSet(@RequestBody ChangeSetRequest request) {
+        accessAuditService.useReason(request.reason);
+        accessAuditService.requireReason();
+        List<RolePermissionDto> result = rolePermissionService.applyChangeSet(
+                request.roleName, request.upserts, request.resets);
+        int changed = (request.upserts == null ? 0 : request.upserts.size())
+                + (request.resets == null ? 0 : request.resets.size());
+        auditLogService.logDomainEvent(
+                "ROLE_PERMISSION",
+                request.roleName,
+                "CHANGESET_APPLIED",
+                changed + " permission rules changed for role " + request.roleName);
+        return ResponseEntity.ok(result);
+    }
+
+    public static class ChangeSetRequest {
+        public String roleName;
+        public String reason;
+        public List<Map<String, Object>> upserts;
+        public List<String> resets;
     }
 
     public static class BulkRequest {

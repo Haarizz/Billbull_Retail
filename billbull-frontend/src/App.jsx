@@ -47,6 +47,7 @@ import SalePriceInquiry from "./pages/Customer/SalePriceInquiry";
 import LPOList from "./pages/Purchase/LPO/lpo";
 import VendorPriceShares from "./pages/Purchase/RFQ/VendorPriceShares";
 import VendorPortal from "./pages/Purchase/RFQ/portal/VendorPortal";
+import PublicDocument from "./pages/PublicDocument/PublicDocument";
 import PurchaseInvoices from "./pages/Purchase/Invoice/PurchaseInvoices";
 import GRN from "./pages/Purchase/GRN/GRN";
 import PaymentVoucher from "./pages/Purchase/Payment/PaymentVoucher";
@@ -90,8 +91,7 @@ import StockTaking from "./pages/Inventory/StockTaking/StockTaking";
 import InventoryReports from "./pages/Inventory/Reports/InventoryReports.tsx";
 import CompanySettings from "./pages/Settings/CompanySettings";
 import DocumentNumbering from "./pages/Settings/DocumentNumbering";
-import UserRoleConfig from "./pages/Settings/UserRoleConfig";
-import BranchSetup from "./pages/Settings/BranchSetup";
+import UserRoleConfig from "./pages/Settings/UserRoleConfig";import BranchSetup from "./pages/Settings/BranchSetup";
 import EmailSettings from "./pages/Settings/EmailSettings";
 import WhatsAppSettings from "./pages/Settings/WhatsAppSettings";
 import BranchOutlets from "./pages/Enterprise/BranchOutlets";
@@ -193,6 +193,8 @@ function App() {
           <Route path="/login" element={<Login />} />
           {/* 🔓 RFQ vendor portal — vendors sign in with an emailed one-time code, not a staff login */}
           <Route path="/vendor-portal/:token" element={<VendorPortal />} />
+          {/* 🔓 Document link sent to a customer on WhatsApp (invoice / quotation / sales order + PDF) */}
+          <Route path="/d/:token" element={<PublicDocument />} />
 
           {/* 🔐 Protected App */}
           <Route
@@ -747,6 +749,11 @@ function App() {
                           <UserRoleConfig />
                         </ResourceGuard>
                       }
+                    />
+
+                    <Route
+                      path="/enterprise/access-audit"
+                      element={<Navigate to="/enterprise/administration?tab=audit" replace />}
                     />
 
                     <Route

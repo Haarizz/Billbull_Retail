@@ -34,6 +34,80 @@ const getCartLineDetails =(item, posSettings) => {
 
 const fallbackFormat = (v) => `AED ${Number(v || 0).toFixed(2)}`;
 
+const prefersReducedMotion = () => {
+  try {
+    return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  } catch {
+    return false;
+  }
+};
+
+// Web Animations API — no global CSS needed; silently skipped where unsupported (jsdom).
+const playAnimation = (el, keyframes, options) => {
+  if (el && typeof el.animate === 'function') {
+    try { el.animate(keyframes, options); } catch { /* ignore */ }
+  }
+};
+
+/** "+N" chip that floats up from the quantity and fades out. */
+const BumpChip = ({ delta }) => {
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    if (prefersReducedMotion()) return;
+    playAnimation(ref.current, [
+      { opacity: 0, transform: 'translate(-50%, 4px) scale(0.8)' },
+      { opacity: 1, transform: 'translate(-50%, -6px) scale(1.1)', offset: 0.25 },
+      { opacity: 0, transform: 'translate(-50%, -22px) scale(1)' },
+    ], { duration: 950, easing: 'ease-out', fill: 'forwards' });
+  }, []);
+  return (
+    <span ref={ref} aria-hidden="true" data-testid="cart-line-bump"
+      className="pointer-events-none absolute left-1/2 -top-3 -translate-x-1/2 z-10 rounded-full bg-[#327F74] px-1.5 py-px text-[10px] font-bold text-white shadow whitespace-nowrap">
+      +{delta}
+    </span>
+  );
+};
+
+/**
+ * Visual "added" feedback: when a line's quantity goes up (same item scanned or
+ * tapped again, or +), flash the card, pop the quantity and float a "+N" chip, and
+ * bring the card into view. Without this a repeat scan only changes one digit.
+ */
+const useQuantityBumpFeedback = (item, cardRef, qtyRef) => {
+  const quantity = Number(item?.quantity) || 0;
+  const prevQty = React.useRef(quantity);
+  const [bump, setBump] = React.useState(null);
+
+  React.useEffect(() => {
+    const prev = prevQty.current;
+    prevQty.current = quantity;
+    if (!item || item.isVoided || !(quantity > prev)) return undefined;
+
+    const delta = Math.round((quantity - prev) * 1000) / 1000;
+    setBump((b) => ({ key: (b?.key || 0) + 1, delta }));
+
+    const card = cardRef.current;
+    try { card?.scrollIntoView?.({ block: 'nearest', behavior: prefersReducedMotion() ? 'auto' : 'smooth' }); } catch { /* ignore */ }
+    if (!prefersReducedMotion()) {
+      playAnimation(card, [
+        { backgroundColor: '#FFF3C4', boxShadow: '0 0 0 3px rgba(245,199,66,0.85)', transform: 'scale(1.015)' },
+        { backgroundColor: '#FFF8E7', boxShadow: '0 0 0 2px rgba(245,199,66,0.5)', transform: 'scale(1)', offset: 0.35 },
+        { backgroundColor: '#FFFFFF', boxShadow: '0 0 0 0 rgba(245,199,66,0)', transform: 'scale(1)' },
+      ], { duration: 900, easing: 'ease-out' });
+      playAnimation(qtyRef.current, [
+        { transform: 'scale(1)', color: '#1E293B' },
+        { transform: 'scale(1.6)', color: '#327F74', offset: 0.3 },
+        { transform: 'scale(1)', color: '#1E293B' },
+      ], { duration: 500, easing: 'ease-out' });
+    }
+    const t = setTimeout(() => setBump(null), 1000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quantity]);
+
+  return bump;
+};
+
 /**
  * One cart line as a card: numbered colour badge, name + code, qty stepper, unit
  * price, line total, and VAT / base / discount / price-source chips. Shared by the
@@ -51,6 +125,10 @@ export const CartLineCard = React.memo(({
   onRemove,
   canRemoveVoided = true,
 }) => {
+  const cardRef = React.useRef(null);
+  const qtyRef = React.useRef(null);
+  const bump = useQuantityBumpFeedback(item, cardRef, qtyRef);
+
   if (!item) return null;
 
   const isVoided = !!item.isVoided;
@@ -75,6 +153,7 @@ export const CartLineCard = React.memo(({
 
   return (
     <div
+      ref={cardRef}
       data-cart-line-id={item.id}
       className={`@container group rounded-xl border border-l-4 px-3 py-2.5 shadow-sm transition-all cursor-pointer ${isVoided ? 'bg-red-50/70 border-red-200 border-l-red-400' : `bg-white border-gray-200 ${accent.bar} hover:shadow-md`} ${isSelected ? `ring-2 ${accent.ring}` : ''}`}
       onClick={() => onClick && onClick(item)}
@@ -126,7 +205,12 @@ export const CartLineCard = React.memo(({
               <Minus className="h-3 w-3" />
             </button>
           )}
-          <span className={`text-sm font-bold min-w-[1.5rem] text-center tabular-nums ${isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{isVoided ? `- ${item.quantity}` : item.quantity}</span>
+          <span className="relative inline-flex">
+            <span ref={qtyRef} className={`inline-block text-sm font-bold min-w-[1.5rem] text-center tabular-nums ${isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{isVoided ? `- ${item.quantity}` : item.quantity}</span>
+            {bump && (
+              <BumpChip key={bump.key} delta={bump.delta} />
+            )}
+          </span>
           {showStepper && (
             <button type="button" aria-label="Increase quantity" onClick={stop(() => onUpdateQuantity(item.id, item.quantity + 1))}
               className="w-7 h-7 rounded-lg bg-gray-100 hover:bg-[#F5C742]/30 flex items-center justify-center text-gray-600 transition-colors">

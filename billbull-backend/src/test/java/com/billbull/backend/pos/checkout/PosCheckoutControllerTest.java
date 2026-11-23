@@ -112,6 +112,8 @@ class PosCheckoutControllerTest {
 
     // Till permission (sales.pos) check on every till endpoint; a bare mock grants it.
     @Mock private com.billbull.backend.security.ModulePermissionService modulePermissionService;
+    /** Phase 0 / M1: the session guard resolves the branch the invoice will be stamped with. */
+    @Mock private com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
     @InjectMocks private PosCheckoutController controller;
 
     /** The real settlement collaborator wired in {@link #setUp()} — kept as a field so the
@@ -125,6 +127,7 @@ class PosCheckoutControllerTest {
     @BeforeEach
     void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
+        PosCheckoutTillFixture.stubOpenTill(sessionService, branchAccessService);
         // Phase 2 salesperson/target settings default to OFF, which is the state in which
         // this suite's pre-Phase-2 behaviour is defined. The enforcement paths have their
         // own suite (PosCheckoutSalespersonEnforcementTest).
@@ -161,7 +164,7 @@ class PosCheckoutControllerTest {
         when(invoiceService.save(any())).thenReturn(draft);
         when(invoiceService.getById(42L)).thenReturn(draft);
 
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setPaymentMode("Cash");
         req.setAmountTendered(3080.0);
         PosCheckoutRequest.PosCheckoutItem item = new PosCheckoutRequest.PosCheckoutItem();
@@ -190,12 +193,14 @@ class PosCheckoutControllerTest {
         existing.setId(42L);
         existing.setInvoiceNumber("INV-2026-0041");
         existing.setStatus(SalesInvoiceStatus.PAID);
+        // The stored sale carries the session it was rung in, as buildInvoice stamps it.
+        existing.setPosSessionId(PosCheckoutTillFixture.TILL_SESSION_ID);
 
         when(invoiceRepository.findByPosCheckoutKey("KEY-1"))
                 .thenReturn(java.util.Optional.of(existing));
         when(invoiceService.getById(42L)).thenReturn(existing);
 
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setCheckoutKey("KEY-1");
 
         var resp = controller.checkout(req);
@@ -236,7 +241,7 @@ class PosCheckoutControllerTest {
         when(invoiceService.save(any())).thenReturn(draft);
         when(invoiceService.getById(50L)).thenReturn(draft);
 
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setPaymentMode("card");
         req.setCardLegs(List.of(
                 cardLeg("Visa", 300.0, "REF-1"),
@@ -267,7 +272,7 @@ class PosCheckoutControllerTest {
         when(invoiceService.save(any())).thenReturn(draft);
         when(invoiceService.getById(51L)).thenReturn(draft);
 
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setPaymentMode("mixed");
         req.setCashAmount(400.0);
         req.setCardLegs(List.of(
@@ -290,7 +295,7 @@ class PosCheckoutControllerTest {
         when(invoiceService.save(any())).thenReturn(draft);
         when(invoiceService.getById(52L)).thenReturn(draft);
 
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setPaymentMode("Cash");
         req.setAmountTendered(3080.0);
 
@@ -307,7 +312,7 @@ class PosCheckoutControllerTest {
         when(invoiceService.save(any())).thenReturn(draft);
         when(invoiceService.getById(53L)).thenReturn(draft);
 
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setPaymentMode("card");
         req.setCardAmount(500.0);
         req.setCardType("Visa");
@@ -321,7 +326,7 @@ class PosCheckoutControllerTest {
 
     @Test
     void cardLegMissingCardTypeIsRejectedBeforeInvoiceIsCreated() {
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setPaymentMode("card");
         req.setCardLegs(List.of(cardLeg(null, 100.0, null), cardLeg("Visa", 900.0, null)));
 
@@ -331,7 +336,7 @@ class PosCheckoutControllerTest {
 
     @Test
     void cardLegWithZeroAmountIsRejected() {
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setPaymentMode("card");
         req.setCardLegs(List.of(cardLeg("Visa", 0.0, null), cardLeg("Mastercard", 1000.0, null)));
 
@@ -341,7 +346,7 @@ class PosCheckoutControllerTest {
 
     @Test
     void duplicateReferenceNumbersAcrossCardLegsAreRejected() {
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setPaymentMode("card");
         req.setCardLegs(List.of(
                 cardLeg("Visa", 500.0, "DUP-1"),
@@ -353,7 +358,7 @@ class PosCheckoutControllerTest {
 
     @Test
     void moreThanFiveCardLegsIsRejected() {
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setPaymentMode("card");
         req.setCardLegs(List.of(
                 cardLeg("Visa", 100.0, null), cardLeg("Visa", 100.0, null),
@@ -369,7 +374,7 @@ class PosCheckoutControllerTest {
         SalesInvoice draft = draftInvoice(54L, "INV-2026-0054", "1000.00");
         when(invoiceService.save(any())).thenReturn(draft);
 
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setPaymentMode("card");
         // Legs only sum to 900 against a 1000 invoice — must be rejected, not silently truncated.
         req.setCardLegs(List.of(cardLeg("Visa", 500.0, null), cardLeg("Mastercard", 400.0, null)));
@@ -387,7 +392,7 @@ class PosCheckoutControllerTest {
         when(invoiceService.save(any())).thenReturn(draft);
         when(invoiceService.getById(55L)).thenReturn(draft);
 
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setPaymentMode("credit");
         // Partial receipt against a Credit sale — legs need not sum to the full invoice total.
         req.setCardLegs(List.of(cardLeg("Visa", 300.0, null), cardLeg("Mastercard", 200.0, null)));
@@ -396,6 +401,116 @@ class PosCheckoutControllerTest {
 
         verify(invoiceService, times(2)).recordPayment(eq(55L), anyDouble(), anyString(),
                 any(), any(LocalDate.class), isNull(), isNull(), anyString(), anyString(), any());
+    }
+
+    // ── Phase 0 / M2.2 every invoice-producing checkout needs a stable key ──────────
+
+    private static PosCheckoutRequest.PosCheckoutItem keyRuleItem() {
+        PosCheckoutRequest.PosCheckoutItem item = new PosCheckoutRequest.PosCheckoutItem();
+        item.setItemCode("10593");
+        item.setItemName("WATER TANK");
+        item.setQuantity(1);
+        item.setPrice(100.0);
+        return item;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String code(org.springframework.http.ResponseEntity<?> res) {
+        return String.valueOf(((java.util.Map<String, Object>) res.getBody()).get("code"));
+    }
+
+    @Test
+    void keylessTenderlessCreditSaleInASessionIsRefusedBeforeAnyWrite() {
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
+        req.setCheckoutKey(null);
+        req.setPaymentMode("credit");
+        req.setCustomerCode("C-1");
+        req.setItems(List.of(keyRuleItem()));
+
+        var res = controller.checkout(req);
+
+        assertEquals(409, res.getStatusCode().value());
+        assertEquals("CHECKOUT_KEY_REQUIRED", code(res));
+        verify(invoiceService, never()).save(any());
+        verify(invoiceService, never()).updateStatus(any(), any());
+    }
+
+    @Test
+    void blankKeyIsTreatedAsMissing() {
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
+        req.setCheckoutKey("   ");
+        req.setPaymentMode("credit");
+        req.setItems(List.of(keyRuleItem()));
+
+        assertEquals("CHECKOUT_KEY_REQUIRED", code(controller.checkout(req)));
+        verify(invoiceService, never()).save(any());
+    }
+
+    @Test
+    void keylessDefaultSettlementDeliveryIsRefusedWithOrWithoutASession() {
+        PosSettings defaultSettlement = new PosSettings();
+        defaultSettlement.setDeliveryWorkflowMode("DEFAULT_SETTLEMENT");
+        lenient().when(posSettingsService.getForBranch(1L)).thenReturn(defaultSettlement);
+        for (Long sessionId : java.util.Arrays.asList(PosCheckoutTillFixture.TILL_SESSION_ID, null)) {
+            PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
+            req.setCheckoutKey(null);
+            req.setSessionId(sessionId);
+            req.setBranchId(1L);
+            req.setPaymentMode("Delivery");
+            req.setItems(List.of(keyRuleItem()));
+
+            var res = controller.checkout(req);
+
+            assertEquals(409, res.getStatusCode().value(), "session " + sessionId);
+            assertEquals("CHECKOUT_KEY_REQUIRED", code(res), "session " + sessionId);
+        }
+        verify(invoiceService, never()).save(any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void keylessPiFlowDeliveryIsRefusedWithOrWithoutASession() {
+        // M2.2.1: the last keyless exception is gone. A PI-Flow delivery order saves a draft
+        // Pro-forma Invoice and marks its serials sold, so without a key a retry could issue it twice.
+        PosSettings piFlow = new PosSettings();
+        piFlow.setDeliveryWorkflowMode("PI_FLOW");
+        lenient().when(posSettingsService.getForBranch(1L)).thenReturn(piFlow);
+        for (Long sessionId : java.util.Arrays.asList(PosCheckoutTillFixture.TILL_SESSION_ID, null)) {
+            for (String key : java.util.Arrays.asList(null, "", "   ")) {
+                PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
+                req.setCheckoutKey(key);
+                req.setSessionId(sessionId);
+                req.setBranchId(1L);
+                req.setPaymentMode("Delivery");
+                req.setCustomerCode("C-1");
+                req.setItems(List.of(keyRuleItem()));
+
+                var res = controller.checkout(req);
+
+                String label = "session " + sessionId + " key [" + key + "]";
+                assertEquals(409, res.getStatusCode().value(), label);
+                assertEquals("CHECKOUT_KEY_REQUIRED", code(res), label);
+                assertEquals(Boolean.FALSE, ((java.util.Map<String, Object>) res.getBody()).get("recorded"), label);
+            }
+        }
+        verify(invoiceService, never()).save(any());
+        verify(invoiceService, never()).updateStatus(any(), any());
+    }
+
+    @Test
+    void keylessPiFlowDeliveryThatTakesPaymentIsStillRefused() {
+        PosSettings piFlow = new PosSettings();
+        piFlow.setDeliveryWorkflowMode("PI_FLOW");
+        lenient().when(posSettingsService.getForBranch(1L)).thenReturn(piFlow);
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
+        req.setCheckoutKey(null);
+        req.setBranchId(1L);
+        req.setPaymentMode("Delivery");
+        req.setCashAmount(100.0);
+        req.setItems(List.of(keyRuleItem()));
+
+        assertEquals("CHECKOUT_KEY_REQUIRED", code(controller.checkout(req)));
+        verify(invoiceService, never()).save(any());
     }
 
     // ── §2.4 price-override gate ────────────────────────────────────────────
@@ -413,7 +528,7 @@ class PosCheckoutControllerTest {
     }
 
     private PosCheckoutRequest belowMinimumCheckoutRequest(String code, double price) {
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setPaymentMode("Cash");
         req.setAmountTendered(price);
         PosCheckoutRequest.PosCheckoutItem item = new PosCheckoutRequest.PosCheckoutItem();
@@ -466,6 +581,25 @@ class PosCheckoutControllerTest {
     }
 
     @Test
+    void belowMinimumPriceBypassedWithTheApproversOwnPinNeverTheBranchPin() {
+        SalesInvoice draft = draftInvoice(63L, "INV-2026-0063", "180.00");
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(63L)).thenReturn(draft);
+        stubBelowMinimumPricedProduct("10672", 904L, "190.00");
+        when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+        when(posSettingsService.verifySupervisorPersonalPin(eq(5L), eq("2580"), any(), any()))
+                .thenReturn(com.billbull.backend.pos.settings.PosSettingsService.SupervisorAuthResult.valid("Sam Lee", "sam"));
+        PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 180.0);
+        req.setSupervisorOverridePin("2580");
+        req.setSupervisorOverrideEmployeeId(5L);
+
+        controller.checkout(req);
+
+        verify(invoiceService).updateStatus(63L, SalesInvoiceStatus.PAID);
+        verify(posSettingsService, never()).verifyPin(any());
+    }
+
+    @Test
     void belowMinimumPriceRejectedWithWrongSupervisorPin() {
         stubBelowMinimumPricedProduct("10672", 902L, "190.00");
         when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
@@ -493,6 +627,8 @@ class PosCheckoutControllerTest {
         controller.checkout(req);
 
         verify(invoiceService).updateStatus(62L, SalesInvoiceStatus.PAID);
+        // Phase 0 / M2.2: approving the override is authorization only, never a shift handover.
+        verify(posSettingsService, never()).authorizeShiftHandover(any(), any(), any(), any());
     }
 
     @Test
@@ -563,7 +699,9 @@ class PosCheckoutControllerTest {
         // a server that quietly stopped honouring allocations would drop the tender.
         assertTrue(caps.isPaymentAllocations());
         assertTrue(caps.isLegacyPaymentScalars());
-        assertEquals(2, caps.getCheckoutApiVersion());
+        assertEquals(3, caps.getCheckoutApiVersion());
+        // M2.2.1: clients discover that every checkout needs a stable checkoutKey.
+        assertTrue(caps.isCheckoutKeyRequired());
         assertEquals(PosPaymentAllocationResolver.MAX_CARD_LEGS, caps.getMaxCardAllocations());
         // VOUCHER is how a terminal discovers that Credit Voucher redemption is available as a
         // tender. It is a payment instrument that draws down the store-credit liability, never a
@@ -594,7 +732,7 @@ class PosCheckoutControllerTest {
     }
 
     private PosCheckoutRequest simpleCashRequest() {
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setBranchId(1L);
         req.setSessionId(9L);
         req.setTerminalId("T1");
@@ -612,6 +750,8 @@ class PosCheckoutControllerTest {
     @Test
     void checkoutAfterBusinessDayClosureIsRefusedWithoutSupervisorAuthorization() {
         businessDayIsClosed();
+        // M1 session guard: the session simpleCashRequest() names is an open branch-1 session.
+        when(sessionService.getById(9L)).thenReturn(openPosSession(9L));
 
         var resp = controller.checkout(simpleCashRequest());
 
@@ -627,6 +767,8 @@ class PosCheckoutControllerTest {
     @Test
     void supervisorPinReleasesExactlyOnePendingCheckoutAfterClosure() {
         businessDayIsClosed();
+        // M1 session guard: the session simpleCashRequest() names is an open branch-1 session.
+        when(sessionService.getById(9L)).thenReturn(openPosSession(9L));
         when(posSettingsService.verifyPin("4321")).thenReturn(true);
 
         SalesInvoice draft = new SalesInvoice();
@@ -651,6 +793,8 @@ class PosCheckoutControllerTest {
     @Test
     void aWrongSupervisorPinDoesNotReleaseTheCheckout() {
         businessDayIsClosed();
+        // M1 session guard: the session simpleCashRequest() names is an open branch-1 session.
+        when(sessionService.getById(9L)).thenReturn(openPosSession(9L));
         when(posSettingsService.verifyPin("0000")).thenReturn(false);
 
         PosCheckoutRequest req = simpleCashRequest();
@@ -668,6 +812,7 @@ class PosCheckoutControllerTest {
         businessDayIsClosed();
         lenient().when(posSettingsService.verifyPin("4321")).thenReturn(true);
         com.billbull.backend.pos.session.PosSession stale = new com.billbull.backend.pos.session.PosSession();
+        stale.setBranchId(1L);
         stale.setId(9L);
         when(sessionService.getById(9L)).thenReturn(stale);
         org.mockito.Mockito.doThrow(new org.springframework.web.server.ResponseStatusException(
@@ -691,6 +836,7 @@ class PosCheckoutControllerTest {
         businessDayIsClosed();
         lenient().when(posSettingsService.verifyPin("4321")).thenReturn(true);
         com.billbull.backend.pos.session.PosSession closing = new com.billbull.backend.pos.session.PosSession();
+        closing.setBranchId(1L);
         closing.setId(9L);
         closing.setTerminalId("T1");
         closing.setStatus(com.billbull.backend.pos.session.PosSessionStatus.OPEN);
@@ -712,6 +858,7 @@ class PosCheckoutControllerTest {
         // The X-Report is a mid-shift read. A session that has produced one, but whose
         // closure was never started, must still sell normally.
         com.billbull.backend.pos.session.PosSession xReported = new com.billbull.backend.pos.session.PosSession();
+        xReported.setBranchId(1L);
         xReported.setId(9L);
         xReported.setStatus(com.billbull.backend.pos.session.PosSessionStatus.OPEN);
         xReported.setXReportGeneratedAt(java.time.LocalDateTime.now());
@@ -733,6 +880,8 @@ class PosCheckoutControllerTest {
         // must NOT leave the till able to ring up another. A second checkout with no
         // credentials of its own is refused, even immediately afterwards.
         businessDayIsClosed();
+        // M1 session guard: the session simpleCashRequest() names is an open branch-1 session.
+        when(sessionService.getById(9L)).thenReturn(openPosSession(9L));
         when(posSettingsService.verifyPin("4321")).thenReturn(true);
 
         SalesInvoice draft = new SalesInvoice();
@@ -784,6 +933,29 @@ class PosCheckoutControllerTest {
         req.setTerminalId("T1");
         req.setBranchId(1L);
         return req;
+    }
+
+    @Test
+    void settleDeliveryBySupervisorApprovalAuthorizesWithoutAHandover() {
+        // Phase 0 / M2.2: a non-owner settling with a supervisor's credentials is authorized by the
+        // pure approval check. It must never go through the shift handover, which would hand the
+        // settling terminal's session to this cashier.
+        SalesInvoice invoice = deliveryInvoice(898L, "INV-2026-0898", 195.0, 0.0);
+        when(invoiceRepository.findByIdForUpdate(898L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(false);
+        when(posSettingsService.verifySupervisorCredentials(eq("manager@example.com"), eq("secret"), eq("T1"), any()))
+                .thenReturn(PosSettingsService.SupervisorAuthResult.valid("Manager", "manager"));
+        PosCheckoutController.DeliverySettleRequest req = deliverySettleRequest(null);
+        req.setSupervisorOverrideEmail("manager@example.com");
+        req.setSupervisorOverridePassword("secret");
+        req.setPaymentMode("Cash");
+        req.setCashAmount(195.0);
+
+        controller.settleDelivery(898L, req);
+
+        verify(posSettingsService).verifySupervisorCredentials(eq("manager@example.com"), eq("secret"), eq("T1"), any());
+        verify(posSettingsService, never()).authorizeShiftHandover(any(), any(), any(), any());
+        verify(auditService).logDeliverySettlementAuthorized(any(), eq("T1"), any(), eq(898L), eq("INV-2026-0898"));
     }
 
     @Test
@@ -1042,7 +1214,7 @@ class PosCheckoutControllerTest {
     // ═══════════════════════════════════════════════════════════════════════
 
     private PosCheckoutRequest cashRequest(double amount) {
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setPaymentMode("Cash");
         req.setAmountTendered(amount);
         req.setCustomerCode("C-001");
@@ -1228,7 +1400,7 @@ class PosCheckoutControllerTest {
         PosSettings settings = new PosSettings();
         settings.setRequirePriceOverrideApproval(approvalRequired);
         when(posSettingsService.getForBranch(P0_BRANCH)).thenReturn(settings);
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setBranchId(P0_BRANCH);
         req.setPaymentMode("Cash");
         req.setAmountTendered(total);
@@ -1609,7 +1781,7 @@ class PosCheckoutControllerTest {
 
     @Test
     void billDiscountShareIsApportionedLikeTheInvoiceAllocator() {
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         PosCheckoutRequest.PosCheckoutItem one = p0Line("A", 100.0, 1.0);
         one.setQuantity(1);
         PosCheckoutRequest.PosCheckoutItem two = p0Line("B", 300.0, 1.0);
@@ -1626,5 +1798,186 @@ class PosCheckoutControllerTest {
         assertEquals(null, ratios.get(2));
         req.setBillDiscountAmount(null);
         assertEquals(java.util.Map.of(), controller.billDiscountShareRatios(req));
+    }
+
+    // ── Phase 0 / M1: pre-write session guard and same-key replay ───────────────────────────
+
+    private PosCheckoutRequest m1CashSale(Long sessionId) {
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
+        req.setSessionId(sessionId);
+        req.setBranchId(1L);
+        req.setTerminalId("T1");
+        req.setPaymentMode("Cash");
+        req.setAmountTendered(100.0);
+        PosCheckoutRequest.PosCheckoutItem item = new PosCheckoutRequest.PosCheckoutItem();
+        item.setItemCode("SKU-1");
+        item.setItemName("Widget");
+        item.setQuantity(1);
+        item.setPrice(100.0);
+        req.setItems(List.of(item));
+        return req;
+    }
+
+    private com.billbull.backend.pos.session.PosSession m1Session(long id, com.billbull.backend.pos.session.PosSessionStatus status, long branchId) {
+        com.billbull.backend.pos.session.PosSession s = new com.billbull.backend.pos.session.PosSession();
+        s.setId(id);
+        s.setStatus(status);
+        s.setBranchId(branchId);
+        s.setTerminalId("T1");
+        return s;
+    }
+
+    /** The M1 guarantee: nothing financial or inventory-related was written. */
+    private void m1AssertNothingWritten() {
+        verify(invoiceService, never()).save(any());
+        verify(invoiceService, never()).updateStatus(anyLong(), any());
+        verify(invoiceService, never()).recordPayment(anyLong(), anyDouble(), anyString(),
+                any(), any(), any(), any(), any(), any(), any());
+        verify(sessionService, never()).recordInvoiceOnSession(any(), any(), any());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String m1Code(org.springframework.http.ResponseEntity<?> resp) {
+        return String.valueOf(((java.util.Map<String, Object>) resp.getBody()).get("code"));
+    }
+
+    @Test
+    void m1ClosedSessionIsRefusedWith409BeforeAnyWrite() {
+        when(sessionService.getById(77L)).thenReturn(
+                m1Session(77L, com.billbull.backend.pos.session.PosSessionStatus.CLOSED, 1L));
+
+        var resp = controller.checkout(m1CashSale(77L));
+
+        assertEquals(409, resp.getStatusCode().value());
+        assertEquals("SESSION_NOT_OPEN", m1Code(resp));
+        m1AssertNothingWritten();
+        verify(auditService).logCheckoutRefused(eq(77L), eq("T1"), eq(1L), anyString());
+    }
+
+    @Test
+    void m1SuspendedSessionIsRefusedWith409BeforeAnyWrite() {
+        when(sessionService.getById(78L)).thenReturn(
+                m1Session(78L, com.billbull.backend.pos.session.PosSessionStatus.SUSPENDED, 1L));
+
+        var resp = controller.checkout(m1CashSale(78L));
+
+        assertEquals(409, resp.getStatusCode().value());
+        assertEquals("SESSION_NOT_OPEN", m1Code(resp));
+        m1AssertNothingWritten();
+    }
+
+    @Test
+    void m1MissingSessionIsRefusedWith409NotA404AfterWrites() {
+        when(sessionService.getById(79L)).thenThrow(new ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "POS session not found: 79"));
+
+        var resp = controller.checkout(m1CashSale(79L));
+
+        assertEquals(409, resp.getStatusCode().value());
+        assertEquals("SESSION_NOT_FOUND", m1Code(resp));
+        m1AssertNothingWritten();
+    }
+
+    @Test
+    void m1SessionOfAnotherBranchIsRefused() {
+        when(sessionService.getById(80L)).thenReturn(
+                m1Session(80L, com.billbull.backend.pos.session.PosSessionStatus.OPEN, 2L));
+
+        var resp = controller.checkout(m1CashSale(80L));
+
+        assertEquals(409, resp.getStatusCode().value());
+        assertEquals("SESSION_BRANCH_MISMATCH", m1Code(resp));
+        m1AssertNothingWritten();
+    }
+
+    @Test
+    void m1SessionlessSaleThatTakesPaymentIsRefused() {
+        var resp = controller.checkout(m1CashSale(null));
+
+        assertEquals(409, resp.getStatusCode().value());
+        assertEquals("SESSION_REQUIRED", m1Code(resp));
+        m1AssertNothingWritten();
+    }
+
+    @Test
+    void m1SessionlessTenderlessCheckoutStillReachesTheInvoiceSave() {
+        // The till's delivery-order builder may send sessionId null and takes no payment.
+        SalesInvoice draft = draftInvoice(60L, "INV-2026-0060", "100.00");
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(60L)).thenReturn(draft);
+        PosCheckoutRequest req = m1CashSale(null);
+        req.setPaymentMode("Credit");
+        req.setAmountTendered(null);
+
+        var resp = controller.checkout(req);
+
+        assertEquals(200, resp.getStatusCode().value());
+        verify(invoiceService).save(any());
+    }
+
+    @Test
+    void m1OpenSessionOfTheSameBranchProceedsAsBefore() {
+        when(sessionService.getById(81L)).thenReturn(
+                m1Session(81L, com.billbull.backend.pos.session.PosSessionStatus.OPEN, 1L));
+        SalesInvoice draft = draftInvoice(61L, "INV-2026-0061", "100.00");
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(61L)).thenReturn(draft);
+
+        var resp = controller.checkout(m1CashSale(81L));
+
+        assertEquals(200, resp.getStatusCode().value());
+        verify(invoiceService).updateStatus(61L, SalesInvoiceStatus.PAID);
+        verify(sessionService).recordInvoiceOnSession(eq(81L), any(), any());
+    }
+
+    private SalesInvoice m1StoredSale(Long sessionId) {
+        SalesInvoice existing = new SalesInvoice();
+        existing.setId(42L);
+        existing.setInvoiceNumber("INV-2026-0041");
+        existing.setStatus(SalesInvoiceStatus.PAID);
+        existing.setPosSessionId(sessionId);
+        existing.setPosTerminalId("T1");
+        existing.setCustomerCode("WALK-IN");
+        com.billbull.backend.sales.invoice.SalesInvoiceItem line = new com.billbull.backend.sales.invoice.SalesInvoiceItem();
+        line.setItemCode("SKU-1");
+        line.setQuantity(1);
+        line.setPrice(new BigDecimal("100.00"));
+        existing.setItems(new java.util.ArrayList<>(List.of(line)));
+        return existing;
+    }
+
+    @Test
+    void m1MatchingReplayOfACompletedSaleIsReturnedEvenAfterItsSessionClosed() {
+        SalesInvoice existing = m1StoredSale(82L);
+        when(invoiceRepository.findByPosCheckoutKey("KEY-M1")).thenReturn(java.util.Optional.of(existing));
+        when(invoiceService.getById(42L)).thenReturn(existing);
+        when(sessionService.getById(82L)).thenReturn(
+                m1Session(82L, com.billbull.backend.pos.session.PosSessionStatus.CLOSED, 1L));
+        PosCheckoutRequest req = m1CashSale(82L);
+        req.setCheckoutKey("KEY-M1");
+
+        var resp = controller.checkout(req);
+
+        assertEquals(200, resp.getStatusCode().value());
+        assertEquals("INV-2026-0041", ((SalesInvoice) resp.getBody()).getInvoiceNumber());
+        // The replay answers before the session guard ever looks at the (now closed) session.
+        verify(sessionService, never()).getById(82L);
+        m1AssertNothingWritten();
+    }
+
+    @Test
+    void m1SameKeyWithADifferentSaleIsAConflictAndWritesNothing() {
+        SalesInvoice existing = m1StoredSale(83L);
+        when(invoiceRepository.findByPosCheckoutKey("KEY-M1B")).thenReturn(java.util.Optional.of(existing));
+        when(invoiceService.getById(42L)).thenReturn(existing);
+        PosCheckoutRequest req = m1CashSale(83L);
+        req.setCheckoutKey("KEY-M1B");
+        req.getItems().get(0).setQuantity(3);
+
+        var resp = controller.checkout(req);
+
+        assertEquals(409, resp.getStatusCode().value());
+        assertEquals("CHECKOUT_KEY_REUSED", m1Code(resp));
+        m1AssertNothingWritten();
     }
 }

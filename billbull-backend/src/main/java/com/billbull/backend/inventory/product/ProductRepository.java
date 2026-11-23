@@ -34,6 +34,15 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
         Optional<Product> findByCodeAndIsActiveTrue(String code);
 
+        /**
+         * Of {@code codes}, those held by more than one active product (e.g. a separate product per
+         * branch), which makes {@link #findByCodeAndIsActiveTrue} throw. Rows: [code, a name, count].
+         */
+        @Query("SELECT p.code, MIN(p.name), COUNT(p) FROM Product p WHERE p.isActive = true AND p.code IN :codes "
+                + "GROUP BY p.code HAVING COUNT(p) > 1 ORDER BY p.code")
+        List<Object[]> findCodesSharedByActiveProducts(
+                @org.springframework.data.repository.query.Param("codes") java.util.Collection<String> codes);
+
         @Query("SELECT p FROM Product p WHERE p.isActive = true AND (" +
             "(:name <> '' AND LOWER(p.name) = LOWER(:name)) OR " +
             "(:code <> '' AND LOWER(p.code) = LOWER(:code)) OR " +

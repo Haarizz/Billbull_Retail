@@ -479,39 +479,7 @@ public class DeliveryNoteService {
 
         boolean stockCheckRequired = salesSettingsService.getSettings().isStockCheckRequired();
         if (stockStrategy.canDeliveryNoteDeductStock()) {
-            for (DeliveryNoteItem item : dn.getItems()) {
-
-                int qty = item.getCurrentQty() != null ? item.getCurrentQty() : 0;
-                int foc = item.getFoc() != null ? item.getFoc() : 0;
-                int baseQty = resolveBaseQty(item.getProduct().getId(), item.getUnit(), qty);
-                String effectiveFocUnit = (item.getFocUnit() != null && !item.getFocUnit().isBlank())
-                        ? item.getFocUnit() : item.getUnit();
-                int baseFoc = resolveBaseQty(item.getProduct().getId(), effectiveFocUnit, foc);
-                BigDecimal requested = BigDecimal.valueOf((long) baseQty + baseFoc);
-
-                if (isBatchControlled(item)) {
-                    postAllocatedBatchDeliveryDeduction(dn, item, baseQty + baseFoc);
-                } else {
-                    // Pre-check physical stock with record lock only when stock check is enabled
-                    // AND the product does not have negative-stock override.
-                    // When either condition is false, allow deduction to proceed into negative.
-                    BigDecimal physicalAvailable = stockMovementService.getAvailableStockForUpdate(
-                            dn.getWarehouse().getId(),
-                            item.getProduct().getId());
-
-                    if (stockCheckRequired && physicalAvailable.compareTo(requested) < 0) {
-                        throw new IllegalStateException(
-                                "Concurrency/Stock Error: Insufficient physical stock for " + item.getProduct().getCode() +
-                                        " | Available: " + physicalAvailable +
-                                        " | Requested: " + requested);
-                    }
-
-                    // Deduct exact batch/bin identities so visible stock is reduced.
-                    boolean allowNegative = !stockCheckRequired;
-                    postBatchAwareDeliveryDeduction(dn, item, baseQty + baseFoc, allowNegative);
-                }
-
-            }
+            postDeliveryDeductions(dn, stockCheckRequired);
         } else {
             for (DeliveryNoteItem item : dn.getItems()) {
                 if (!isBatchControlled(item)) {
@@ -588,46 +556,114 @@ public class DeliveryNoteService {
         }
     }
 
-    private void postBatchAwareDeliveryDeduction(DeliveryNote dn, DeliveryNoteItem item, int totalToDeduct, boolean negativeOverride) {
-        if (totalToDeduct <= 0) {
-            return;
+    /**
+     * Deducts stock for every line of a note being delivered.
+     *
+     * <p>The same product can legitimately sit on several lines (a different discount, description
+     * or FOC split), but the ledger accepts exactly one deduction per note + product + bin + batch
+     * — that is its double-post guard. Posting line by line made the second line of a repeated item
+     * trip that guard ("Duplicate deduction blocked"), so each product's lines are added together
+     * here, checked against stock as one quantity, and posted once per stock identity.
+     */
+    private void postDeliveryDeductions(DeliveryNote dn, boolean stockCheckRequired) {
+        Map<Long, List<DeliveryNoteItem>> linesByProduct = new java.util.LinkedHashMap<>();
+        for (DeliveryNoteItem item : dn.getItems()) {
+            if (item.getProduct() == null) {
+                continue;
+            }
+            linesByProduct.computeIfAbsent(item.getProduct().getId(), k -> new ArrayList<>()).add(item);
         }
 
+        for (List<DeliveryNoteItem> lines : linesByProduct.values()) {
+            DeliveryNoteItem first = lines.get(0);
+            if (isBatchControlled(first)) {
+                postAllocatedBatchDeliveryDeduction(dn, lines);
+                continue;
+            }
+
+            int requested = lines.stream().mapToInt(this::calculateLineBaseQty).sum();
+            // Pre-check physical stock with a record lock only when stock check is enabled.
+            // When it is off, allow the deduction to proceed into negative.
+            BigDecimal physicalAvailable = stockMovementService.getAvailableStockForUpdate(
+                    dn.getWarehouse().getId(), first.getProduct().getId());
+            if (stockCheckRequired && physicalAvailable.compareTo(BigDecimal.valueOf(requested)) < 0) {
+                throw new IllegalStateException(
+                        "Insufficient stock for " + describeProduct(first.getProduct())
+                                + lineCountNote(lines)
+                                + " | Available: " + physicalAvailable.stripTrailingZeros().toPlainString()
+                                + " | Requested: " + requested);
+            }
+
+            // Deduct exact batch/bin identities so visible stock is reduced.
+            postBatchAwareDeliveryDeduction(dn, lines, !stockCheckRequired);
+        }
+    }
+
+    /** "02120 - 1.5HP CENTRIFUGAL PUMP" — what the user sees on the line, not an internal id. */
+    private static String describeProduct(Product product) {
+        if (product == null) {
+            return "item";
+        }
+        String code = product.getCode();
+        String name = product.getName();
+        if (code != null && !code.isBlank() && name != null && !name.isBlank()) {
+            return code + " - " + name;
+        }
+        if (code != null && !code.isBlank()) {
+            return code;
+        }
+        return name != null && !name.isBlank() ? name : "product #" + product.getId();
+    }
+
+    private static String lineCountNote(List<DeliveryNoteItem> lines) {
+        return lines.size() > 1 ? " (" + lines.size() + " lines combined)" : "";
+    }
+
+    private void postBatchAwareDeliveryDeduction(DeliveryNote dn, List<DeliveryNoteItem> lines, boolean negativeOverride) {
         Long warehouseId = dn.getWarehouse().getId();
-        Long productId = item.getProduct().getId();
-        int remaining = totalToDeduct;
+        Product product = lines.get(0).getProduct();
+        Long productId = product.getId();
 
-        java.util.Map<Long, Integer> binDeductions = new java.util.HashMap<>();
+        // Shared across the product's lines: a bin already claimed by an earlier line offers the
+        // next line only what is left in it, and every bin is posted exactly once below.
+        java.util.Map<Long, Integer> binDeductions = new java.util.LinkedHashMap<>();
 
-        if (item.getBinId() != null) {
-            remaining = collectDeductionsFromBin(warehouseId, productId, item.getBinId(), remaining, binDeductions);
-            if (remaining > 0 && !negativeOverride) {
-                throw new IllegalStateException(
-                        "Selected bin does not have enough batch stock for " + item.getProduct().getCode()
-                                + ". Short by: " + remaining);
+        for (DeliveryNoteItem item : lines) {
+            int remaining = calculateLineBaseQty(item);
+            if (remaining <= 0) {
+                continue;
             }
-        } else {
-            for (Object[] row : stockMovementRepo.findActiveBinsByWarehouseAndProduct(warehouseId, productId)) {
-                if (remaining <= 0) {
-                    break;
+
+            if (item.getBinId() != null) {
+                remaining = collectDeductionsFromBin(warehouseId, productId, item.getBinId(), remaining, binDeductions);
+                if (remaining > 0 && !negativeOverride) {
+                    throw new IllegalStateException(
+                            "Selected bin does not have enough stock for " + describeProduct(product)
+                                    + lineCountNote(lines) + ". Short by: " + remaining);
                 }
-                Long binId = (Long) row[0];
-                remaining = collectDeductionsFromBin(warehouseId, productId, binId, remaining, binDeductions);
+            } else {
+                for (Object[] row : stockMovementRepo.findActiveBinsByWarehouseAndProduct(warehouseId, productId)) {
+                    if (remaining <= 0) {
+                        break;
+                    }
+                    Long binId = (Long) row[0];
+                    remaining = collectDeductionsFromBin(warehouseId, productId, binId, remaining, binDeductions);
+                }
+
+                if (remaining > 0) {
+                    remaining = collectDeductionsFromBin(warehouseId, productId, null, remaining, binDeductions);
+                }
+
+                if (remaining > 0 && !negativeOverride && salesSettingsService.getSettings().isStockCheckRequired()) {
+                    throw new IllegalStateException(
+                            "Insufficient batch/bin stock for " + describeProduct(product)
+                                    + lineCountNote(lines) + ". Short by: " + remaining);
+                }
             }
 
-            if (remaining > 0) {
-                remaining = collectDeductionsFromBin(warehouseId, productId, null, remaining, binDeductions);
+            if (remaining > 0 && negativeOverride) {
+                binDeductions.merge(item.getBinId(), remaining, Integer::sum);
             }
-
-            if (remaining > 0 && !negativeOverride && salesSettingsService.getSettings().isStockCheckRequired()) {
-                throw new IllegalStateException(
-                        "Insufficient batch/bin stock for " + item.getProduct().getCode()
-                                + ". Short by: " + remaining);
-            }
-        }
-
-        if (remaining > 0 && negativeOverride) {
-            binDeductions.merge(item.getBinId(), remaining, Integer::sum);
         }
 
         for (java.util.Map.Entry<Long, Integer> entry : binDeductions.entrySet()) {
@@ -650,39 +686,67 @@ public class DeliveryNoteService {
         }
     }
 
-    private void postAllocatedBatchDeliveryDeduction(DeliveryNote dn, DeliveryNoteItem item, int totalToDeduct) {
-        if (totalToDeduct <= 0) {
-            return;
+    private void postAllocatedBatchDeliveryDeduction(DeliveryNote dn, List<DeliveryNoteItem> lines) {
+        // Two lines of one product may draw from the same batch in the same bin; their
+        // allocations are summed per (bin, batch, expiry) so each identity is posted once.
+        Map<List<Object>, BatchAllocation> identityRep = new java.util.LinkedHashMap<>();
+        Map<List<Object>, Integer> identityQty = new HashMap<>();
+        Map<DeliveryNoteItem, List<BatchAllocation>> consumedByLine = new java.util.LinkedHashMap<>();
+
+        for (DeliveryNoteItem item : lines) {
+            int totalToDeduct = calculateLineBaseQty(item);
+            if (totalToDeduct <= 0) {
+                continue;
+            }
+
+            List<BatchAllocation> allocations = batchSelectionService.getReservedForDeliverySource(dn, item);
+            int selectedQty = allocations.stream()
+                    .mapToInt(allocation -> allocation.getQuantity() != null ? allocation.getQuantity() : 0)
+                    .sum();
+            if (selectedQty != totalToDeduct) {
+                throw new IllegalStateException(
+                        "Batch selection must exactly match delivery quantity for "
+                                + describeProduct(item.getProduct())
+                                + " (line " + (dn.getItems().indexOf(item) + 1) + ")"
+                                + ". Selected: " + selectedQty + " | Required: " + totalToDeduct);
+            }
+
+            for (BatchAllocation allocation : allocations) {
+                List<Object> key = java.util.Arrays.asList(
+                        allocation.getBinId(),
+                        normalizeBatchNumber(allocation.getBatchNumber()),
+                        allocation.getExpiryDate());
+                identityRep.putIfAbsent(key, allocation);
+                identityQty.merge(key, allocation.getQuantity() != null ? allocation.getQuantity() : 0, Integer::sum);
+            }
+            consumedByLine.put(item, allocations);
         }
 
-        List<BatchAllocation> allocations = batchSelectionService.getReservedForDeliverySource(dn, item);
-        int selectedQty = allocations.stream()
-                .mapToInt(allocation -> allocation.getQuantity() != null ? allocation.getQuantity() : 0)
-                .sum();
-        if (selectedQty != totalToDeduct) {
-            throw new IllegalStateException(
-                    "Batch selection must exactly match delivery quantity for " + item.getItemCode()
-                            + ". Selected: " + selectedQty + " | Required: " + totalToDeduct);
-        }
-
-        for (BatchAllocation allocation : allocations) {
+        Long productId = lines.get(0).getProduct().getId();
+        for (Map.Entry<List<Object>, BatchAllocation> entry : identityRep.entrySet()) {
+            int qty = identityQty.getOrDefault(entry.getKey(), 0);
+            if (qty <= 0) {
+                continue;
+            }
+            BatchAllocation allocation = entry.getValue();
             Long binId = allocation.getBinId();
             BinLocation location = resolveBinLocation(binId);
             stockMovementService.postOutboundStock(
                     StockSourceType.DELIVERY_NOTE,
                     dn.getId(),
-                    item.getProduct().getId(),
+                    productId,
                     dn.getWarehouse().getId(),
                     binId,
                     location.zoneId,
                     location.locatorId,
                     allocation.getBatchNumber(),
                     allocation.getExpiryDate(),
-                    allocation.getQuantity(),
+                    qty,
                     dn.getDnNumber());
         }
 
-        batchSelectionService.markConsumedForDelivery(dn, item, allocations);
+        consumedByLine.forEach((item, allocations) ->
+                batchSelectionService.markConsumedForDelivery(dn, item, allocations));
     }
 
     private int collectDeductionsFromBin(
@@ -695,19 +759,19 @@ public class DeliveryNoteService {
             return 0;
         }
 
-        int remaining = requestedQty;
-
-        for (StockIdentity identity : loadPositiveStockIdentities(warehouseId, productId, binId)) {
-            if (remaining <= 0) {
-                break;
-            }
-
-            int deductQty = Math.min(remaining, identity.quantity);
-            binDeductions.merge(binId, deductQty, Integer::sum);
-            remaining -= deductQty;
+        // Deductions are posted at the bin level, so only the bin's total matters; an earlier
+        // line of the same product may already have claimed part of it.
+        int binStock = loadPositiveStockIdentities(warehouseId, productId, binId).stream()
+                .mapToInt(identity -> identity.quantity)
+                .sum();
+        int stillFree = binStock - binDeductions.getOrDefault(binId, 0);
+        if (stillFree <= 0) {
+            return requestedQty;
         }
 
-        return remaining;
+        int deductQty = Math.min(requestedQty, stillFree);
+        binDeductions.merge(binId, deductQty, Integer::sum);
+        return requestedQty - deductQty;
     }
 
     private List<StockIdentity> loadPositiveStockIdentities(Long warehouseId, Long productId, Long binId) {

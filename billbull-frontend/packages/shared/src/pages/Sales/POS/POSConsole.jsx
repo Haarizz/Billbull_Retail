@@ -33,6 +33,7 @@ import { buildEscPosTestReceipt } from '../../../utils/escPosReceipt';
 import { buildZplTestLabel, zplToBase64 } from '../../../utils/zplText';
 import { confirmDialog } from '../../../components/AppConfirmBridge';
 import PosBehaviorSettings from './features/settings/PosBehaviorSettings';
+import TerminalActivityPanel from './features/terminal/TerminalActivityPanel';
 
 /**
  * Renders the real, resolved Back Office "Sales Invoice"/"Sales Return" PrintTemplate
@@ -200,6 +201,8 @@ const POSConsole = React.memo((props) => {
     const [terminalFilter, setTerminalFilter] = useState('ALL');
     const [terminalSearch, setTerminalSearch] = useState('');
     const [terminalMenuId, setTerminalMenuId] = useState(null);
+    // Terminal the Recent activity panel is narrowed to ('' = whole branch).
+    const [activityTerminalId, setActivityTerminalId] = useState('');
     // Archive-terminal confirmation dialog (replaces window.prompt/window.confirm)
     const [archiveModalTerminal, setArchiveModalTerminal] = useState(null);
     const [archiveModalReason, setArchiveModalReason] = useState('');
@@ -2429,6 +2432,36 @@ const POSConsole = React.memo((props) => {
               return formatDistanceToNow(d, { addSuffix: true });
             };
 
+            // Same zone handling as formatLastSeen: heartbeat/user stamps are UTC wall-clock.
+            const minutesAgo = (ts) => {
+              if (!ts) return null;
+              let s = String(ts);
+              const tIdx = s.indexOf('T');
+              if (tIdx !== -1 && !s.endsWith('Z') && !/[+-]\d\d:?\d\d$/.test(s.slice(tIdx))) s += 'Z';
+              const d = new Date(s);
+              return isNaN(d.getTime()) ? null : (Date.now() - d.getTime()) / 60000;
+            };
+            // "Signed in now" = the terminal heartbeated as this user within the last 5 minutes.
+            const isSignedInNow = (t) => {
+              const m = minutesAgo(t.lastUserAt);
+              return !!t.lastUser && m !== null && m < 5
+                && !['ARCHIVED', 'DECOMMISSIONED', 'BLOCKED', 'OFFLINE'].includes(t.status);
+            };
+            const userLabel = (t) => t.lastUserDisplayName || t.lastUser;
+            const shiftDuration = (ts) => {
+              const d = ts ? new Date(ts) : null;
+              if (!d || isNaN(d.getTime())) return null;
+              const mins = Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
+              const h = Math.floor(mins / 60);
+              return h > 0 ? `${h}h ${mins % 60}m` : `${mins}m`;
+            };
+            const fmtAmount = (v) => Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            const canViewActivity = canTerminalAction('viewactivity');
+            const showTerminalActivity = (terminalId) => {
+              setActivityTerminalId(terminalId);
+              setTimeout(() => document.getElementById('terminal-activity-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+            };
+
             const parseDeviceInfo = (info) => {
               if (!info) return null;
               try {
@@ -2599,7 +2632,8 @@ const POSConsole = React.memo((props) => {
             const visibleTerminals = terminalList.filter(t => {
               if (activeFilterGroup.statuses && !activeFilterGroup.statuses.includes(t.status)) return false;
               if (!searchNeedle) return true;
-              return [t.terminalName, t.terminalId, t.counterName, t.registeredBy]
+              return [t.terminalName, t.terminalId, t.counterName, t.registeredBy,
+                      t.lastUser, t.lastUserDisplayName, t.shiftOpenedBy, t.shiftOpenedByDisplayName]
                 .some(v => v && String(v).toLowerCase().includes(searchNeedle));
             });
 
@@ -2684,6 +2718,15 @@ const POSConsole = React.memo((props) => {
                           <Hash className="h-3 w-3 text-gray-300" />{currentTerminal.counterName || 'No counter'}
                         </p>
                         <p className="text-[10px] font-mono text-gray-400 mt-1">{currentTerminal.terminalId}</p>
+                        {(() => {
+                          const row = terminalList.find(x => x.terminalId === currentTerminal.terminalId);
+                          if (!row?.lastUser) return null;
+                          return (
+                            <p className="text-xs text-green-700 mt-1.5 flex items-center gap-1 font-semibold">
+                              <Users className="h-3 w-3" /> Signed in: {userLabel(row)}
+                            </p>
+                          );
+                        })()}
                       </div>
                     </div>
                   ) : (
@@ -2751,7 +2794,7 @@ const POSConsole = React.memo((props) => {
                       type="text"
                       value={terminalSearch}
                       onChange={e => setTerminalSearch(e.target.value)}
-                      placeholder="Search name, ID, counter…"
+                      placeholder="Search name, ID, counter, user…"
                       className="w-full h-8 pl-8 pr-3 text-xs border border-gray-200 rounded-full bg-white focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40"
                     />
                   </div>
@@ -2821,6 +2864,10 @@ const POSConsole = React.memo((props) => {
                       menuItems.push({ key: 'history', label: viewHistoryTerminalId === t.terminalId ? 'Hide archive history' : 'View archive history', icon: <Info className="h-3.5 w-3.5" />,
                         onClick: () => setViewHistoryTerminalId(prev => prev === t.terminalId ? null : t.terminalId) });
                     }
+                    if (canViewActivity) {
+                      menuItems.push({ key: 'activity', label: 'View activity', icon: <Clock className="h-3.5 w-3.5" />,
+                        onClick: () => showTerminalActivity(t.terminalId) });
+                    }
                     if (t.status !== 'ARCHIVED' && t.status !== 'DECOMMISSIONED' && canTerminalAction('setautoarchiveexempt')) {
                       menuItems.push({ key: 'exempt', label: 'Exempt from auto archive', checked: !!t.autoArchiveExempt, onClick: () => handleToggleExempt(t) });
                     }
@@ -2876,7 +2923,9 @@ const POSConsole = React.memo((props) => {
                                       </span>
                                     )}
                                     {t.currentOpenSessionId && (
-                                      <span className="text-[10px] font-bold bg-green-50 text-green-700 px-2 py-0.5 rounded-full border border-green-200/50">● Shift open</span>
+                                      t.shiftClosing
+                                        ? <span className="text-[10px] font-bold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200/60">● Shift closing</span>
+                                        : <span className="text-[10px] font-bold bg-green-50 text-green-700 px-2 py-0.5 rounded-full border border-green-200/50">● Shift open</span>
                                     )}
                                     {t.autoArchiveExempt && !isRetired && (
                                       <span className="text-[10px] font-semibold bg-gray-50 text-gray-500 border border-gray-200 px-2 py-0.5 rounded-full">Never auto-archived</span>
@@ -2922,12 +2971,35 @@ const POSConsole = React.memo((props) => {
                                         <Cpu className="h-3 w-3 text-gray-300" />{browserLabel}
                                       </span>
                                     )}
-                                    {t.registeredBy && (
-                                      <span className="flex items-center gap-1 text-xs text-gray-400">
+                                    {t.lastUser ? (
+                                      isSignedInNow(t) ? (
+                                        <span className="flex items-center gap-1 text-xs font-semibold text-green-700" title={`Username: ${t.lastUser}`}>
+                                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                                          <Users className="h-3 w-3" />{userLabel(t)}
+                                        </span>
+                                      ) : (
+                                        <span className="flex items-center gap-1 text-xs text-gray-400" title={`Last signed in: ${t.lastUser}`}>
+                                          <Users className="h-3 w-3 text-gray-300" />Last used by {userLabel(t)}
+                                        </span>
+                                      )
+                                    ) : t.registeredBy && (
+                                      <span className="flex items-center gap-1 text-xs text-gray-400" title="Registered by">
                                         <Users className="h-3 w-3 text-gray-300" />{t.registeredBy}
                                       </span>
                                     )}
                                   </div>
+
+                                  {/* Open shift summary */}
+                                  {t.currentOpenSessionId && t.shiftOpenedBy && (
+                                    <div className="mt-2 inline-flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] bg-green-50/60 border border-green-100 rounded-lg px-2.5 py-1">
+                                      <span className="text-gray-500">Shift by <strong className="text-gray-700">{t.shiftOpenedByDisplayName || t.shiftOpenedBy}</strong></span>
+                                      {shiftDuration(t.shiftOpenedAt) && (
+                                        <span className="text-gray-500 flex items-center gap-1"><Clock className="h-3 w-3 text-gray-300" />{shiftDuration(t.shiftOpenedAt)}</span>
+                                      )}
+                                      <span className="text-gray-500"><strong className="text-gray-700 tabular-nums">{t.shiftInvoiceCount ?? 0}</strong> sale{t.shiftInvoiceCount === 1 ? '' : 's'}</span>
+                                      <span className="text-gray-500">Total <strong className="text-gray-700 tabular-nums">{fmtAmount(t.shiftTotalSales)}</strong></span>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
 
@@ -3219,6 +3291,15 @@ const POSConsole = React.memo((props) => {
                     Save
                   </button>
                 </div>
+
+                {canViewActivity && (
+                  <TerminalActivityPanel
+                    branchId={currentTerminal?.branchId}
+                    terminals={terminalList}
+                    terminalFilter={activityTerminalId}
+                    onTerminalFilterChange={setActivityTerminalId}
+                  />
+                )}
 
                 <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
                   <p className="text-sm font-bold text-[#1E293B] flex items-center gap-1.5"><Info className="h-4 w-4 text-gray-400" /> How terminals work</p>

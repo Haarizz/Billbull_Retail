@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import SendDocumentEmailModal from "../SendDocumentEmailModal";
+import SendDocumentEmailModal from "@billbull/shared/components/SendDocumentEmailModal";
 import { getTemplatesByCategory } from "@billbull/shared/api/printTemplateApi";
 import { generateEmailHtml, generatePrintHtmlAsync } from "@billbull/shared/utils/printGenerator";
 import toast from "react-hot-toast";
@@ -143,7 +143,7 @@ describe("SendDocumentEmailModal message", () => {
   it("previews the message above the document", async () => {
     renderModal();
     const frame = screen.getByTitle("Email Preview");
-    await waitFor(() => expect(frame.getAttribute("srcdoc")).toMatch(/<body><div[^>]*><p[^>]*>Dear Customer,<\/p>.*<img src="\/uploads\/logo.png">email/s));
+    await waitFor(() => expect(frame.getAttribute("srcdoc")).toMatch(/<body><div[^>]*><div[^>]*><p[^>]*>Dear Customer,<\/p>.*<img src="\/uploads\/logo.png">email/s));
   });
 
   it("sends exactly the edited message as the body", async () => {

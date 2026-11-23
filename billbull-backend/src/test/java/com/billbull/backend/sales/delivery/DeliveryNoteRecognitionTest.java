@@ -287,8 +287,9 @@ class DeliveryNoteRecognitionTest {
         money("10", box.getCost(), "box line cost per base unit");
         money("10", pieces.getCost(), "pieces line cost per base unit");
 
-        // Stock issue, consumption rows and the journal all count the same 14 base units.
-        assertEquals(List.of(12, 2), stockIssued());
+        // Stock issue, consumption rows and the journal all count the same 14 base units. The
+        // ledger takes one deduction per product + bin, so the two lines are issued as one.
+        assertEquals(List.of(14), stockIssued());
         List<DeliveryNoteBatchConsumption> rows = consumptionRows();
         assertEquals(List.of(12, 2), rows.stream().map(DeliveryNoteBatchConsumption::getQuantity).toList());
         money("140", sum(rows.stream().map(DeliveryNoteBatchConsumption::getTotalCost).toList()), "consumption total"); // was 30
@@ -536,5 +537,43 @@ class DeliveryNoteRecognitionTest {
 
         money("33", l.getCost(), "existing cost kept");
         assertTrue(l.getRecognizedCogs().compareTo(new BigDecimal("40")) == 0);
+    }
+
+    // ── repeated item on separate lines: one stock deduction ────────────────
+
+    @Test
+    void theSameItemOnTwoLinesIsDeductedOnceForTheCombinedQuantity() {
+        // The real ledger rejects a second deduction for the same DN + product + bin
+        // ("Duplicate deduction blocked"), which is what a repeated invoice line used to hit.
+        SalesInvoiceItem first = line(1, 1, 0, "3200", "PCS");
+        SalesInvoiceItem second = line(2, 1, 0, "3200", "PCS");
+        SalesInvoice inv = invoice(first, second);
+
+        Journal j = deliver(dispatched(900, inv, true, dnLine(11, 1L, 1, 0, "PCS"), dnLine(12, 2L, 1, 0, "PCS")));
+
+        assertEquals(List.of(2), stockIssued());
+        money("6400", j.revenue(), "both lines recognised");
+        assertEquals(DeliveryStatus.DELIVERED, inv.getDeliveryStatus());
+    }
+
+    @Test
+    void repeatedLinesAreStockCheckedAsOneQuantityAndTheErrorNamesTheItem() {
+        SalesSettings strict = new SalesSettings();
+        strict.setStockCheckRequired(true);
+        when(((SalesSettingsService) mocks.get(SalesSettingsService.class)).getSettings()).thenReturn(strict);
+        // One in stock: each line alone would pass, together they need two.
+        when(stock.getAvailableStockForUpdate(anyLong(), anyLong())).thenReturn(BigDecimal.ONE);
+
+        SalesInvoice inv = invoice(line(1, 1, 0, "3200", "PCS"), line(2, 1, 0, "3200", "PCS"));
+        DeliveryNote dn = dispatched(900, inv, true, dnLine(11, 1L, 1, 0, "PCS"), dnLine(12, 2L, 1, 0, "PCS"));
+        dn.getItems().forEach(it -> it.getProduct().setName("WATER TANK"));
+
+        IllegalStateException e = org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> service.markDelivered(900L, "tester"));
+
+        assertTrue(e.getMessage().contains("A - WATER TANK"), e.getMessage());
+        assertTrue(e.getMessage().contains("2 lines combined"), e.getMessage());
+        assertTrue(e.getMessage().contains("Requested: 2"), e.getMessage());
+        assertEquals(List.of(), stockIssued());
     }
 }

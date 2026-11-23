@@ -52,7 +52,12 @@ public class PosCheckoutRequest {
     private String supervisorOverridePin;
     private String supervisorOverrideEmail;
     private String supervisorOverridePassword;
+    /** With supervisorOverridePin: the approver whose own PIN it is (Approval Credential = Personal PIN). */
+    private Long supervisorOverrideEmployeeId;
     private List<PosCheckoutItem> items;
+
+    public Long getSupervisorOverrideEmployeeId() { return supervisorOverrideEmployeeId; }
+    public void setSupervisorOverrideEmployeeId(Long supervisorOverrideEmployeeId) { this.supervisorOverrideEmployeeId = supervisorOverrideEmployeeId; }
     /** Additive multi-card split: when present and non-empty, this is the source of truth for
      *  the card portion of the payment instead of the legacy scalar cardAmount/cardType/cardReference.
      *  Each entry becomes its own Payment row / Receipt Voucher / GL posting, exactly like the

@@ -76,10 +76,10 @@ function OriginalCheckoutMarkup({
   tplOutletName, effectiveOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl, company,
   tplStampDataUrl, USE_NEW_POS_PRINT_TEMPLATE, tplInvoiceShowStamp, printHtml, buildInvoiceSheetHtml,
   buildThermalReceiptArtifacts, printThermalReceiptWithConfiguredPrinter, setShowReprintModal,
-  receiptShareChannel, receiptShareInitialValue, handleReceiptShareSend,
+  receiptShareChannel, receiptShareInitialValue, handleReceiptShareSend, receiptLinkDoc = null, receiptEmailDoc = null,
   shippingCharge, currentInvoice, activeLayawayDeposit, activeSalesOrderAdvance = 0, checkoutEffectiveDue, previewInvoiceNo,
   checkoutPayment, checkoutCompatibility, showA4CheckoutPreview, checkoutA4Html, checkoutA4BlobUrl,
-  checkoutPreviewBlobUrl, PaymentAllocationPanel,
+  checkoutPreviewBlobUrl, checkoutSheetPreview, PaymentAllocationPanel,
   loadPosCustomers, selectedCustomer, selectedCustomerData, checkoutOnlineBankAccounts,
   checkoutOnlineBankAccountsLoading, checkoutRemarks, setCheckoutRemarks, checkoutPaymentFields,
   checkoutError, setCheckoutError, cancelCheckoutTenders, processPayment, checkoutLoading,
@@ -180,6 +180,8 @@ function OriginalCheckoutMarkup({
                   initialValue={receiptShareInitialValue}
                   onClose={() => setReceiptShareChannel(null)}
                   onSend={handleReceiptShareSend}
+                  linkDoc={receiptLinkDoc}
+                  emailDoc={receiptEmailDoc}
                 />
               )}
             </div>
@@ -214,6 +216,8 @@ function OriginalCheckoutMarkup({
                 checkoutA4Html={checkoutA4Html}
                 checkoutA4BlobUrl={checkoutA4BlobUrl}
                 checkoutPreviewBlobUrl={checkoutPreviewBlobUrl}
+                thermalPaperSize={checkoutSheetPreview.thermalPaper}
+                sheetPageSize={checkoutSheetPreview.pageSize}
               />
             </div>
 
@@ -287,6 +291,7 @@ function OriginalCheckoutMarkup({
                   cancelCheckoutTenders();
                 }}
                 onSettle={() => processPayment()}
+                onDismissError={() => setCheckoutError(null)}
               />
 
             </div>
@@ -394,6 +399,7 @@ function makeProps(overrides = {}) {
     checkoutA4Html: '',
     checkoutA4BlobUrl: null,
     checkoutPreviewBlobUrl: 'blob:thermal-preview',
+    checkoutSheetPreview: { thermalPaper: '80mm', pageSize: { width: 794, height: 1055 } },
     PaymentAllocationPanel: PanelSpy,
     loadPosCustomers: vi.fn(),
     selectedCustomer: 'walk-in',
@@ -619,9 +625,10 @@ describe('3. root structure', () => {
     expect(cls(dialog.parentElement)).toBe('fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4');
   });
 
-  it('footer: change due, error, then the action row — each present only when its condition holds', () => {
+  it('footer: change due, then the action row — the error is a portalled dialog, not a footer row', () => {
     const { root } = renderMarkup(makeProps({ checkoutPaymentFields: { changeDue: 2.5 }, checkoutError: 'Card declined' }));
-    expect(childClasses(rightFooter(root()))).toEqual([CHANGE_DUE_CLASS, ERROR_CLASS, ACTIONS_CLASS]);
+    expect(childClasses(rightFooter(root()))).toEqual([CHANGE_DUE_CLASS, ACTIONS_CLASS]);
+    expect(rightFooter(root()).querySelector(`[class="${ERROR_CLASS}"]`)).toBeNull();
     cleanup();
     const second = renderMarkup(makeProps());
     expect(childClasses(rightFooter(second.root()))).toEqual([ACTIONS_CLASS]);
@@ -848,14 +855,24 @@ function CheckoutHarness({ base, log, initial = {} }) {
   const salespersonRequired = initial.salespersonRequired ?? false;
   const salespersonVerified = initial.salespersonVerified ?? true;
   const openSalespersonScanModal = () => { log.push(['openSalespersonScanModal']); };
+  // Mandatory Customer (22338d75): off unless a case sets posSettings.requireCustomer.
+  const posSettings = initial.posSettings ?? null;
+  const selectedCustomerData = initial.selectedCustomerData ?? null;
 
+  // POSSales' active share sale/channel: no reprint share in this harness, so the completed sale.
+  const shareSale = lastPaidInvoice;
+  const shareChannel = receiptShareChannel;
   // SHARE-INITIAL-START
   const receiptShareInitialValue = useMemo(() => {
-    const cust = lastPaidInvoice?.customer;
+    const cust = shareSale?.customer;
     if (!cust || cust.id === WALK_IN_CUSTOMER.id) return '';
-    return (receiptShareChannel === 'email' ? cust.email : cust.phone || cust.mobile) || '';
-  }, [lastPaidInvoice, receiptShareChannel]);
+    return (shareChannel === 'email' ? cust.email : cust.phone || cust.mobile) || '';
+  }, [shareSale, shareChannel]);
   // SHARE-INITIAL-END
+  // WhatsApp receipt link doc (POSSales receiptLinkDoc). Null keeps the share modal on its
+  // original form, which is what these cases characterize; the link path has its own suite
+  // (components/pos/__tests__/ReceiptShareModal.whatsappLink.test.jsx).
+  const receiptLinkDoc = initial.receiptLinkDoc ?? null;
 
   // P3: POSSales' double/triple-Enter Cash request state, read by the verbatim region and
   // written by the handleCheckout copy below.
@@ -877,6 +894,11 @@ function CheckoutHarness({ base, log, initial = {} }) {
     // their own per-layout follow-up (POSTouchScreen pre-fills the tender and resets the keypad)
     // must branch on this so a refused checkout leaves no half-primed payment state behind. This
     // is the ONE shared guard: no template re-implements the condition.
+    // Mandatory Customer (Console -> Behavior): no walk-in checkout. The server refuses it too.
+    if (posSettings?.requireCustomer && (!selectedCustomerData || selectedCustomerData.id === WALK_IN_CUSTOMER.id)) {
+      alert({ tone: 'warning', title: 'Customer required', message: 'Select a customer before checkout. Walk-in sales are not allowed at this branch.' });
+      return false;
+    }
     if (salespersonRequired && !salespersonVerified) {
       openSalespersonScanModal();
       return false;
@@ -901,7 +923,7 @@ function CheckoutHarness({ base, log, initial = {} }) {
     setCheckoutQuickCash(checkoutQuickCashRequest(opts, quickCashSeqRef.current));
     return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal, activeSalesOrder]);
+  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal, activeSalesOrder, posSettings?.requireCustomer, selectedCustomerData]);
   // HANDLE-CHECKOUT-END
 
   const ordersListCheckout = (() => {
@@ -943,6 +965,7 @@ function CheckoutHarness({ base, log, initial = {} }) {
           checkoutFinalizing={checkoutFinalizing} setCheckoutFinalizing={setCheckoutFinalizing}
           receiptShareChannel={receiptShareChannel} setReceiptShareChannel={setReceiptShareChannel}
           receiptShareInitialValue={receiptShareInitialValue}
+          receiptLinkDoc={receiptLinkDoc}
           checkoutQuickCash={checkoutQuickCash} clearCheckoutQuickCash={clearCheckoutQuickCash}
           selectedCustomer={selectedCustomer} setSelectedCustomer={setSelectedCustomer}
           setShowReprintModal={setShowReprintModal}
@@ -1681,13 +1704,13 @@ describe('16. openers', () => {
 
 // ── 17. failure routing visible to JSX ──────────────────────────────────────────────────
 describe('17. rendered failure consequences', () => {
-  it('checkoutError renders in the footer with AlertCircle, above the action row', () => {
+  it('checkoutError opens the checkout error dialog (outside the checkout root) with the full message', () => {
     const { root } = renderMarkup(makeProps({ checkoutError: 'The sale was NOT recorded.' }));
-    const error = rightFooter(root()).children[0];
-    expect(cls(error)).toBe(ERROR_CLASS);
-    expectIcon(error.querySelector('svg'), AlertCircle, 'h-4 w-4 shrink-0');
-    expect(error.textContent).toBe('The sale was NOT recorded.');
-    expect(cls(error.nextElementSibling)).toBe(ACTIONS_CLASS);
+    const dialog = screen.getByRole('alertdialog');
+    expect(root().contains(dialog)).toBe(false);
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(document.getElementById('checkout-error-message').textContent).toBe('The sale was NOT recorded.');
+    expect(childClasses(rightFooter(root()))).toEqual([ACTIONS_CLASS]);
   });
 
   it('change due renders from checkoutPaymentFields.changeDue only when positive', () => {
@@ -1794,7 +1817,7 @@ const codeLines = (s) => s.split('\n').map((l) => l.trim()).filter((l) => l && !
 const count = (src, needle) => src.split(needle).length - 1;
 
 describe('18. source anchors — the copy', () => {
-  it('the verbatim copy is the live POSSales checkout region, byte for byte (204 lines)', () => {
+  it('the verbatim copy is the live POSSales checkout region, byte for byte (209 lines)', () => {
     const copy = between(SELF, '{/* VERBATIM-START */}\n', '\n      {/* VERBATIM-END */}');
     expect(copy).toBe(region());
     // 423 before the complete-phase summary body moved to CheckoutCompleteSummary (109 lines → a 6-line call);
@@ -1810,13 +1833,16 @@ describe('18. source anchors — the copy', () => {
     // the Remarks comment and the surrounding blank lines stay in POSSales);
     // 215 before the preview column's inner content moved to CheckoutPaymentPreview (18 lines → a
     // 6-line call; the outer column <div> and its class template stay in POSSales);
-    // 202 before P3 passed the checkout panel its double/triple-Enter Cash request (+2 props).
-    expect(region().split('\n')).toHaveLength(204);
+    // 202 before P3 passed the checkout panel its double/triple-Enter Cash request (+2 props);
+    // 204 before the preview learned the sale's paper size (+2 props: thermalPaperSize, sheetPageSize).
+    // 208 since the WhatsApp receipt link: linkDoc={receiptLinkDoc} on ReceiptShareModal;
+    // 209 since the email receipt dialog: emailDoc={receiptEmailDoc} on ReceiptShareModal.
+    expect(region().split('\n')).toHaveLength(209);
     expect(count(region(), '<CheckoutPaymentPreview\n')).toBe(1);
-    expect(region()).toContain("              'lg:w-[280px] xl:w-[340px] 2xl:w-[400px]'\n            }`}>\n              <CheckoutPaymentPreview\n                showA4CheckoutPreview={showA4CheckoutPreview}\n                checkoutA4Html={checkoutA4Html}\n                checkoutA4BlobUrl={checkoutA4BlobUrl}\n                checkoutPreviewBlobUrl={checkoutPreviewBlobUrl}\n              />\n            </div>\n\n            {/* ══ RIGHT: Payment & Settlement");
+    expect(region()).toContain("              'lg:w-[280px] xl:w-[340px] 2xl:w-[400px]'\n            }`}>\n              <CheckoutPaymentPreview\n                showA4CheckoutPreview={showA4CheckoutPreview}\n                checkoutA4Html={checkoutA4Html}\n                checkoutA4BlobUrl={checkoutA4BlobUrl}\n                checkoutPreviewBlobUrl={checkoutPreviewBlobUrl}\n                thermalPaperSize={checkoutSheetPreview.thermalPaper}\n                sheetPageSize={checkoutSheetPreview.pageSize}\n              />\n            </div>\n\n            {/* ══ RIGHT: Payment & Settlement");
     expect(region()).not.toMatch(/<A4ScaledPreview|<ThermalScaledPreview|Add items to preview/);
     expect(count(region(), '<CheckoutPaymentFooter\n')).toBe(1);
-    expect(region()).toContain('                onSettle={() => processPayment()}\n              />\n\n            </div>\n          </div>\n        );\n      })()}');
+    expect(region()).toContain('                onSettle={() => processPayment()}\n                onDismissError={() => setCheckoutError(null)}\n              />\n\n            </div>\n          </div>\n        );\n      })()}');
     expect(count(region(), '<CheckoutCompleteSummary\n')).toBe(1);
     expect(count(region(), '<CheckoutCompleteActions\n')).toBe(1);
     expect(count(region(), '<CheckoutSettlementSummary\n')).toBe(1);
@@ -1836,9 +1862,9 @@ describe('18. source anchors — the copy', () => {
   });
 
   it.each([
-    ['SHARE-INITIAL', '  const receiptShareInitialValue = useMemo(() => {', '\n  }, [lastPaidInvoice, receiptShareChannel]);'],
+    ['SHARE-INITIAL', '  const receiptShareInitialValue = useMemo(() => {', '\n  }, [shareSale, shareChannel]);'],
     ['HANDLE-CHECKOUT', '  const quickCashSeqRef = useRef(0);\n  const handleCheckout = useCallback((opts) => {',
-      '\n  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal, activeSalesOrder]);'],
+      '\n  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal, activeSalesOrder, posSettings?.requireCustomer, selectedCustomerData]);'],
     ['ORDERS-CHECKOUT', '        const handleOpenOrderAndCheckout = async () => {', '\n        };'],
     ['TICK', '  useEffect(() => {\n    const isActive = currentSession?.status === \'OPEN\'', '\n  }, [currentSession?.id, currentSession?.openedAt, currentSession?.status]);'],
   ])('harness block %s is identical to POSSales', (marker, start, end) => {
@@ -1893,9 +1919,10 @@ describe('18. source anchors — invariants the extraction must keep', () => {
     expect(r).toContain('printHtml(await buildInvoiceSheetHtml(full, data, options));');
   });
 
-  it('the A4 checkout preview stays hard-disabled while its html memo and blob hook still run', () => {
-    expect(count(POS_SALES, '  const showA4CheckoutPreview = false;\n')).toBe(1);
-    expect(POS_SALES).toContain("  const checkoutA4Html = useMemo(() => {\n    if (!showA4CheckoutPreview) return '';\n");
+  it('the sheet checkout preview follows the sale paper (useCheckoutSheetPreview) and its blob hook runs above the region', () => {
+    expect(count(POS_SALES, '  const showA4CheckoutPreview = checkoutSheetPreview.isSheet;\n')).toBe(1);
+    expect(count(POS_SALES, '  const checkoutA4Html = checkoutSheetPreview.html;\n')).toBe(1);
+    expect(count(POS_SALES, '  const checkoutSheetPreview = useCheckoutSheetPreview({\n')).toBe(1);
     expect(count(POS_SALES, '  const checkoutA4BlobUrl = useA4BlobUrl(checkoutA4Html);\n')).toBe(1);
     expect(POS_SALES.indexOf('const checkoutA4BlobUrl = useA4BlobUrl')).toBeLessThan(POS_SALES.indexOf(REGION_START));
   });
@@ -1907,7 +1934,7 @@ describe('18. source anchors — invariants the extraction must keep', () => {
       '    checkoutError, setCheckoutError,',
       '    checkoutPhase, setCheckoutPhase,',
       '    checkoutFinalizing, setCheckoutFinalizing,',
-      '    lastPaidInvoice,',
+      '    lastPaidInvoice, setLastPaidInvoice,',
       '    checkoutRemarks, setCheckoutRemarks,',
       '    processPayment,',
       '  } = useCheckout({',

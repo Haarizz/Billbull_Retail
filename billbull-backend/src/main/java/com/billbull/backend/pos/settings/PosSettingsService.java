@@ -54,6 +54,14 @@ public class PosSettingsService {
         this.terminalLimitPolicy = terminalLimitPolicy;
     }
 
+    /** Optional so unit tests built with the constructor above keep working; Spring always sets it. */
+    private com.billbull.backend.pos.pinlogin.PosApproverPinService approverPinService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setApproverPinService(com.billbull.backend.pos.pinlogin.PosApproverPinService approverPinService) {
+        this.approverPinService = approverPinService;
+    }
+
     // ---- Credit voucher expiry policy (§9–§17) ---------------------------------------
 
     /**
@@ -637,49 +645,110 @@ public class PosSettingsService {
     }
 
     /**
-     * Verify supervisor identity by email/username + password and role membership.
-     * Roles that qualify as supervisor: ADMIN, BRANCH_ADMIN, MANAGER, SUPERVISOR.
-     * On success, logs a SUPERVISOR_HANDOVER domain event for audit trail.
+     * Verify supervisor identity by email/username + password and role membership, to authorize
+     * one action (a price override, a void, a delivery settlement, a POS function). Roles that
+     * qualify as supervisor: ADMIN, BRANCH_ADMIN, MANAGER, SUPERVISOR. Logs a
+     * SUPERVISOR_AUTHORIZED (or SUPERVISOR_AUTHORIZATION_DENIED) domain event.
+     *
+     * <p>Phase 0 / M2.2: this changes nothing but the audit trail. Until M2.2 every successful
+     * check also handed the terminal's open session to the caller, a side effect meant for the shift
+     * handover that leaked into every approval: a price override or a delivery settlement approved
+     * by a supervisor silently re-attributed the drawer, or failed outright while a checkout held
+     * the session. Changing the owner is now only ever done by {@link #authorizeShiftHandover}.
      */
     @Transactional
     public SupervisorAuthResult verifySupervisorCredentials(String emailOrUsername, String password,
                                                             String terminalId, String lockedBy) {
-        CredentialVerificationResult result = credentialVerificationService.verifyCredentials(emailOrUsername, password);
-        
-        if (!result.valid()) {
-            return SupervisorAuthResult.invalid(result.message());
-        }
+        SupervisorAuthResult result = authenticateSupervisor(emailOrUsername, password, terminalId,
+                "SUPERVISOR_AUTHORIZATION_DENIED", "attempted a supervisor approval", lockedBy);
+        if (result.isValid()) {
+            auditLogService.logDomainEvent("POS_TERMINAL", terminalId, "SUPERVISOR_AUTHORIZED",
+                    String.format("Supervisor '%s' (%s) authorized an action for cashier '%s'.",
+                            result.getSupervisorName(), result.getSupervisorUsername(), lockedBy));        }
+        return result;
+    }
 
-        var user = result.user();
+    /**
+     * Explicit shift handover: verifies the supervisor exactly as {@link #verifySupervisorCredentials}
+     * does, then hands the terminal's open session to the signed-in user (the incoming cashier), so
+     * they resume the existing session instead of being forced into "Start Session".
+     *
+     * <p>The owner change goes through {@link PosSessionService#reassignSessionOwner}, which locks the
+     * session and refuses with 409 {@code SESSION_CHECKOUT_IN_PROGRESS} while a checkout attempt is
+     * ACTIVE or STALLED on it. A refused handover changes nothing, and SUPERVISOR_HANDOVER is logged
+     * only once the owner has actually changed (or already was the caller).
+     */
+    @Transactional
+    public SupervisorAuthResult authorizeShiftHandover(String emailOrUsername, String password,
+                                                       String terminalId, String lockedBy) {
+        SupervisorAuthResult result = authenticateSupervisor(emailOrUsername, password, terminalId,
+                "SUPERVISOR_HANDOVER_DENIED", "attempted terminal handover", lockedBy);
+        if (!result.isValid()) return result;
 
-        boolean hasSupervisorRole = user.getRoles().stream()
-                .anyMatch(r -> List.of("ADMIN", "BRANCH_ADMIN", "MANAGER", "SUPERVISOR").contains(r.getName()));
-
-        if (!hasSupervisorRole) {
-            auditLogService.logDomainEvent("POS_TERMINAL", terminalId,
-                    "SUPERVISOR_HANDOVER_DENIED",
-                    String.format("User '%s' attempted terminal handover but lacks supervisor role. Locked by: %s",
-                            user.getUsername(), lockedBy));
-            return SupervisorAuthResult.invalid("This account does not have supervisor privileges.");
-        }
-
-        String displayName = (user.getFullName() != null && !user.getFullName().isBlank())
-                ? user.getFullName() : user.getUsername();
-
-        auditLogService.logDomainEvent("POS_TERMINAL", terminalId,
-                "SUPERVISOR_HANDOVER",
-                String.format("Supervisor '%s' (%s) authorized shift handover from cashier '%s'.",
-                        displayName, user.getUsername(), lockedBy));
-
-        // Reassign the open session to whoever is actually logged into this browser
-        // (the incoming cashier), so they resume the existing session instead of
-        // being forced into "Start Session".
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         String incomingCashier = auth != null ? auth.getName() : null;
         if (incomingCashier != null) {
             posSessionService.reassignSessionOwner(terminalId, incomingCashier);
         }
+        auditLogService.logDomainEvent("POS_TERMINAL", terminalId, "SUPERVISOR_HANDOVER",
+                String.format("Supervisor '%s' (%s) authorized shift handover from cashier '%s' to '%s'.",
+                        result.getSupervisorName(), result.getSupervisorUsername(), lockedBy, incomingCashier));
+        return result;
+    }
 
+    /**
+     * Approval Credential = Personal PIN: the chosen approver's own till PIN, at the active branch.
+     * Same supervisor-role rule and audit events as {@link #verifySupervisorCredentials}.
+     */
+    @Transactional
+    public SupervisorAuthResult verifySupervisorPersonalPin(Long employeeId, String pin,
+                                                            String terminalId, String lockedBy) {
+        if (approverPinService == null) {
+            return SupervisorAuthResult.invalid("Approval by personal PIN is not available.");
+        }
+        var verified = approverPinService.verify(branchAccessService.getActiveBranchId(), employeeId, pin);
+        if (!verified.valid()) {
+            return SupervisorAuthResult.invalid(verified.message());
+        }
+        SupervisorAuthResult result = supervisorRoleCheck(verified.user(), terminalId,
+                "SUPERVISOR_AUTHORIZATION_DENIED", "attempted a supervisor approval", lockedBy);
+        if (result.isValid()) {
+            auditLogService.logDomainEvent("POS_TERMINAL", terminalId, "SUPERVISOR_AUTHORIZED",
+                    String.format("Supervisor '%s' (%s) authorized an action with their PIN for cashier '%s'.",
+                            result.getSupervisorName(), result.getSupervisorUsername(), lockedBy));
+        }
+        return result;
+    }
+
+    /** Who may approve with their own PIN at the active branch (the Personal PIN dialog's picker). */
+    @Transactional(readOnly = true)
+    public List<com.billbull.backend.pos.pinlogin.PosPinLoginService.StaffMember> listPinApprovers() {
+        if (approverPinService == null) return List.of();
+        return approverPinService.approversFor(branchAccessService.getActiveBranchId());
+    }
+
+    /** Credentials + supervisor role. Writes nothing except the denial audit event. */
+    private SupervisorAuthResult authenticateSupervisor(String emailOrUsername, String password, String terminalId,
+                                                        String deniedEvent, String deniedWhat, String lockedBy) {
+        CredentialVerificationResult result = credentialVerificationService.verifyCredentials(emailOrUsername, password);
+        if (!result.valid()) {
+            return SupervisorAuthResult.invalid(result.message());
+        }
+        return supervisorRoleCheck(result.user(), terminalId, deniedEvent, deniedWhat, lockedBy);
+    }
+
+    private SupervisorAuthResult supervisorRoleCheck(com.billbull.backend.user.User user, String terminalId,
+                                                     String deniedEvent, String deniedWhat, String lockedBy) {
+        boolean hasSupervisorRole = user.getRoles().stream()
+                .anyMatch(r -> List.of("ADMIN", "BRANCH_ADMIN", "MANAGER", "SUPERVISOR").contains(r.getName()));
+        if (!hasSupervisorRole) {
+            auditLogService.logDomainEvent("POS_TERMINAL", terminalId, deniedEvent,
+                    String.format("User '%s' %s but lacks supervisor role. Cashier: %s",
+                            user.getUsername(), deniedWhat, lockedBy));
+            return SupervisorAuthResult.invalid("This account does not have supervisor privileges.");
+        }
+        String displayName = (user.getFullName() != null && !user.getFullName().isBlank())
+                ? user.getFullName() : user.getUsername();
         return SupervisorAuthResult.valid(displayName, user.getUsername());
     }
 

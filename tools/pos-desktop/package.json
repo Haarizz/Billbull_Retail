@@ -2,7 +2,7 @@
   "name": "billbull-pos-desktop",
   "productName": "BillBull POS",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "BillBull POS desktop app: a locked-down window onto the tenant's /pos/ till.",
   "author": "BillBull",
   "main": "src/main.js",

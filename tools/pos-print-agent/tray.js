@@ -9,6 +9,7 @@ const { createAgentServer, logStartup, listPrinters, HOST, PORT, VERSION, START_
 const { setQueue, queueProtocol, describeDestinations } = require("./lib/destinations");
 const { createStarter, closeGracefully, writeStatus, watchForStopRequest } = require("./lib/lifecycle");
 const { createLog, teeConsole } = require("./lib/log");
+const { isBuiltinOrigin, BUILTIN_LABEL } = require("./lib/builtinOrigins");
 
 const iconPath = path.join(__dirname, "assets", "tray.ico");
 const icon = fs.existsSync(iconPath) ? fs.readFileSync(iconPath) : undefined;
@@ -104,10 +105,11 @@ const buildMenu = async () => {
       : []),
   ];
 
-  const origins = [...cfg.allowedOrigins];
-  const siteItems = origins.length
-    ? origins.map((o) => tray.item(`Trusted site: ${o}`, { disabled: true }))
-    : [tray.item("No BillBull site trusted — reinstall or run --add-origin", { disabled: true })];
+  const origins = [...cfg.allowedOrigins].filter((o) => !isBuiltinOrigin(o));
+  const siteItems = [
+    tray.item(`Trusted: every BillBull client site (${BUILTIN_LABEL})`, { disabled: true }),
+    ...origins.map((o) => tray.item(`Trusted site: ${o}`, { disabled: true })),
+  ];
   const paired = agent.store.active().length;
 
   const pairingItems = pendingPairing && pendingPairing.expiresAt > Date.now()

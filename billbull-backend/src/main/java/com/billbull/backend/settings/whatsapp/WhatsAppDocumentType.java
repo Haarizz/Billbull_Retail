@@ -11,7 +11,9 @@ import java.util.function.Function;
 public enum WhatsAppDocumentType {
     QUOTATION("sales.quotation", "Quotation", WhatsAppConfig::getQuotationTemplateName),
     SALES_ORDER("sales.order", "Sales Order", WhatsAppConfig::getSalesOrderTemplateName),
-    SALES_INVOICE("sales.invoice", "Sales Invoice", WhatsAppConfig::getSalesInvoiceTemplateName);
+    SALES_INVOICE("sales.invoice", "Sales Invoice", WhatsAppConfig::getSalesInvoiceTemplateName),
+    /** A POS sale (a sales invoice row) sent from the till as a receipt; same RBAC module. */
+    POS_RECEIPT("sales.invoice", "POS Receipt", WhatsAppConfig::getPosReceiptTemplateName);
 
     private final String module;
     private final String label;

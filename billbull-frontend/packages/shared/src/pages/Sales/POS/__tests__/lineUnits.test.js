@@ -59,7 +59,8 @@ describe('lineUnits', () => {
   });
 
   it('sends the unit at checkout; a plain line still sends Each', () => {
-    const [plain, boxed] = buildPosCheckoutItems([line(), lineInUnit(line(), BOX)]);
+    // Cart order is newest-first; the payload is in scan order (the cart reversed).
+    const [boxed, plain] = buildPosCheckoutItems([line(), lineInUnit(line(), BOX)]);
     expect(plain.unit).toBe('Each');
     expect(boxed).toMatchObject({ unit: 'Box of 12', price: 1068, quantity: 3 });
   });

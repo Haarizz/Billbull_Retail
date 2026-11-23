@@ -210,6 +210,7 @@ public class RolePermissionInitializer implements ApplicationRunner {
                 "permissions.pos.terminal.block", "permissions.pos.terminal.unblock",
                 "permissions.pos.terminal.decommission",
                 "permissions.pos.terminal.keepactive", "permissions.pos.terminal.setautoarchiveexempt",
+                "permissions.pos.terminal.viewactivity",
         };
         for (String fullAdminRole : new String[]{"ADMIN", "BRANCH_ADMIN"}) {
             roleRepository.findByName(fullAdminRole).ifPresent(role -> {
@@ -230,7 +231,8 @@ public class RolePermissionInitializer implements ApplicationRunner {
                     "permissions.pos.terminal.approve", "permissions.pos.terminal.reject",
                     "permissions.pos.terminal.archive", "permissions.pos.terminal.restore",
                     "permissions.pos.terminal.block", "permissions.pos.terminal.unblock",
-                    "permissions.pos.terminal.keepactive", "permissions.pos.terminal.setautoarchiveexempt"}) {
+                    "permissions.pos.terminal.keepactive", "permissions.pos.terminal.setautoarchiveexempt",
+                    "permissions.pos.terminal.viewactivity"}) {
                 seedIfAbsent(role, action, true, true, true, true, true);
             }
         });
@@ -247,7 +249,8 @@ public class RolePermissionInitializer implements ApplicationRunner {
                     "permissions.pos.terminal.rename", "permissions.pos.terminal.assigncounter",
                     "permissions.pos.terminal.approve", "permissions.pos.terminal.reject",
                     "permissions.pos.terminal.block", "permissions.pos.terminal.unblock",
-                    "permissions.pos.terminal.restore", "permissions.pos.terminal.keepactive"}) {
+                    "permissions.pos.terminal.restore", "permissions.pos.terminal.keepactive",
+                    "permissions.pos.terminal.viewactivity"}) {
                 seedIfAbsent(role, action, true, true, true, true, true);
             }
         });

@@ -1700,7 +1700,7 @@ export const buildPosPrintData = (full, footerNote = '', customersList = [], tit
  * same canonical printData shape the real, posted-invoice print/reprint path uses —
  * without needing a posted SalesInvoice to exist yet.
  */
-export const buildDraftPrintDataFromCart = (cart = {}, footerNote = '') => {
+export const buildDraftPrintDataFromCart = (cart = {}, footerNote = '', titleOverride = null) => {
   const {
     invoiceNumber = '',
     invoiceDate = new Date().toISOString(),
@@ -1759,11 +1759,12 @@ export const buildDraftPrintDataFromCart = (cart = {}, footerNote = '') => {
       taxAmount: it.taxAmount,
       batches: it.batchNumber ? [{ batchNumber: it.batchNumber }] : (it.batches || []),
       batchNumber: it.pinnedBatchNumber || it.batchNumber || '',
+      image: it.image || it.imageUrl || '',
       voided: !!it.voided || !!it.isVoided,
     })),
   };
 
-  return buildPosPrintData(mockInvoice, footerNote);
+  return buildPosPrintData(mockInvoice, footerNote, [], titleOverride);
 };
 
 /**

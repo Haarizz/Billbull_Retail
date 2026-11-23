@@ -255,6 +255,15 @@ export const computePosCartTotals = (items, billDiscountAmount = 0, posSettings 
 };
 
 /**
+ * The live cart keeps its newest line FIRST (that is what the cart panel shows on top).
+ * Documents — the checkout payload, invoice previews, holds, layaways, delivery orders —
+ * list lines in the order they were scanned, so every cart → document projection goes
+ * through this, and every document → cart load goes through it too (it is its own
+ * inverse). Returns a new array; never mutates the cart.
+ */
+export const inScanOrder = (items) => [...(items || [])].reverse();
+
+/**
  * The `items` array of the main POS checkout payload (POST /api/pos/checkout).
  *
  * Lifted verbatim out of POSSales' handleCompleteCheckout so the projection can be
@@ -272,7 +281,7 @@ export const computePosCartTotals = (items, billDiscountAmount = 0, posSettings 
  * it. Not reconciled here; see posCheckoutPayload.characterization.test.js.
  */
 export const buildPosCheckoutItems = (items, posSettings = null) =>
-  (items || []).map(item => ({
+  inScanOrder(items).map(item => ({
     itemCode: item.code || item.productId || item.id,
     itemName: item.name,
     quantity: item.quantity,
@@ -301,7 +310,7 @@ export const salesOrderLineFields = (item) => (item?.salesOrderItemId
  * line id so the invoice can be linked back to the order, and its ordered unit.
  */
 export const mapSalesOrderItemsToCart = (order, posSettings = null) =>
-  (order?.items || []).map(it => {
+  inScanOrder(order?.items).map(it => {
     const price = toNumber(it.price, 0);
     const quantity = toNumber(it.quantity, 0);
     const discount = toNumber(it.discount, 0);

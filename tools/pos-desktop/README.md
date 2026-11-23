@@ -13,8 +13,16 @@ What the app adds over a browser tab:
   POS, and remembers it. Change it later with **Ctrl+Shift+S** (or Alt → Till → Server address…).
 - **Locked-down window**: no address bar; navigation stays on the tenant origin; other web links
   (e.g. WhatsApp share) open in the normal browser; `file://` and other schemes are refused;
-  camera/location/notification permissions are denied; the till page gets no Node or app API.
-  Blank print-preview popups (`window.open('', '_blank')`) still work.
+  camera/location/notification permissions are denied; the till page gets no Node access and
+  one app call (below). Blank print-preview popups (`window.open('', '_blank')`) still work.
+- **Print preview**: Electron has no print preview of its own, so `window.print()` opens the
+  Windows dialog with "This app doesn't support print preview". The till's `printHtml` therefore
+  calls `window.billbullDesktop.printPreview(html)` for A4/A5/report prints instead; the app
+  renders the HTML to a PDF (honouring its `@page` size; `80mm auto` receipts become one page as
+  long as the content) and opens it in Chromium's PDF viewer, whose Print button prints it. The
+  call is accepted only from the main window's top frame on the configured server and can do
+  nothing but open that preview. Fast thermal receipt prints skip it; a failure falls back to the
+  normal print. Temporary files go in `%TEMP%\billbull-pos-print` and are removed afterwards.
 - **Offline page** when the server can't be reached, with automatic retry every 15 s.
 - **Crash recovery**: reloads after a renderer crash; asks Wait/Reload when the page hangs.
 - **Unsaved-sale guard**: closing while the till blocks unload asks Stay/Leave.
@@ -27,7 +35,7 @@ Settings are in `%APPDATA%\BillBull POS\settings.json` and are kept on upgrade a
 
 ```sh
 npm install
-npm test               # unit tests for URL/navigation/permission rules (no Electron needed)
+npm test               # unit tests for URL/navigation/permission/print-preview rules (no Electron needed)
 npm start              # run from source
 npm run build          # -> dist/BillBullPOS-Setup-<version>.exe (NSIS, per-user install)
 npm run build:dir      # -> dist/win-unpacked/BillBullPOS.exe without an installer

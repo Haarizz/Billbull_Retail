@@ -157,6 +157,51 @@ public class SalesInvoiceController {
     }
 
     /**
+     * Sends a POS sale's receipt PDF as a WhatsApp document from the till (Meta Cloud API, the
+     * "POS Receipt" template in WhatsApp Settings). Body: { toPhone (optional, defaults to the
+     * customer phone), html (required: the receipt PDF HTML the till also emails) }. Same access
+     * rule as the till's Email Receipt: "view" on sales.invoice plus the invoice's branch scope.
+     */
+    @PostMapping("/{id}/send-whatsapp-receipt")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> sendWhatsAppReceipt(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        modulePermissionService.requireCanView("sales.invoice");
+        try {
+            SalesInvoice invoice = customerContactService.attach(service.getById(id));
+            String toPhone = body.get("toPhone") instanceof String s && !s.isBlank() ? s : invoice.getCustomerPhone();
+            String number = invoice.getInvoiceNumber();
+            return ResponseEntity.ok(whatsAppSender.send(new DocumentWhatsAppSender.SendRequest(
+                    WhatsAppDocumentType.POS_RECEIPT,
+                    invoice.getId(),
+                    number,
+                    invoice.getBranchId(),
+                    toPhone,
+                    (String) body.get("html"),
+                    number == null || number.isBlank() ? null : "POS_Receipt_" + number,
+                    receiptTemplateParams(invoice, companyProfileService.getProfile().getCurrency()))));
+        } catch (com.billbull.backend.document.DocumentPdfGuard.PdfRejectedException e) {
+            return ResponseEntity.status(e.reason() == com.billbull.backend.document.DocumentPdfGuard.Reason.TOO_LARGE
+                    ? org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY
+                    : org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR).body(e.getMessage());
+        } catch (IllegalArgumentException | IllegalStateException | WhatsAppApiException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    /**
+     * Body variables of the POS receipt template, in order: {{1}} customer name, {{2}} receipt
+     * (invoice) no, {{3}} total with currency, {{4}} sale date. Changing this order requires
+     * re-approving the template in Meta; see docs/whatsapp-business-api-integration-2026-10-01.md.
+     */
+    static List<String> receiptTemplateParams(SalesInvoice inv, String currency) {
+        return List.of(
+                WhatsAppTemplateParams.customerName(inv.getCustomerName(), inv.getCustomerCode()),
+                inv.getInvoiceNumber() == null ? "-" : inv.getInvoiceNumber(),
+                WhatsAppTemplateParams.amount(currency, inv.getInvoiceTotal()),
+                WhatsAppTemplateParams.date(inv.getInvoiceDate(), "-"));
+    }
+
+    /**
      * Body variables of the "sales_invoice_document" template, in order:
      * {{1}} customer name, {{2}} invoice no, {{3}} invoice total with currency, {{4}} due date
      * (the invoice date when no due date is set). Changing this order requires re-approving the

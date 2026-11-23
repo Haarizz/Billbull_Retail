@@ -211,6 +211,10 @@ public class PosPinLoginService {
         device.setLastUsedAt(LocalDateTime.now());
 
         User signedIn = user.get();
+        // Sign-in runs before any JWT exists: name the verified user (and the till's branch) so
+        // the request's audit row shows who signed in where, not "SYSTEM".
+        com.billbull.backend.logging.LogContext.attributeTo(signedIn.getUsername(), signedIn.getId());
+        com.billbull.backend.logging.LogContext.put(com.billbull.backend.logging.LogContext.BRANCH_ID, device.getBranchId());
         String token = jwtUtil.generateToken(signedIn, device.getBranchId());
         return new PinLoginResult(LoginResponses.of(signedIn, token), device.getBranchId());
     }

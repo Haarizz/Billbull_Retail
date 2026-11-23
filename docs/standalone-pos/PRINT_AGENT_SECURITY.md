@@ -320,6 +320,7 @@ Origin rules:
 - plain `http://` only for `localhost` / `127.0.0.1` / `[::1]`, for development: `--add-origin http://localhost:5173` (Retail `npm run dev`) or `http://localhost:5174` (`npm run dev:pos`)
 - invalid entries are ignored with a warning
 - `BILLBULL_PRINT_AGENT_ORIGINS` (comma-separated) adds origins for a development session without editing the file
+- **BillBull client sites are built in** (`lib/builtinOrigins.js`): the agent trusts every `https://<one-label>.billbull.app` (default port) by rule, on top of `allowedOrigins`, so no till needs `--add-origin` and a new tenant needs no agent rebuild. Deeper subdomains, `http`, other ports, the bare `billbull.app` and lookalike suffixes are not matched. This rests on BillBull controlling the `billbull.app` DNS zone: never hand a subdomain to a third party. The rule still applies when `config.json` is damaged, `--remove-origin` refuses a client site, and `--list-origins` shows the rule as `https://<client>.billbull.app (built-in)`. A trusted site still has to pair (code on the till) before it can print. `allowedOrigins` remains for sites outside `billbull.app` and for localhost development.
 
 CLI. The packaged exe is a windowed program (GUI subsystem). **Typed at a plain Command Prompt it shows nothing**, not even an error. Measured on 2026-10-12: `--list-printers` and an invalid `--set-printer` printed nothing in a new console. At an interactive prompt, `cmd` also does not wait for it, so `%ERRORLEVEL%` is not its exit code. Three supported ways to see results:
 

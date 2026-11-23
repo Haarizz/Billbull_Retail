@@ -37,6 +37,7 @@
 const fs = require("node:fs");
 const { createConfig, normalizeOrigin, ConfigError } = require("./config");
 const { createTokenStore } = require("./pairing");
+const { isBuiltinOrigin, BUILTIN_LABEL } = require("./builtinOrigins");
 const { setQueue, setNetwork, describeDestinations, PROTOCOLS, PROTOCOL_TEXT, networkLabel } = require("./destinations");
 const { createLog, redact } = require("./log");
 const lifecycle = require("./lifecycle");
@@ -89,6 +90,9 @@ const runSync = ({ command, value, kind, config, out, fail }) => {
       if (!origin) {
         return fail(`Not a valid BillBull address: ${value ?? "(missing)"}. Use the exact site address, e.g. https://acme.billbull.app (http is accepted only for localhost).`);
       }
+      if (command === "--remove-origin" && isBuiltinOrigin(origin)) {
+        return fail(`${origin} is a BillBull client site, which this agent always trusts. It still has to pair before it can print.`);
+      }
       config.update((raw) => {
         const list = (Array.isArray(raw.allowedOrigins) ? raw.allowedOrigins : []).map(normalizeOrigin).filter(Boolean);
         raw.allowedOrigins = command === "--add-origin"
@@ -98,9 +102,11 @@ const runSync = ({ command, value, kind, config, out, fail }) => {
       out(`${command === "--add-origin" ? "Trusted" : "Removed"}: ${origin}`);
       break;
     }
-    case "--list-origins":
-      out([...config.current().allowedOrigins].join("\n") || "(no trusted sites)");
+    case "--list-origins": {
+      const added = [...config.current().allowedOrigins].filter((o) => !isBuiltinOrigin(o));
+      out([`${BUILTIN_LABEL}  (built-in: every BillBull client site)`, ...added].join("\n"));
       break;
+    }
     case "--list-pairings": {
       const rows = createTokenStore({ home: config.home }).list();
       out(rows.length ? rows.map((r) => [

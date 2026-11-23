@@ -13,6 +13,7 @@ import QuickCustomerModal from './features/customers/QuickCustomerModal';
 import QuickAddProductModal from '../../../components/inventory/QuickAddProductModal';
 import AlterItemModal from './features/cart/AlterItemModal';
 import CartLineCard from './features/cart/CartLineCard';
+import { playProductTileFeedback } from './features/products/productTileFeedback';
 import { AddonsHeader, CART_ZONE_FOCUS_CLASS, QuickCheckoutRail, usePosCartZone } from './features/cart/QuickCheckoutBar';
 import { checkoutOptions } from './input/posShortcuts';
 import {
@@ -87,9 +88,9 @@ const POSTouchScreen = React.memo((props) => {
     // settings
     posSettings,
     // invoice
-    currentInvoice, currentInvoiceRef, invoiceCounter,
+    currentInvoice, currentInvoiceRef, invoiceCounter, previewInvoiceNo,
     // products
-    posProducts, filteredProducts, posProductsLoading, posProductsLoadingMore, posProductsError,
+    posProducts, filteredProducts, posProductsLoading, posProductsLoadingMore, posProductsError, posProductsSearchPending,
     posProductPage, posProductTotalPages, posProductTotalElements, loadMorePosProducts,
     productCategories, horizontalCategories, selectedCategory, setSelectedCategory,
     // search / barcode
@@ -685,7 +686,7 @@ const POSTouchScreen = React.memo((props) => {
                   </div>
                 ) : (
                   currentInvoice.items.map((item, idx) => (
-                    <CartLineCard key={item.id} item={item} index={idx}
+                    <CartLineCard key={item.id} item={item} index={currentInvoice.items.length - 1 - idx}
                       selected={selectedFocusItemId === item.id}
                       posSettings={posSettings} formatCurrency={formatCurrency}
                       onClick={onCartRowClick} onUpdateQuantity={updateQuantity} onRemove={voidFromInvoice} />
@@ -705,7 +706,7 @@ const POSTouchScreen = React.memo((props) => {
                   <div className="w-px bg-white/30"></div>
                   <div className="text-center">
                     <p className="text-[10px] font-bold uppercase text-white/70 tracking-wide">Invoice #</p>
-                    <p className="text-xl font-black text-white">{invoiceCounter + 1}</p>
+                    <p className="text-xl font-black text-white" title="Next number — confirmed when the sale is posted">{previewInvoiceNo || '—'}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1195,7 +1196,11 @@ const POSTouchScreen = React.memo((props) => {
                 {currentInvoice.items.length > 0 && <span className="text-[10px] font-bold bg-[#F5C742]/20 text-[#b8920e] px-1.5 py-0.5 rounded-full">{currentInvoice.items.length}</span>}
               </div>
               <div className="flex items-center gap-1">
-                <span className="text-[10px] text-gray-400 font-mono">INV-{String(invoiceCounter + 1).padStart(4, '0')}</span>
+                {previewInvoiceNo && (
+                  <span className="text-[10px] text-gray-400 font-mono" title="Next invoice number — confirmed when the sale is posted (another till may take it first)">
+                    Next: {previewInvoiceNo}
+                  </span>
+                )}
                 <button type="button" onClick={guardedClearInvoice} disabled={currentInvoice.items.length === 0}
                   className="ml-1 text-gray-300 hover:text-red-400 disabled:opacity-30 transition-colors">
                   <X className="h-3.5 w-3.5" />
@@ -1217,7 +1222,7 @@ const POSTouchScreen = React.memo((props) => {
                   </div>
                 ) : (
                   currentInvoice.items.map((item, idx) => (
-                    <CartLineCard key={item.id} item={item} index={idx}
+                    <CartLineCard key={item.id} item={item} index={currentInvoice.items.length - 1 - idx}
                       selected={selectedFocusItemId === item.id}
                       posSettings={posSettings} formatCurrency={formatCurrency}
                       onClick={onCartRowClick} onUpdateQuantity={updateQuantity} onRemove={voidFromInvoice} />
@@ -1421,20 +1426,24 @@ const POSTouchScreen = React.memo((props) => {
                     </div>
                   )}
                   <div className="grid grid-cols-[repeat(auto-fill,minmax(5.5rem,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-x-3 gap-y-2.5">
-                    {filteredProducts.map(product => {
+                    {!posProductsSearchPending && filteredProducts.map(product => {
                       const isFav = favouriteProductIds.has(product.id);
                       return (
-                        <button key={product.id} type="button" onClick={() => {
+                        <button key={product.id} type="button" onClick={(e) => {
+                          const tile = e.currentTarget;
                           const pin = product._pinnedBatch || null;
                           if (pin && currentInvoiceRef.current?.items?.some(i => i.pinnedBatchNumber === pin)) {
+                            playProductTileFeedback(tile, 'error');
                             showFeedback('error', `Batch ${pin} is already in the cart`);
                             return;
                           }
                           const res = handleProductSelection(product, { quantity: 1, batch: pin });
                           if (res && res.ok === false) {
+                            playProductTileFeedback(tile, 'error');
                             showFeedback('error', res.reason || 'Could not add this item.');
                             return;
                           }
+                          playProductTileFeedback(tile, res?.deferred ? 'deferred' : 'added', { quantity: 1 });
                           if (pin) setSearchQuery('');
                         }}
                           className="group w-full min-w-0 bg-white rounded-xl border border-gray-200 hover:border-[#F5C742] hover:shadow-md transition-all text-left overflow-hidden active:scale-95">
@@ -1489,7 +1498,7 @@ const POSTouchScreen = React.memo((props) => {
                       );
                     })}
                   </div>
-                  {posProductsLoading && (
+                  {(posProductsLoading || posProductsSearchPending) && (
                     <div className="grid grid-cols-[repeat(auto-fill,minmax(5.5rem,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-x-3 gap-y-2.5">
                       {Array.from({ length: 10 }).map((_, index) => (
                         <div key={index} className="h-[136px] w-full animate-pulse rounded-xl border border-gray-200 bg-white">
@@ -1502,7 +1511,7 @@ const POSTouchScreen = React.memo((props) => {
                       ))}
                     </div>
                   )}
-                  {!posProductsLoading && filteredProducts.length === 0 && (
+                  {!posProductsLoading && !posProductsSearchPending && filteredProducts.length === 0 && (
                     <div className="flex flex-col items-center justify-center h-48 text-gray-300">
                       {selectedCategory === 'favourites' ? (
                         <>
@@ -1527,7 +1536,7 @@ const POSTouchScreen = React.memo((props) => {
                       )}
                     </div>
                   )}
-                  {!posProductsLoading && posProductPage + 1 < posProductTotalPages && (
+                  {!posProductsLoading && !posProductsSearchPending && posProductPage + 1 < posProductTotalPages && (
                     <div className="flex justify-center py-3">
                       <button
                         type="button"

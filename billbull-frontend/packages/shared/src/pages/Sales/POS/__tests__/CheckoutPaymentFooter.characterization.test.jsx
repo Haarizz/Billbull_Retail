@@ -25,12 +25,17 @@ import { p2FocusEdits, undoP2FocusEdits } from './p2FocusSourceEdits';
  * phase behaviour, the base Cancel class + log order, the base 16-row settleReady table, the
  * truthy-non-boolean canSettle rows and the Processing… children.
  *
+ * Deliberate change since extraction: checkoutError is no longer an inline red strip in the
+ * footer but a CheckoutErrorDialog portalled to <body>, dismissed through onDismissError
+ * (`() => setCheckoutError(null)` in POSSales). The banner rows below therefore run against the
+ * original markup only; section 3b pins the dialog.
+ *
  * Known current behaviours pinned as-is (do NOT fix here):
  *   - Cancel stays enabled while checkoutLoading is true and closes the dialog mid-settle;
  *     it neither aborts processPayment nor resets checkoutLoading. The header X does the same
  *     with even less clean-up (error and tenders kept).
  *   - Cancel does not clear remarks, and keeps VOUCHER allocations.
- *   - A numeric checkoutError of 0 leaks a stray "0" text node into the footer.
+ *   - (original markup only) A numeric checkoutError of 0 leaks a stray "0" text node into the footer.
  *   - Change Due shows for any positive value, even one that rounds to 0.00.
  */
 
@@ -126,6 +131,7 @@ function ExtractedCallSite({
                   cancelCheckoutTenders();
                 }}
                 onSettle={() => processPayment()}
+                onDismissError={() => setCheckoutError(null)}
               />
       {/* CALL-END */}
     </>
@@ -140,6 +146,16 @@ const variant = { Markup: OriginalFooterMarkup };
 /** Registers `body` once per variant; `variant.Markup` is what every render below uses. */
 const describeBoth = (name, body) => describe.each(VARIANTS)(`%s — ${name}`, (_label, Markup) => {
   beforeEach(() => { variant.Markup = Markup; });
+  body();
+});
+/** The pre-dialog error banner: pinned against the original markup only. */
+const describeOriginal = (name, body) => describe(`original markup — ${name}`, () => {
+  beforeEach(() => { variant.Markup = OriginalFooterMarkup; });
+  body();
+});
+/** Behaviour of the live component (through the POSSales call site) only. */
+const describeExtracted = (name, body) => describe(`extracted CheckoutPaymentFooter — ${name}`, () => {
+  beforeEach(() => { variant.Markup = ExtractedCallSite; });
   body();
 });
 
@@ -227,9 +243,7 @@ describeBoth('1. DOM structure', () => {
   it.each([
     ['neither', {}, [ACTIONS_CLASS]],
     ['change due only', { checkoutPaymentFields: { changeDue: 3 } }, [CHANGE_DUE_CLASS, ACTIONS_CLASS]],
-    ['error only', { checkoutError: 'Card declined' }, [ERROR_CLASS, ACTIONS_CLASS]],
-    ['both', { checkoutPaymentFields: { changeDue: 3 }, checkoutError: 'Card declined' }, [CHANGE_DUE_CLASS, ERROR_CLASS, ACTIONS_CLASS]],
-  ])('child order (%s): change due → error → action row, action row always last', (_label, overrides, order) => {
+  ])('child order (%s): change due → action row, action row always last', (_label, overrides, order) => {
     const { footer } = renderFooter(makeProps(overrides));
     expect(Array.from(footer().children).map(cls)).toEqual(order);
     // no stray text nodes between sections
@@ -301,13 +315,44 @@ describeBoth('1. DOM structure', () => {
     expect(button.textContent).not.toContain('42.00');
   });
 
-  it('uses DirhamSymbol (not CurrencyAmount) for both figures, and only lucide AlertCircle / CheckCircle icons', () => {
-    renderFooter(makeProps({ checkoutPaymentFields: { changeDue: 1 }, checkoutError: 'e' }));
+  it('uses DirhamSymbol (not CurrencyAmount) for both figures, and only the lucide CheckCircle icon', () => {
+    renderFooter(makeProps({ checkoutPaymentFields: { changeDue: 1 } }));
+    const svgs = Array.from(document.querySelectorAll('svg'));
+    expect(svgs).toHaveLength(1);
+    expectIcon(svgs[0], CheckCircle, 'h-6 w-6 shrink-0');
+    expect(document.querySelectorAll('[data-bb-currency-symbol]')).toHaveLength(2);
+  });
+});
+
+describeOriginal('1b. DOM structure with the inline error banner', () => {
+  it.each([
+    ['error only', { checkoutError: 'Card declined' }, [ERROR_CLASS, ACTIONS_CLASS]],
+    ['both', { checkoutPaymentFields: { changeDue: 3 }, checkoutError: 'Card declined' }, [CHANGE_DUE_CLASS, ERROR_CLASS, ACTIONS_CLASS]],
+  ])('child order (%s): change due → error → action row', (_label, overrides, order) => {
+    const { footer } = renderFooter(makeProps(overrides));
+    expect(Array.from(footer().children).map(cls)).toEqual(order);
+    expect(footer().childNodes).toHaveLength(order.length);
+  });
+
+  it('banner icon is lucide AlertCircle, before the CheckCircle', () => {
+    renderFooter(makeProps({ checkoutError: 'e' }));
     const svgs = Array.from(document.querySelectorAll('svg'));
     expect(svgs).toHaveLength(2);
     expectIcon(svgs[0], AlertCircle, 'h-4 w-4 shrink-0');
     expectIcon(svgs[1], CheckCircle, 'h-6 w-6 shrink-0');
-    expect(document.querySelectorAll('[data-bb-currency-symbol]')).toHaveLength(2);
+  });
+});
+
+describeExtracted('1c. an error adds nothing to the footer itself', () => {
+  it.each([
+    ['error only', { checkoutError: 'Card declined' }, [ACTIONS_CLASS]],
+    ['both', { checkoutPaymentFields: { changeDue: 3 }, checkoutError: 'Card declined' }, [CHANGE_DUE_CLASS, ACTIONS_CLASS]],
+  ])('child order (%s): the dialog is portalled out, the footer keeps change due → action row', (_label, overrides, order) => {
+    const { footer } = renderFooter(makeProps(overrides));
+    expect(Array.from(footer().children).map(cls)).toEqual(order);
+    expect(footer().childNodes).toHaveLength(order.length);
+    expect(footer().querySelector('[role="alertdialog"]')).toBeNull();
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
   });
 });
 
@@ -347,8 +392,58 @@ describeBoth('2. Change Due — `changeDue > 0`', () => {
   });
 });
 
-// ── 3. error banner ─────────────────────────────────────────────────────────────────────
-describeBoth('3. error banner — `checkoutError && …`', () => {
+// ── 3. error banner (original) / error dialog (extracted) ───────────────────────────────
+describeBoth('3. an error never disables the action row', () => {
+  it('an error does not disable Settle or Cancel', () => {
+    renderFooter(makeProps({ checkoutError: 'Card declined' }));
+    expect(settleButton().disabled).toBe(false);
+    expect(cancelButton().disabled).toBe(false);
+  });
+});
+
+describeExtracted('3b. error dialog — CheckoutErrorDialog', () => {
+  const dialog = () => screen.queryByRole('alertdialog');
+
+  it('opens a modal outside the footer with a title, the full message and an OK button', () => {
+    const message = 'This item code is used by more than one active product: RO0001 (Glutamine) — 2 products. The sale was not saved.';
+    renderFooter(makeProps({ checkoutError: message }));
+    const d = dialog();
+    expect(d).toBeTruthy();
+    expect(d.getAttribute('aria-modal')).toBe('true');
+    expect(screen.getByText('Payment could not be settled')).toBeTruthy();
+    expect(document.getElementById('checkout-error-message').textContent).toBe(message);
+    expect(screen.getByRole('button', { name: 'OK' })).toBeTruthy();
+  });
+
+  it('the message is rendered as text, not HTML, with no prefix or trimming', () => {
+    renderFooter(makeProps({ checkoutError: '  <b>bold</b>  ' }));
+    expect(document.querySelector('b')).toBeNull();
+    expect(document.getElementById('checkout-error-message').textContent).toBe('  <b>bold</b>  ');
+  });
+
+  it.each([null, undefined, '', false, 0])('checkoutError %s → no dialog and no stray text in the footer', (checkoutError) => {
+    const { footer } = renderFooter(makeProps({ checkoutError }));
+    expect(dialog()).toBeNull();
+    expect(footer().childNodes).toHaveLength(1);
+  });
+
+  it('OK calls onDismissError → setCheckoutError(null) only; the checkout stays open with its tenders', () => {
+    const { log } = renderHarness({ checkoutError: 'Card declined' });
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect(log).toEqual([['setCheckoutError', null]]);
+    expect(state()).toMatchObject({ showPaymentDialog: true, checkoutError: null, lineIds: ['l-cash', 'l-voucher', 'l-card'] });
+    expect(dialog()).toBeNull();
+  });
+
+  it('Esc (legacy listener, no POS input controller) dismisses the dialog, not the checkout', () => {
+    const { log } = renderHarness({ checkoutError: 'Card declined' });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(log).toEqual([['setCheckoutError', null]]);
+    expect(state()).toMatchObject({ showPaymentDialog: true, checkoutError: null });
+  });
+});
+
+describeOriginal('3c. error banner — `checkoutError && …`', () => {
   it('exact markup: AlertCircle svg then the raw message text, placed directly before the action row', () => {
     const { footer } = renderFooter(makeProps({ checkoutError: 'Payment does not reconcile and was not taken. x' }));
     const banner = footer().children[0];
@@ -379,12 +474,6 @@ describeBoth('3. error banner — `checkoutError && …`', () => {
     expect(footer().childNodes).toHaveLength(2);
     expect(footer().childNodes[0].nodeType).toBe(Node.TEXT_NODE);
     expect(footer().childNodes[0].textContent).toBe('0');
-  });
-
-  it('an error does not disable Settle or Cancel', () => {
-    renderFooter(makeProps({ checkoutError: 'Card declined' }));
-    expect(settleButton().disabled).toBe(false);
-    expect(cancelButton().disabled).toBe(false);
   });
 });
 
@@ -726,12 +815,12 @@ describeBoth('6. Cancel / X while checkoutLoading is true (current gap — pinne
 // ── 7. parity and component contract ────────────────────────────────────────────────────
 describe('7. DOM parity and component contract', () => {
   const PARITY_CASES = [
+    // Error cases are not parity rows: the banner became a dialog (sections 1b/1c, 3b/3c).
     ['default', {}],
-    ['change due + error', { checkoutPaymentFields: { changeDue: 12.345 }, checkoutError: 'Card declined' }],
+    ['change due', { checkoutPaymentFields: { changeDue: 12.345 } }],
     ['blocked', { checkoutPayment: { canSettle: false } }],
     ['no items', { currentInvoice: { items: [] } }],
     ['loading', { checkoutLoading: true }],
-    ['stray zero error', { checkoutError: 0 }],
     ['raw canSettle operand', { checkoutPayment: { canSettle: 'a' }, checkoutCompatibility: { canSettle: 'b' } }],
   ];
 
@@ -803,7 +892,22 @@ const CANCEL_ARROW = [
   '                  cancelCheckoutTenders();',
   '                }}',
 ].join('\n');
-const OLD_CANCEL_HANDLER = 'onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); cancelCheckoutTenders(); }}';
+// The inline banner of the original footer, and the dialog that replaced it.
+const OLD_ERROR_BANNER = [
+  '                {/* Error display */}',
+  '                {checkoutError && (',
+  '                  <div className="mb-3 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-center gap-2">',
+  '                    <AlertCircle className="h-4 w-4 shrink-0" />',
+  '                    {checkoutError}',
+  '                  </div>',
+  '                )}',
+].join('\n');
+const ERROR_DIALOG = [
+  '                {/* Error display: a modal (portalled to <body>) instead of an inline strip,',
+  '                    so the cashier sees the whole message and has to acknowledge it. */}',
+  '                <CheckoutErrorDialog message={checkoutError} onDismiss={onDismissError} />',
+].join('\n');
+const OLD_CANCEL_HANDLER ='onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); cancelCheckoutTenders(); }}';
 const code = (src) => src.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 
 describe('source — CheckoutPaymentFooter', () => {
@@ -812,11 +916,13 @@ describe('source — CheckoutPaymentFooter', () => {
     expect(count(LIVE_COMPONENT, '<button type="button" ref={settleRef} onClick={onSettle} disabled={!settleReady}')).toBe(1);
   });
 
-  it('its return body is the verbatim footer except the changeDue / itemCount / onCancel / onSettle substitutions (51 lines)', () => {
+  it('its return body is the verbatim footer except the changeDue / itemCount / onCancel / onSettle / error-dialog substitutions (51 lines)', () => {
     expect(FOOTER().split('\n')).toHaveLength(52);
     const body = FOOTER().slice(FOOTER_COMMENT.length);
     expect(body.split('\n')).toHaveLength(51);
+    expect(count(body, OLD_ERROR_BANNER)).toBe(1);
     const substituted = body
+      .replace(OLD_ERROR_BANNER, ERROR_DIALOG)
       .replaceAll('checkoutPaymentFields.changeDue', 'changeDue')
       .replace('currentInvoice.items.length > 0', 'itemCount > 0')
       .replace(OLD_CANCEL_HANDLER, 'onClick={onCancel}')
@@ -827,9 +933,9 @@ describe('source — CheckoutPaymentFooter', () => {
     expect(count(COMPONENT, `  return (\n${substituted}\n  );\n}`)).toBe(1);
   });
 
-  it('props are exactly the 8: changeDue, checkoutError, canSettle, itemCount, checkoutLoading, effectiveDue, onCancel, onSettle', () => {
-    expect(COMPONENT).toContain('function CheckoutPaymentFooter({\n  changeDue,\n  checkoutError,\n  canSettle,\n  itemCount,\n  checkoutLoading,\n  effectiveDue,\n  onCancel,\n  onSettle,\n}) {');
-    expect(COMPONENT.match(/function CheckoutPaymentFooter\(\{([^}]*)\}\)/)[1].split(',').map((s) => s.trim()).filter(Boolean)).toHaveLength(8);
+  it('props are exactly the 9: changeDue, checkoutError, canSettle, itemCount, checkoutLoading, effectiveDue, onCancel, onSettle, onDismissError', () => {
+    expect(COMPONENT).toContain('function CheckoutPaymentFooter({\n  changeDue,\n  checkoutError,\n  canSettle,\n  itemCount,\n  checkoutLoading,\n  effectiveDue,\n  onCancel,\n  onSettle,\n  onDismissError,\n}) {');
+    expect(COMPONENT.match(/function CheckoutPaymentFooter\(\{([^}]*)\}\)/)[1].split(',').map((s) => s.trim()).filter(Boolean)).toHaveLength(9);
     expect(count(COMPONENT, 'export default CheckoutPaymentFooter;')).toBe(1);
   });
 
@@ -860,8 +966,9 @@ describe('source — CheckoutPaymentFooter', () => {
     ]) {
       expect(c, absent).not.toContain(absent);
     }
-    expect(c).toContain("import { AlertCircle, CheckCircle } from 'lucide-react';");
+    expect(c).toContain("import { CheckCircle } from 'lucide-react';");
     expect(c).toContain("import { DirhamSymbol } from '../../POSCurrency';");
+    expect(c).toContain("import CheckoutErrorDialog from './CheckoutErrorDialog';");
   });
 
   it('CAN-SETTLE and CANCEL harness blocks are identical to POSSales', () => {
@@ -876,7 +983,8 @@ describe('source — POSSales wiring (CheckoutPaymentFooter boundary)', () => {
   it('imports it once and renders it exactly once; the CALL block in this file is the POSSales call site, byte for byte', () => {
     expect(count(POS_SALES, "import CheckoutPaymentFooter from './POS/features/checkout/CheckoutPaymentFooter';\n")).toBe(1);
     expect(POS_SALES.match(/<CheckoutPaymentFooter\b/g)).toHaveLength(1);
-    expect(CALL().split('\n')).toHaveLength(15);
+    expect(CALL().split('\n')).toHaveLength(16);
+    expect(CALL()).toContain('                onDismissError={() => setCheckoutError(null)}\n');
     expect(count(POS_SALES, `${CALL()}\n`)).toBe(1);
   });
 
@@ -894,7 +1002,7 @@ describe('source — POSSales wiring (CheckoutPaymentFooter boundary)', () => {
 
   it('Settle: onSettle={() => processPayment()} — never by reference, never an onClick in POSSales', () => {
     expect(count(POS_SALES, 'onSettle={() => processPayment()}')).toBe(1);
-    expect(CALL()).toContain('                onSettle={() => processPayment()}\n              />');
+    expect(CALL()).toContain('                onSettle={() => processPayment()}\n                onDismissError={() => setCheckoutError(null)}\n              />');
     expect(POS_SALES).not.toMatch(/onSettle=\{processPayment\}/);
     expect(POS_SALES).not.toMatch(/onClick=\{processPayment\}/);
     expect(count(POS_SALES, 'onClick={() => processPayment()}')).toBe(0);
@@ -966,7 +1074,7 @@ describe('source — existing suites that anchor on the footer (inventory, read-
     expect(suite).toContain("expect(count(r, 'onSettle={() => processPayment()}')).toBe(1);");
     expect(suite).toContain("expect(count(r, 'onClick={processPayment}')).toBe(0);");
     expect(suite).toContain("expect(count(r, '<CheckoutPaymentFooter')).toBe(1);");
-    expect(suite).toContain("it('footer: change due, error, then the action row — each present only when its condition holds'");
+    expect(suite).toContain("it('footer: change due, then the action row — the error is a portalled dialog, not a footer row'");
   });
 
   it('CheckoutPaymentHeader suite still pins both footer handlers in POSSales', () => {

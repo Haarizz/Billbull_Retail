@@ -19,7 +19,8 @@
 //                    posCreditBalance() read - MUST precede the post, or the lookup
 //                    returns the balance AFTER this sale
 //   4. payload       buildPosCheckoutItems(...) plus the scalar fields
-//   5. === PAYMENT CONFIRMED ===  await posCheckout(payload)
+//   5. === PAYMENT CONFIRMED ===  await submitCheckout(...), which commits the operation to
+//                    IndexedDB and then POSTs it (checkoutOperation.js)
 //   6. derive        credit invoice/paid/updated figures, the `paid` success object,
 //                    snapshot layawayId + printPaper into locals BEFORE the resets
 //   7. success now   setLastPaidInvoice, setCheckoutFinalizing(true), invoiceCounter++,
@@ -39,22 +40,42 @@
 //
 // Inputs are grouped by domain and destructured back to their original local names, so
 // the body below is byte-identical to the component version.
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import { convertLayaway, posCheckout, posCreditBalance } from '../../../../../api/posApi';
+import { convertLayaway, posCreditBalance } from '../../../../../api/posApi';
+// M3 offline MVP. Inert unless the Standalone POS installed the offline runtime (apps/pos).
+import { isOffline, registerTillContext } from '../../offline/offlineRuntime';
+import { commitOfflineSale, OfflineSaleRefused } from '../../offline/offlineSale';
+import { OfflineStorageError } from '../../offline/offlineDb';
+import {
+  offlineReceiptFailureMessage, printOfflineReceipt, registerOfflineReceiptPrinter,
+} from '../../offline/offlineReceiptPrint';
 import { buildPosPrintData, USE_NEW_POS_PRINT_TEMPLATE } from '../../posPrintUtils';
 import { buildPosCheckoutItems } from '../../posUtils';
 import { buildPaymentBlock, paymentAuditSnapshot, reconcilePaymentBlock } from '../../payments/paymentPresentation';
 import { isTaxInvoiceDocument } from '../../../../../utils/documentTaxType';
 import { printHtml } from '../../../../../utils/printGenerator';
 import { isSheetPaper } from '../../device/printing/posSheetTemplates';
+import {
+  checkoutContext, CheckoutBlockedError, OPERATION_TYPES, PendingCheckoutStorageError, submitCheckout,
+} from './checkoutOperation';
 
-/** A fresh checkoutKey. The backend only needs it unique per sale attempt. */
-const newCheckoutKey = () => (
-  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `pos-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
-);
+/** Asked before a different sale is sent while an earlier one on this till is unresolved. */
+export const confirmSeparateSaleDefault = (blockers) => {
+  if (typeof window === 'undefined' || typeof window.confirm !== 'function') return false;
+  const lines = blockers.map((b) => {
+    const s = b.summary || {};
+    const when = b.createdAt ? new Date(b.createdAt).toLocaleTimeString() : '';
+    const items = s.itemCount != null ? `(${s.itemCount} items)` : '';
+    const total = s.total != null ? `AED ${Number(s.total).toFixed(2)}` : '';
+    return `- ${[when, s.customerName, items, total].filter(Boolean).join(' ')}`;
+  });
+  return window.confirm(
+    'An earlier sale on this till has not been confirmed by the server:\n' + lines.join('\n')
+    + '\n\nIt may already have been recorded, and it stays listed until it is resolved.'
+    + '\n\nPress OK only if this is a NEW, SEPARATE sale. Press Cancel to resolve the earlier sale first.',
+  );
+};
 
 /**
  * @param {object} args grouped domain inputs - see each group's members below.
@@ -90,6 +111,9 @@ export function useCheckout({
   pricing,        // { priceLevelId, pending } - the cashier's explicit price level (null = the
                   //   customer's default) and whether line prices are still being re-resolved.
                   //   Optional: absent means default pricing, exactly as before price levels.
+  pendingCheckouts, // { confirmSeparateSale, onChanged } - optional: refreshes the unresolved-
+                  //   checkout notice, and replaces the window.confirm asked before a separate
+                  //   sale is sent while an earlier one is unresolved.
 } = {}) {
   // Checkout-owned state. Every setter is exposed: POSSales has other writers (the
   // dialog-close effects, the reprint path) and POSTouchScreen drives three of them
@@ -127,6 +151,31 @@ export function useCheckout({
     setSelectedCreditCustomer, setLastScannedItem,
   } = posReset;
 
+  // M3: tell the offline runtime which terminal and session this workspace is on, so it can prepare
+  // offline selling while online. A no-op where the runtime is not installed (embedded Retail POS).
+  useEffect(() => {
+    registerTillContext({ terminal: currentTerminal, session: currentSession });
+  }, [currentTerminal?.terminalId, currentTerminal?.branchId, currentSession?.id, currentSession?.status, currentSession?.openedBy]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // M3: lend this workspace's configured receipt printer and outlet header to the offline receipt
+  // printer, so a stored offline sale can be printed again (offline panel) without a server invoice.
+  // The ref keeps the latest printer/outlet values without re-registering on every render.
+  const offlineReceiptDepsRef = useRef(null);
+  useEffect(() => {
+    offlineReceiptDepsRef.current = { printThermalReceiptWithConfiguredPrinter, outletName: tplOutletName, outletTrn: effectiveOutletTrn };
+  });
+  useEffect(() => registerOfflineReceiptPrinter({
+    context: () => ({
+      outletName: offlineReceiptDepsRef.current?.outletName || '',
+      outletTrn: offlineReceiptDepsRef.current?.outletTrn || '',
+      // The same source commitOfflineSale used for the receipt printed at checkout.
+      cashierName: sessionStorage.getItem('fullName') || sessionStorage.getItem('user') || '',
+    }),
+    print: ({ invoice, text, escPosBase64, title }) => offlineReceiptDepsRef.current.printThermalReceiptWithConfiguredPrinter({
+      full: invoice, text, escPosBase64, title,
+    }),
+  }), []);
+
   /**
    * Settle re-entrancy lock. checkoutLoading is React state, so two invocations in the same
    * tick (double click, Enter + click, a key repeat) both read it as false, and a second call
@@ -150,25 +199,11 @@ export function useCheckout({
     }
   };
 
-  /**
-   * One idempotency key per sale attempt, sent as checkoutKey. The backend returns the invoice
-   * already recorded under a key instead of posting a second one, so a retry after a dropped
-   * connection or gateway timeout — where the sale may well have committed — cannot invoice
-   * the customer twice. The key is tied to what is being settled: an identical retry (same
-   * cart, customer, tenders) reuses it, a changed sale gets a fresh one so it is never answered
-   * with the earlier invoice. Cleared once a sale is confirmed.
-   */
-  const checkoutAttemptRef = useRef(null); // { key, fingerprint }
-  const checkoutKeyFor = (payload) => {
-    // Supervisor credentials are how a refused attempt is retried, not part of the sale.
-    // eslint-disable-next-line no-unused-vars
-    const { supervisorOverridePin, supervisorOverrideEmail, supervisorOverridePassword, ...sale } = payload;
-    const fingerprint = JSON.stringify(sale);
-    if (checkoutAttemptRef.current?.fingerprint !== fingerprint) {
-      checkoutAttemptRef.current = { key: newCheckoutKey(), fingerprint };
-    }
-    return checkoutAttemptRef.current.key;
-  };
+  // The checkout key is owned by checkoutOperation.submitCheckout (Phase 0 / M2.2.2). It persists
+  // the key and the exact payload in IndexedDB before the request goes out, reuses them for an
+  // identical retry (also after a reload), and refuses to send a different sale while an earlier
+  // one is unresolved unless the cashier confirms it is a separate sale. The supervisor
+  // credentials in the payload ride on the request but are never stored.
 
   const settleSale = async (overrideCreds) => {
     // Refuse to post a payment the server would not record. Reaching here means the button
@@ -310,12 +345,12 @@ export function useCheckout({
         supervisorOverridePin: overrideCreds?.pin || undefined,
         supervisorOverrideEmail: overrideCreds?.email || undefined,
         supervisorOverridePassword: overrideCreds?.password || undefined,
+        // Personal PIN approvals: whose own PIN `pin` is. Absent for Branch PIN / Password.
+        supervisorOverrideEmployeeId: overrideCreds?.employeeId ?? undefined,
         // Taking up a Sales Order: the server links the invoice, closes the order and applies
         // its advance. Only present for such a sale, so an ordinary payload is unchanged.
         ...(salesOrderSnapshot?.soNumber ? { linkedSalesOrder: salesOrderSnapshot.soNumber } : {}),
       };
-      payload.checkoutKey = checkoutKeyFor(payload);
-
       // ── PAYMENT CONFIRMED HERE ────────────────────────────────────────────
       // posCheckout resolving is the backend's authoritative confirmation that
       // the sale posted (GL, stock, receivable all committed). Everything below
@@ -325,9 +360,24 @@ export function useCheckout({
       // the background, instead of making the cashier wait on the printer round-
       // trip (the bulk of the old 3–5 s). No false success: this only runs after
       // the await above resolves; a rejection skips straight to catch().
-      const savedInvoice = await posCheckout(payload);
-      // Confirmed: the next sale must not be answered with this invoice.
-      checkoutAttemptRef.current = null;
+      // M3: with the server unreachable on the Standalone POS, an eligible cash sale is committed to
+      // IndexedDB under the server-issued offline lease instead (offlineSale.js). It resolves only
+      // once that transaction completed; anything it cannot take is refused, never sent or faked.
+      const offlineSale = isOffline()
+        ? await commitOfflineSale({
+          payload, depositAmount: depositSnapshot, posSettings, displayedTotal: grandTotal,
+          cashierName: sessionStorage.getItem('fullName') || sessionStorage.getItem('user'),
+        })
+        : null;
+      const savedInvoice = offlineSale ? offlineSale.invoice : await submitCheckout({
+        operationType: OPERATION_TYPES.SALE,
+        payload,
+        context: checkoutContext({ currentSession, currentTerminal }),
+        summary: { customerName: customer?.name || null, itemCount: currentInvoice.items.length, total: grandTotal },
+        confirmSeparateSale: pendingCheckouts?.confirmSeparateSale || confirmSeparateSaleDefault,
+      });
+      // Confirmed: the operation is closed, so the next sale gets a new key.
+      pendingCheckouts?.onChanged?.();
 
       // Credit account posting for THIS invoice — same formula for every payment
       // mode: Invoice Credit is the invoice's due amount (net of any layaway deposit
@@ -341,7 +391,12 @@ export function useCheckout({
         : null;
 
       const paid = {
-        id: savedInvoice.invoiceNumber,
+        // An offline sale has no invoice number until it synchronises; its provisional reference is
+        // labelled as such and never shown in the invoice-number position on its own.
+        id: offlineSale
+          ? `SAVED OFFLINE — PENDING SYNC · ref ${offlineSale.record.ref} (not an invoice no.)`
+          : savedInvoice.invoiceNumber,
+        offline: offlineSale ? { ref: offlineSale.record.ref, rid: offlineSale.record.rid, state: 'PENDING_SYNC' } : null,
         total: savedInvoice.invoiceTotal,
         items: currentInvoice.items.length,
         invoice: savedInvoice,
@@ -369,7 +424,7 @@ export function useCheckout({
       // amounts, layaway id). savedInvoice/paid/changeDue etc. are already locals.
       const layawayIdSnapshot = activeLayawayId;
       // Tax Invoice paper for a taxed sale, POS Receipt paper for a no-tax one.
-      const printPaper = paperForSale(savedInvoice);
+      const printPaper = offlineSale ? null : paperForSale(savedInvoice);
 
       // ── Show success immediately, then finalize in the background ───────────
       // The payment is already confirmed (posCheckout resolved). Commit the
@@ -419,7 +474,13 @@ export function useCheckout({
           if (changeDue > 0) openCashDrawer('CHANGE_RETURN');
 
           try {
-            if (isSheetPaper(printPaper)) {
+            if (offlineSale) {
+              // Rendered from the stored outbox row, never from React state, and clearly marked
+              // OFFLINE — PENDING SYNCHRONIZATION. Printing never decides whether the sale stands.
+              // Same path as the offline panel's "Print receipt", which retries a failed print.
+              await printOfflineReceipt(offlineSale.record.rid);
+              openCashDrawer('RECEIPT_PRINT');
+            } else if (isSheetPaper(printPaper)) {
               const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(savedInvoice) ? tplInvoiceHeader : tplReceiptHeader);
               const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
               // A4, A5 or pre-printed — the snapshotted format picks the template.
@@ -467,7 +528,9 @@ export function useCheckout({
             }
           } catch (autoPrintErr) {
             console.warn('Automatic receipt print failed', autoPrintErr);
-            alert(`Sale saved, but the receipt didn't print: ${autoPrintErr?.message || 'printer error'}. Use "Print Receipt" to retry.`);
+            alert(offlineSale
+              ? offlineReceiptFailureMessage(offlineSale.record.ref, autoPrintErr)
+              : `Sale saved, but the receipt didn't print: ${autoPrintErr?.message || 'printer error'}. Use "Print Receipt" to retry.`);
           }
 
           // If this checkout settled a layaway, stamp it converted (releases its
@@ -501,6 +564,25 @@ export function useCheckout({
       // may have reached the server and committed before the answer was lost. Never tell the
       // cashier it was not recorded. The checkoutKey makes an unchanged retry safe — the server
       // hands back the invoice it already recorded instead of posting a second one.
+      // Phase 0 / M2.2.2: these two mean nothing was sent at all, so the payment was not taken.
+      if (err instanceof OfflineSaleRefused) {
+        setCheckoutError(`Offline: ${err.message} The sale was NOT taken.`);
+        return;
+      }
+      if (err instanceof OfflineStorageError) {
+        setCheckoutError(`Offline: this till could not save the sale to its local storage (${err.message}), so the sale was NOT taken and no payment should be collected.`);
+        return;
+      }
+      if (err instanceof PendingCheckoutStorageError) {
+        setCheckoutError(`This till could not save the sale safely before sending it (${err.message}), so it was NOT sent and no payment was taken. Check that browser storage is allowed and not full, then try again. If it keeps failing, use another till.`);
+        return;
+      }
+      if (err instanceof CheckoutBlockedError) {
+        setCheckoutError(err.message);
+        pendingCheckouts?.onChanged?.();
+        return;
+      }
+      pendingCheckouts?.onChanged?.();
       const isUnconfirmed = !err?.response || [408, 502, 503, 504].includes(err?.response?.status);
       const msg = err?.response?.data?.message || err?.response?.data || err?.message || 'Checkout failed. Please try again.';
       const msgStr = isUnconfirmed

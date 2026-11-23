@@ -65,7 +65,7 @@ import { useCompany } from '@billbull/shared/context/CompanyContext';
 import { useBranch } from '@billbull/shared/context/BranchContext';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { sendSalesOrderEmail } from '@billbull/shared/api/salesorderApi';
-import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
+import SendDocumentEmailModal from '@billbull/shared/components/SendDocumentEmailModal';
 import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, summaryLineLookup, printLineMoney, FOOTER_DISCOUNT_HELP } from '@billbull/shared/utils/documentSummaryUtils';
 
 // ✅ PRODUCT SELECTOR
@@ -82,6 +82,8 @@ import { normalizePurchaseTemplate, buildReceiptVoucherPrintData } from '../../u
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
 // QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
 import InlineProductSearchCell from '../../components/InlineProductSearchCell';
+import { orderRowsForEntryDisplay, entryRowAttrs, isBlankByCodeDesc, placeEntryLine, findOpenEntryRow } from '../../utils/entryRowOrder';
+import useEntryRowTable from '../../hooks/useEntryRowTable';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
@@ -320,6 +322,7 @@ const SalesOrders = () => {
 
   // Items
   const [items, setItems] = useState([createBlankOrderItem()]);
+  const entryTableRef = useEntryRowTable(items, isBlankByCodeDesc);
 
   // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
   useEffect(() => {
@@ -327,7 +330,8 @@ const SalesOrders = () => {
     if (targetId == null) return;
     const raf = requestAnimationFrame(() => {
       const el = inlineSearchRefs.current[targetId];
-      if (el) el.focus();
+      // the search row is pinned, so keep the latest lines in view
+      if (el) el.focus({ preventScroll: true });
       focusNextInlineSearchRef.current = null;
     });
     return () => cancelAnimationFrame(raf);
@@ -875,7 +879,7 @@ const SalesOrders = () => {
       // Priced from the product master: follows the customer's pricing.
       priceLevelAuto: true,
       name: product.name || '',
-      brand: product.brandName || product.brand || '',
+      brand: product.brandName || product.brand?.name || (typeof product.brand === 'string' ? product.brand : ''),
       shortDesc: product.shortDesc || '',
       detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',
@@ -914,8 +918,7 @@ const SalesOrders = () => {
         return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
       }
       // Replace empty placeholder rows when first product is added
-      const hasData = prev.some(i => i.code || i.desc);
-      return hasData ? [...prev, newItem] : [newItem];
+      return placeEntryLine(prev, newItem, isBlankByCodeDesc);
     });
     const filledItem = { ...newItem, id: targetRowId != null ? targetRowId : newItem.id };
     setPendingFastEntrySearch('');
@@ -972,8 +975,7 @@ const SalesOrders = () => {
     };
     const newItem = calculateRow(rawItem);
     setItems(prev => {
-      const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
-      return isFirstItemEmpty ? [newItem] : [...prev, newItem];
+      return placeEntryLine(prev, newItem, isBlankByCodeDesc);
     });
   };
 
@@ -2647,7 +2649,7 @@ const SalesOrders = () => {
                 </div>
               </div>
 
-              <div className="overflow-auto max-h-[380px]">
+              <div ref={entryTableRef} className="overflow-auto max-h-[380px]">
                 <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
                   <thead className="sticky top-0 z-10 bg-white border-b border-slate-100/80 text-[11px] font-semibold text-slate-500">
                     <tr>
@@ -2677,11 +2679,11 @@ const SalesOrders = () => {
                           </div>
                         </td>
                       </tr>
-                    ) : items.map((item, index) => (
+                    ) : orderRowsForEntryDisplay(items, isBlankByCodeDesc).map(({ item, rowNo, blank }) => (
                       <React.Fragment key={item.id}>
-                        <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isLocked ? 'opacity-80' : ''}`} onClick={() => setFocusedItem(item)}>
+                        <tr {...entryRowAttrs({ item, blank })} className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isLocked ? 'opacity-80' : ''}`} onClick={() => setFocusedItem(item)}>
                           {/* Index */}
-                          <td className="p-2 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
+                          <td className="p-2 text-center text-slate-400 text-xs font-medium">{rowNo}</td>
 
                           {/* Item / Description */}
                           <td className="p-2">
@@ -2794,6 +2796,8 @@ const SalesOrders = () => {
                                   if (e.key === 'Tab' && !e.shiftKey && !isLocked) {
                                     e.preventDefault();
                                     const newRow = createBlankOrderItem();
+                                    const openRow = findOpenEntryRow(items, isBlankByCodeDesc);
+                                    if (openRow) { inlineSearchRefs.current[openRow.id]?.focus({ preventScroll: true }); return; }
                                     focusNextInlineSearchRef.current = newRow.id;
                                     setItems(prev => [...prev, newRow]);
                                   }

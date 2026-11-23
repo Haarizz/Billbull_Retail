@@ -1506,6 +1506,21 @@ export const downloadPdf = async (htmlContent, filename = 'document') => {
 // margin that image-heavy A4 documents (invoices with logos/stamps) still get
 // by default.
 export const printHtml = (htmlContent, { fast = false } = {}) => {
+    // BillBull POS desktop app (Electron): window.print() there opens the Windows dialog with
+    // no preview ("This app doesn't support print preview"), so hand the document to the app,
+    // which shows it as a PDF to print from. Fast prints (thermal receipt fallbacks) skip the
+    // preview so the cashier isn't slowed down; any failure falls back to the normal print.
+    const desktop = typeof window !== 'undefined' ? window.billbullDesktop : null;
+    if (!fast && typeof desktop?.printPreview === 'function') {
+        Promise.resolve()
+            .then(() => desktop.printPreview(htmlContent))
+            .catch(() => printHtmlInFrame(htmlContent, { fast }));
+        return;
+    }
+    printHtmlInFrame(htmlContent, { fast });
+};
+
+const printHtmlInFrame = (htmlContent, { fast = false } = {}) => {
     // Remove any previous print frame
     const existing = document.getElementById('__bb_print_frame__');
     if (existing) existing.remove();

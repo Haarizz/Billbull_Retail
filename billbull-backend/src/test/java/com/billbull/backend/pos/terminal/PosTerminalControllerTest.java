@@ -34,6 +34,7 @@ class PosTerminalControllerTest {
     @Mock private PosTerminalLifecycleService lifecycleService;
     @Mock private PosTerminalActivityService activityService;
     @Mock private ModulePermissionService modulePermissionService;
+    @Mock private PosTerminalInsightService insightService;
 
     @InjectMocks private PosTerminalController controller;
 
@@ -96,6 +97,30 @@ class PosTerminalControllerTest {
 
         assertThrows(AccessDeniedException.class, () -> controller.decommission(1L, null));
         verify(lifecycleService, never()).decommission(anyLong(), any());
+    }
+
+    @Test
+    void recentActivityChecksViewActivityPermissionBeforeReading() {
+        controller.recentActivity(10L, "T001-AAAA", 25);
+        verify(modulePermissionService).requireCanView("permissions.pos.terminal.viewactivity");
+        verify(insightService).recentActivity(10L, "T001-AAAA", 25);
+    }
+
+    @Test
+    void recentActivityDeniedNeverReadsTheAuditLog() {
+        doThrow(new AccessDeniedException("denied"))
+                .when(modulePermissionService).requireCanView("permissions.pos.terminal.viewactivity");
+
+        assertThrows(AccessDeniedException.class, () -> controller.recentActivity(10L, null, null));
+        verify(insightService, never()).recentActivity(any(), any(), any());
+    }
+
+    @Test
+    void getAllForBranchEnrichesWithUserAndShift() {
+        java.util.List<PosTerminal> list = java.util.List.of(new PosTerminal());
+        when(service.getAllForBranch(10L)).thenReturn(list);
+        controller.getAllForBranch(10L);
+        verify(insightService).enrich(list);
     }
 
     @Test

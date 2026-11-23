@@ -59,7 +59,7 @@ class WhatsAppConfigServiceTest {
         Map<String, Object> status = service.publicStatus();
 
         assertEquals(true, status.get("enabled"));
-        assertEquals(Map.of("QUOTATION", true, "SALES_ORDER", false, "SALES_INVOICE", true), status.get("templates"));
+        assertEquals(Map.of("QUOTATION", true, "SALES_ORDER", false, "SALES_INVOICE", true, "POS_RECEIPT", false), status.get("templates"));
         assertFalse(status.toString().contains("secret-token"));
     }
 

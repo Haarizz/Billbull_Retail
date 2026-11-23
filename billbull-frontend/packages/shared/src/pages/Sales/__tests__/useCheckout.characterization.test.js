@@ -16,6 +16,8 @@ import { generatePrintHtmlAsync, printHtml } from '../../../utils/printGenerator
 import { useCheckout } from '../POS/features/checkout/useCheckout';
 import { PAYMENT_TYPES, createPaymentLine } from '../POS/payments/paymentModel';
 import { buildCheckoutPaymentFields } from '../POS/payments/paymentPayloadAdapter';
+import { listOperations } from '../POS/features/checkout/pendingCheckoutStore';
+import { checkoutContext, scopeKeyOf } from '../POS/features/checkout/checkoutOperation';
 
 /**
  * CHARACTERIZATION — checkout orchestration.
@@ -565,11 +567,16 @@ describe('payload hand-off', () => {
 
 // ── P0/C7: settlement re-entrancy and the checkoutKey ──────────────────────────────────────
 
-/** A posCheckout that stays pending until the test resolves it. */
+/**
+ * A posCheckout that stays pending until the test resolves it. Since M2.2.2 the request goes out
+ * only after the operation is committed to IndexedDB, so resolve() first waits for the call.
+ */
 const deferredCheckout = () => {
   let resolve;
-  posCheckout.mockImplementation(() => new Promise((r) => { resolve = r; }));
-  return { resolve: (v = SAVED) => resolve(v) };
+  let markCalled;
+  const called = new Promise((r) => { markCalled = r; });
+  posCheckout.mockImplementation(() => new Promise((r) => { resolve = r; markCalled(); }));
+  return { called, resolve: async (v = SAVED) => { await called; resolve(v); } };
 };
 
 describe('P0 — settle re-entrancy lock', () => {
@@ -592,7 +599,7 @@ describe('P0 — settle re-entrancy lock', () => {
       await ctx.view.result.current.processPayment();
       await ctx.view.result.current.processPayment();
     });
-    await act(async () => { pending.resolve(); await first; });
+    await act(async () => { await pending.resolve(); await first; });
     expect(posCheckout).toHaveBeenCalledTimes(1);
   });
 
@@ -653,10 +660,11 @@ describe('P0 — checkoutKey idempotency', () => {
     expect(keyOf(1)).not.toBe(keyOf(0));
   });
 
-  it('a sale changed after a failure gets a fresh key, so it is never answered with an earlier invoice', async () => {
-    posCheckout.mockRejectedValueOnce(new Error('socket hang up'));
-    const ctx = setup();
-    await settle(ctx);
+  // Changed deliberately in M2.2.2. Before, a sale changed after an unconfirmed failure silently got
+  // a fresh key and the earlier attempt was forgotten, although it may have been recorded. Now the
+  // earlier attempt stays pending with its own payload, and the changed sale is only sent once the
+  // cashier confirms it is a new, separate sale.
+  const changeCart = (ctx) => {
     ctx.args.cart = {
       ...ctx.args.cart,
       currentInvoice: { ...ctx.args.cart.currentInvoice, items: [
@@ -665,7 +673,62 @@ describe('P0 — checkoutKey idempotency', () => {
       ] },
     };
     ctx.view.rerender();
+  };
+
+  it('a sale changed while an earlier attempt is unconfirmed is NOT sent unless the cashier confirms a separate sale', async () => {
+    posCheckout.mockRejectedValueOnce(new Error('socket hang up'));
+    const confirmSeparateSale = vi.fn(() => false);
+    const ctx = setup({ pendingCheckouts: { confirmSeparateSale } });
     await settle(ctx);
+    changeCart(ctx);
+    await settle(ctx);
+    expect(confirmSeparateSale).toHaveBeenCalledTimes(1);
+    expect(posCheckout).toHaveBeenCalledTimes(1);
+    expect(ctx.view.result.current.checkoutError).toMatch(/earlier sale on this till has not been confirmed/);
+    const [kept] = await listOperations(scopeKeyOf(checkoutContext(ctx.args.sessionCtx, { operator: null })));
+    expect(kept.checkoutKey).toBe(keyOf(0));
+    expect(kept.state).toBe('UNCERTAIN');
+    expect(kept.payload.items).toHaveLength(1); // the original cart, not the changed one
+  });
+
+  it('once confirmed as separate, the changed sale gets a fresh key and the earlier attempt keeps its own payload', async () => {
+    posCheckout.mockRejectedValueOnce(new Error('socket hang up'));
+    const ctx = setup({ pendingCheckouts: { confirmSeparateSale: vi.fn(() => true) } });
+    await settle(ctx);
+    changeCart(ctx);
+    await settle(ctx);
+    expect(posCheckout).toHaveBeenCalledTimes(2);
     expect(keyOf(1)).not.toBe(keyOf(0));
+    const rows = await listOperations(scopeKeyOf(checkoutContext(ctx.args.sessionCtx, { operator: null })));
+    const byKey = Object.fromEntries(rows.map((r) => [r.checkoutKey, r]));
+    expect(byKey[keyOf(0)].state).toBe('UNCERTAIN');
+    expect(byKey[keyOf(0)].payload.items).toHaveLength(1);
+    expect(byKey[keyOf(1)].state).toBe('COMPLETED');
+    expect(byKey[keyOf(1)].payload.items).toHaveLength(2);
+    expect(byKey[keyOf(1)].separateFrom).toEqual([keyOf(0)]);
+  });
+
+  it('never persists the supervisor credentials, although they are sent', async () => {
+    posCheckout.mockRejectedValueOnce({ response: { status: 403, data: { message: 'pos_price_override' } } });
+    const ctx = setup();
+    await settle(ctx);
+    await settle(ctx, { pin: '1234', email: 's@x.ae', password: 'pw' });
+    expect(posCheckout.mock.calls[1][0].supervisorOverridePassword).toBe('pw');
+    const rows = await listOperations(scopeKeyOf(checkoutContext(ctx.args.sessionCtx, { operator: null })));
+    expect(JSON.stringify(rows)).not.toMatch(/1234|s@x.ae|"pw"|supervisorOverride/);
+  });
+
+  it('refuses to send anything when IndexedDB is unavailable, and says the payment was not taken', async () => {
+    const saved = globalThis.indexedDB;
+    globalThis.indexedDB = undefined;
+    try {
+      const ctx = setup();
+      await settle(ctx);
+      expect(posCheckout).not.toHaveBeenCalled();
+      expect(ctx.view.result.current.checkoutError).toMatch(/could not save the sale safely.*NOT sent and no payment was taken/);
+      expect(ctx.clearInvoice).not.toHaveBeenCalled();
+    } finally {
+      globalThis.indexedDB = saved;
+    }
   });
 });

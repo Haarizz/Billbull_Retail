@@ -46,7 +46,7 @@ class WhatsAppConfigSaveTest {
         assertEquals("quotation_document", reloaded.getQuotationTemplateName());
         assertNull(reloaded.getSalesOrderTemplateName());
         assertNull(reloaded.getSalesInvoiceTemplateName());
-        assertEquals(Map.of("QUOTATION", true, "SALES_ORDER", false, "SALES_INVOICE", false),
+        assertEquals(Map.of("QUOTATION", true, "SALES_ORDER", false, "SALES_INVOICE", false, "POS_RECEIPT", false),
                 service.publicStatus().get("templates"));
     }
 

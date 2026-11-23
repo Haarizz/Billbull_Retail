@@ -49,7 +49,9 @@ describe('buildPosCheckoutItems — the items array', () => {
   it('projects a full cart onto the exact wire shape', () => {
     const items = buildPosCheckoutItems(SCENARIO_J_CHECKOUT.items, EXCLUSIVE_5);
 
-    expect(items).toEqual([
+    // The cart holds its newest line first; the payload lists lines in scan order, so it is
+    // the cart reversed. The expectation below is written in cart order.
+    expect([...items].reverse()).toEqual([
       {
         itemCode: 'SKU-900',
         itemName: 'Batched',

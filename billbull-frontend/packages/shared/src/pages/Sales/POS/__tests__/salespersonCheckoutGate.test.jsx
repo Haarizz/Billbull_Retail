@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import POSTouchScreen from '../POSTouchScreen';
 import { TradePOSTouchScreen } from '../TradePOS/TradePOSTouchScreen';
 import { checkoutQuickCashRequest } from '../input/posShortcuts';
+import { WALK_IN_CUSTOMER } from '../posConstants';
 
 /**
  * REGRESSION — clicking Checkout with no verified salesperson must open the scan modal and stop.
@@ -35,7 +36,12 @@ const useSharedCheckoutGate = ({
   salespersonRequired, salespersonVerified, openSalespersonScanModal,
   setCheckoutPhase, setShowPaymentDialog,
   setCheckoutQuickCash = () => {}, quickCashSeqRef, activeSalesOrder = null,
+  posSettings = null, selectedCustomerData = null,
 }) => useCallback((opts) => {
+  if (posSettings?.requireCustomer && (!selectedCustomerData || selectedCustomerData.id === WALK_IN_CUSTOMER.id)) {
+    alert({ tone: 'warning', title: 'Customer required', message: 'Select a customer before checkout. Walk-in sales are not allowed at this branch.' });
+    return false;
+  }
   if (salespersonRequired && !salespersonVerified) {
     openSalespersonScanModal();
     return false;
@@ -54,7 +60,8 @@ const useSharedCheckoutGate = ({
   setCheckoutQuickCash(checkoutQuickCashRequest(opts, quickCashSeqRef.current));
   return true;
 }, [salespersonRequired, salespersonVerified, openSalespersonScanModal,
-  setCheckoutPhase, setShowPaymentDialog, setCheckoutQuickCash, quickCashSeqRef, activeSalesOrder]);
+  setCheckoutPhase, setShowPaymentDialog, setCheckoutQuickCash, quickCashSeqRef, activeSalesOrder,
+  posSettings?.requireCustomer, selectedCustomerData]);
 
 const codeLines = (src) => src
   .split('\n')
@@ -251,9 +258,14 @@ describe('every other checkout trigger delegates to the same gate', () => {
   it('pinsPosSalesGuard — the copy above is still POSSales.handleCheckout', () => {
     const source = POS_SALES.slice(
       POS_SALES.indexOf('const handleCheckout = useCallback((opts) => {'),
-      POS_SALES.indexOf('}, [salespersonRequired, salespersonVerified, openSalespersonScanModal, activeSalesOrder]);'));
+      POS_SALES.indexOf('}, [salespersonRequired, salespersonVerified, openSalespersonScanModal, activeSalesOrder, posSettings?.requireCustomer, selectedCustomerData]);'));
     expect(codeLines(source)).toEqual(codeLines([
       'const handleCheckout = useCallback((opts) => {',
+      // Mandatory Customer (22338d75), the first gate: a walk-in sale is refused before anything else.
+      'if (posSettings?.requireCustomer && (!selectedCustomerData || selectedCustomerData.id === WALK_IN_CUSTOMER.id)) {',
+      "alert({ tone: 'warning', title: 'Customer required', message: 'Select a customer before checkout. Walk-in sales are not allowed at this branch.' });",
+      'return false;',
+      '}',
       "if (salespersonRequired && !salespersonVerified) {",
       'openSalespersonScanModal();',
       'return false;',

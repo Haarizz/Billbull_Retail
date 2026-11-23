@@ -19,7 +19,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { cancelLayaway, getLayaway, getLayaways } from '../../../../../api/posApi';
 import { STATUS_LABEL_TO_ENUM } from '../../posConstants';
-import { toNumber } from '../../posUtils';
+import { inScanOrder, toNumber } from '../../posUtils';
 
 /**
  * @param {object}   args
@@ -107,7 +107,7 @@ export function useLayaway({
         alert(`This layaway is ${ly.status.toLowerCase().replace(/_/g, ' ')} and cannot be converted.`);
         return;
       }
-      const items = (ly.items || []).map(it => ({
+      const items = inScanOrder(ly.items).map(it => ({
         id: it.pinnedBatchNumber ? `${it.itemCode}::${it.pinnedBatchNumber}` : it.itemCode,
         productId: it.itemCode,
         name: it.itemName,

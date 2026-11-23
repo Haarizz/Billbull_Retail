@@ -53,6 +53,8 @@ import { createDraftFromLpo } from '../../../api/purchaseInvoiceApi';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 // QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
 import InlineProductSearchCell from '../../../components/InlineProductSearchCell';
+import { orderRowsForEntryDisplay, entryRowAttrs, isBlankByCodeName, placeEntryLine, findOpenEntryRow } from '../../../utils/entryRowOrder';
+import useEntryRowTable from '../../../hooks/useEntryRowTable';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
@@ -997,7 +999,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
     if (targetId == null) return;
     const raf = requestAnimationFrame(() => {
       const el = inlineSearchRefs.current[targetId];
-      if (el) el.focus();
+      // the search row is pinned, so keep the latest lines in view
+      if (el) el.focus({ preventScroll: true });
       focusNextInlineSearchRef.current = null;
     });
     return () => cancelAnimationFrame(raf);
@@ -1206,8 +1209,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
     if (targetRowId != null) {
       updatedItems = formData.items.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
     } else {
-      const isFirstItemEmpty = formData.items.length === 1 && !formData.items[0].productId;
-      updatedItems = isFirstItemEmpty ? [newItem] : [...formData.items, newItem];
+      updatedItems = placeEntryLine(formData.items, newItem, isBlankByCodeName);
     }
     const filledItemId = targetRowId != null ? targetRowId : newItem.id;
     setPendingFastEntrySearch('');
@@ -1249,8 +1251,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       unitPrices: product.unitPrices || {},
       unitCosts: product.unitCosts || {},
     };
-    const isFirstItemEmpty = formData.items.length === 1 && !formData.items[0].productId;
-    setFormData({ ...formData, items: isFirstItemEmpty ? [newItem] : [...formData.items, newItem] });
+    setFormData({ ...formData, items: placeEntryLine(formData.items, newItem, isBlankByCodeName) });
   };
 
   const getAddonModalItem = (item) => {
@@ -1360,6 +1361,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       calculatedItems
     };
   }, [formData.items]);
+  const entryTableRef = useEntryRowTable(calculations.calculatedItems, isBlankByCodeName);
 
   const mapItemsToRequest = (items) => {
     return items.map(i => ({
@@ -1704,7 +1706,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                 )}
               </div>
             </div>
-            <div className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>
+            <div ref={entryTableRef} className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>
               <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
                 <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 sticky top-0 z-10">
                   <tr>
@@ -1724,10 +1726,10 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {calculations.calculatedItems.map((item, index) => (
+                  {orderRowsForEntryDisplay(calculations.calculatedItems, isBlankByCodeName).map(({ item, rowNo, blank }) => (
                     <React.Fragment key={item.id}>
-                      <tr className="group hover:bg-slate-50">
-                        <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
+                      <tr {...entryRowAttrs({ item, blank })} className="group hover:bg-slate-50">
+                        <td className="p-3 text-center text-slate-400 text-xs font-medium">{rowNo}</td>
                         <td className="p-3">
                           {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
                           {(!item.code && !item.name) ? (
@@ -1807,6 +1809,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                                 if (e.key === 'Tab' && !e.shiftKey && !isReadOnly) {
                                   e.preventDefault();
                                   const newRow = createBlankLpoItem();
+                                  const openRow = findOpenEntryRow(formData.items, isBlankByCodeName);
+                                  if (openRow) { inlineSearchRefs.current[openRow.id]?.focus({ preventScroll: true }); return; }
                                   focusNextInlineSearchRef.current = newRow.id;
                                   setFormData(prev => ({ ...prev, items: [...prev.items, newRow] }));
                                 }

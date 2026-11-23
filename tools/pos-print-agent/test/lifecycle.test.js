@@ -443,7 +443,30 @@ test.describe("CLI on a copied configuration directory", () => {
     runCli(["--list-printers"], io());
     assert.equal(codes.at(-1), 0);
     assert.match(shown[0], /problem: config\.json cannot be used/);
-    assert.equal(config.current().allowedOrigins.size, 0, "the agent trusts nothing until it is fixed");
+    assert.equal(config.current().allowedOrigins.size, 0, "nothing from the damaged file is trusted until it is fixed");
+    assert.ok(config.current().isTrusted("https://demo.billbull.app"), "BillBull client sites stay trusted by rule");
+    assert.ok(!config.current().isTrusted("https://partner.example"));
+  });
+
+  test("every BillBull client site is trusted without setup and cannot be removed", () => {
+    for (const o of ["https://demo.billbull.app", "https://alamwag.billbull.app", "https://brand-new-tenant.billbull.app"]) {
+      assert.ok(config.current().isTrusted(o), o);
+    }
+    for (const o of ["https://billbull.app", "https://a.b.billbull.app", "http://demo.billbull.app",
+      "https://demo.billbull.app:8443", "https://demo.billbull.app.evil.example", "https://-x.billbull.app"]) {
+      assert.ok(!config.current().isTrusted(o), o);
+    }
+
+    runCli(["--remove-origin", "https://demo.billbull.app"], io());
+    assert.equal(codes.at(-1), 2);
+    assert.match(shown.at(-1), /BillBull client site, which this agent always trusts/);
+    assert.ok(config.current().isTrusted("https://demo.billbull.app"));
+
+    runCli(["--add-origin", "https://pos.partner.example"], io());
+    shown = [];
+    runCli(["--list-origins"], io());
+    assert.match(shown[0], /^https:\/\/<client>\.billbull\.app {2}\(built-in/m);
+    assert.match(shown[0], /^https:\/\/pos\.partner\.example$/m);
   });
 
   test("a missing config.json is created by the first command", () => {

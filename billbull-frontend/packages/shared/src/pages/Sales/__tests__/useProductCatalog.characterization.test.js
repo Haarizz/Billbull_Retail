@@ -297,6 +297,29 @@ describe('grid search — debounce', () => {
     expect(view.result.current.posProductsLoading).toBe(false);
     expect(view.result.current.posProducts).toEqual([]);
   });
+
+  it('a superseded (aborted) load does not clear loading while the new search is in flight', async () => {
+    const view = await settled();
+    // Each call hangs until its signal aborts, then rejects like axios does.
+    getProductsList.mockImplementation((_p, _s, _q, signal) => new Promise((_, reject) => {
+      signal?.addEventListener('abort', () => reject(Object.assign(new Error('canceled'), { code: 'ERR_CANCELED' })));
+    }));
+
+    act(() => view.result.current.setSearchQuery('wa'));
+    await tick(300);
+    act(() => view.result.current.setSearchQuery('water'));
+    await tick(300);
+    expect(view.result.current.posProductsLoading).toBe(true);
+  });
+
+  it('flags the search as pending during the debounce window, then clears it', async () => {
+    const view = await settled();
+    expect(view.result.current.posProductsSearchPending).toBe(false);
+    act(() => view.result.current.setSearchQuery(' widget '));
+    expect(view.result.current.posProductsSearchPending).toBe(true);
+    await tick(300);
+    expect(view.result.current.posProductsSearchPending).toBe(false);
+  });
 });
 
 // ── Categories / special tabs ────────────────────────────────────────────────

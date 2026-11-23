@@ -67,17 +67,20 @@ Go to **WhatsApp Manager → Message templates → Create template** and create 
 | `quotation_document` | `Dear {{1}}, please find attached quotation {{2}} for {{3}}, valid until {{4}}. For any questions, simply reply to this message.` | `Test Customer` · `QTN-2026-0016` · `AED 2,800.00` · `08 Oct 2026` |
 | `sales_order_document` | `Dear {{1}}, thank you for your order. Please find attached sales order {{2}} for {{3}}, expected delivery {{4}}. For any questions, simply reply to this message.` | `Test Customer` · `SO-2026-0007` · `AED 3,150.00` · `15 Oct 2026` |
 | `sales_invoice_document` | `Dear {{1}}, please find attached invoice {{2}} for {{3}}, due on {{4}}. For any questions, simply reply to this message.` | `Test Customer` · `INV-2026-0042` · `AED 1,050.00` · `31 Oct 2026` |
+| `pos_receipt_document` (optional, POS till) | `Dear {{1}}, thank you for shopping with us. Please find attached your receipt {{2}} for {{3}} dated {{4}}. For any questions, simply reply to this message.` | `Test Customer` · `INV-2026-0155` · `AED 4,000.00` · `20 Nov 2026` |
 
 What BillBull puts in each variable:
 
-| Variable | Quotation | Sales order | Sales invoice |
-|---|---|---|---|
-| `{{1}}` | Customer name | Customer name | Customer name |
-| `{{2}}` | Quotation number | Sales order number | Invoice number |
-| `{{3}}` | Total with currency | Order total with currency | Invoice total with currency |
-| `{{4}}` | Valid-until date | Expected delivery date, or "to be confirmed" | Due date, or the invoice date if no due date is set |
+| Variable | Quotation | Sales order | Sales invoice | POS receipt |
+|---|---|---|---|---|
+| `{{1}}` | Customer name | Customer name | Customer name | Customer name |
+| `{{2}}` | Quotation number | Sales order number | Invoice number | Invoice number of the sale |
+| `{{3}}` | Total with currency | Order total with currency | Invoice total with currency | Sale total with currency |
+| `{{4}}` | Valid-until date | Expected delivery date, or "to be confirmed" | Due date, or the invoice date if no due date is set | Sale date |
 
-> ⚠️ **Each template must have exactly these four variables, in this order.** You can change the wording around them, but adding, removing or reordering variables needs a code change: `QuotationController.quotationTemplateParams`, `SalesOrderController.orderTemplateParams` or `SalesInvoiceController.invoiceTemplateParams`.
+The POS receipt template is optional and has **no default name** in WhatsApp Settings. While it is blank, the till's Share Receipt → WhatsApp sends a link to the receipt page (`/d/<token>`) from the cashier's own WhatsApp instead. With it set, the till attaches the same receipt PDF it emails, named `POS_Receipt_<number>.pdf`.
+
+> ⚠️ **Each template must have exactly these four variables, in this order.** You can change the wording around them, but adding, removing or reordering variables needs a code change: `QuotationController.quotationTemplateParams`, `SalesOrderController.orderTemplateParams`, `SalesInvoiceController.invoiceTemplateParams` or `SalesInvoiceController.receiptTemplateParams`.
 > Keep the text purely transactional. If it contains offers or promotional wording, Meta may move it to the more expensive **Marketing** category.
 > You can use different template names. Just enter them in WhatsApp Settings.
 
@@ -202,23 +205,24 @@ Meta ──► POST /api/whatsapp/webhook  (X-Hub-Signature-256 HMAC with App Se
 | GET / PUT | `/api/settings/whatsapp-config` | `userManagement` view / edit (secrets always masked) |
 | POST | `/api/settings/whatsapp-config/test` | `userManagement` edit |
 | GET | `/api/whatsapp/status` | any signed-in user (`enabled`, `configured`, `defaultCountryCode`, `templates` per document) |
-| GET | `/api/whatsapp/messages?documentType=QUOTATION\|SALES_ORDER\|SALES_INVOICE&documentId=` | view on that document's module |
+| GET | `/api/whatsapp/messages?documentType=QUOTATION\|SALES_ORDER\|SALES_INVOICE\|POS_RECEIPT&documentId=` | view on that document's module |
 | POST | `/api/sales/quotations/{id}/send-whatsapp` | `sales.quotation` view (same as send-email) |
 | POST | `/api/sales/sales-orders/{id}/send-whatsapp` | `sales.order` view (`toPhone` required; the order stores no phone) |
 | POST | `/api/sales/invoices/{id}/send-whatsapp` | `sales.invoice` view |
+| POST | `/api/sales/invoices/{id}/send-whatsapp-receipt` | `sales.invoice` view (POS till, "POS Receipt" template; same rule as the till's Email Receipt) |
 | GET / POST | `/api/whatsapp/webhook` | **public**, protected by the verify token (GET) and HMAC signature (POST; rejected when no App Secret is set) |
 
 ### Files
 - Backend `settings/whatsapp/`: `WhatsAppDocumentType`, `WhatsAppTemplateParams`, `WhatsAppConfig`, `WhatsAppConfigService`, `WhatsAppConfigController`, `WhatsAppCloudApiClient`, `DocumentWhatsAppSender`, `WhatsAppMessageLog`, `WhatsAppMessageStatus`, `WhatsAppWebhookService`, `WhatsAppController`, `PhoneNumberNormalizer`, `WhatsAppApiException`
 - Backend changes: `send-whatsapp` endpoints and template-parameter builders in `QuotationController`, `SalesOrderController` and `SalesInvoiceController`; `SecurityConfig` (webhook allowed without sign-in)
-- Frontend: `api/whatsappApi.js`, `components/whatsapp/useWhatsAppDocumentSend.jsx` (shared send window and fallback), `pages/Settings/WhatsAppSettings.jsx` (route `/settings/whatsapp`, sidebar under Settings), and the WhatsApp buttons in `pages/Sales/Quotations.jsx`, `SalesOrders.jsx` and `SalesInvoice.jsx`
+- Frontend: `api/whatsappApi.js` (settings calls; re-exports the shared send calls), `components/whatsapp/useWhatsAppDocumentSend.jsx` (Retail entry point); in `packages/shared`: `api/whatsappSendApi.js`, `components/whatsapp/WhatsAppApiSendDialog.jsx` (the Send with PDF window), `components/whatsapp/WhatsAppLinkShareDialog.jsx` (the link flow) and `components/pos/ReceiptShareModal.jsx` (POS Share Receipt → WhatsApp), `pages/Settings/WhatsAppSettings.jsx` (route `/settings/whatsapp`, sidebar under Settings), and the WhatsApp buttons in `pages/Sales/Quotations.jsx`, `SalesOrders.jsx` and `SalesInvoice.jsx`
 - Tests: `PhoneNumberNormalizerTest`, `DocumentWhatsAppSenderTest`, `WhatsAppConfigServiceTest`, `WhatsAppWebhookServiceTest`, `WhatsAppCloudApiClientTest`, `QuotationWhatsAppParamsTest`, `SalesOrderWhatsAppParamsTest`, `SalesInvoiceWhatsAppParamsTest`; frontend `components/whatsapp/whatsapp.test.js`
 
 ### Adding another document (proforma, delivery note, statement)
 1. Get a template approved for it (Document header plus its own variables).
 2. Add a constant to `WhatsAppDocumentType` (its RBAC module, label and template getter), and a `…TemplateName` field to `WhatsAppConfig` with a new Flyway migration.
 3. Add a `send-whatsapp` endpoint on that document's controller that calls `DocumentWhatsAppSender.send(...)` with its parameters.
-4. Frontend: add its path to `SEND_PATHS` in `api/whatsappApi.js`, its wording to `buildWhatsAppMessage`, a field to `TEMPLATE_FIELDS` in WhatsApp Settings, and call `openWhatsApp({...})` from the page.
+4. Frontend: add its path to `SEND_PATHS` in `packages/shared/src/api/whatsappSendApi.js`, its wording to `buildWhatsAppMessage` (`packages/shared/src/utils/whatsappLinkMessages.js`), a field to `TEMPLATE_FIELDS` in WhatsApp Settings, and call `openWhatsApp({...})` from the page.
 
 ### Not built yet
 - Receiving customer replies (inbound messages) in BillBull. Replies arrive in the WhatsApp Business inbox or app.

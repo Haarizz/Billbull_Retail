@@ -74,6 +74,10 @@ public class WhatsAppConfig {
     @Column(name = "sales_invoice_template_name", length = 512)
     private String salesInvoiceTemplateName;
 
+    /** Template for POS receipts sent from the till (DOCUMENT header + 4 body variables). V147. */
+    @Column(name = "pos_receipt_template_name", length = 512)
+    private String posReceiptTemplateName;
+
     /** Template language code exactly as approved in Meta, e.g. "en", "en_US", "ar". */
     @Column(name = "template_language", length = 15)
     private String templateLanguage = "en";
@@ -119,6 +123,9 @@ public class WhatsAppConfig {
 
     public String getSalesInvoiceTemplateName() { return salesInvoiceTemplateName; }
     public void setSalesInvoiceTemplateName(String salesInvoiceTemplateName) { this.salesInvoiceTemplateName = salesInvoiceTemplateName; }
+
+    public String getPosReceiptTemplateName() { return posReceiptTemplateName; }
+    public void setPosReceiptTemplateName(String posReceiptTemplateName) { this.posReceiptTemplateName = posReceiptTemplateName; }
 
     public String getTemplateLanguage() { return templateLanguage; }
     public void setTemplateLanguage(String templateLanguage) { this.templateLanguage = templateLanguage; }

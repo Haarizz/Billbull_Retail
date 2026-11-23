@@ -81,5 +81,23 @@ public enum PosAuditAction {
     CASH_OVER_POSTED,
     /** The session-close journal did not post. The close stands; the accounting does not. */
     GL_POSTING_FAILED,
-    TERMINAL_DECOMMISSIONED
+    TERMINAL_DECOMMISSIONED,
+
+    // ── M3 offline MVP (pos.offline) ─────────────────────────────────────────────────
+    /** An administrator enrolled a till's offline signing key (public half only). */
+    OFFLINE_KEY_ENROLLED,
+    /** The server issued a signed offline authorisation lease to a till. */
+    OFFLINE_LEASE_ISSUED,
+    /** A lease ended with every record accounted for (signed close summary matched). */
+    OFFLINE_LEASE_CLOSED,
+    /** A supervisor abandoned a lease with records possibly outstanding; late ones are held. */
+    OFFLINE_LEASE_ABANDONED,
+    /** A signed offline sale was stored by the server. */
+    OFFLINE_SALE_RECEIVED,
+    /** A stored offline sale posted through the normal checkout pipeline. */
+    OFFLINE_SALE_POSTED,
+    /** A stored offline sale was held or blocked for supervisor review. */
+    OFFLINE_SALE_HELD,
+    /** An offline record was refused before storage (bad signature, wrong tenant/branch, ...). */
+    OFFLINE_SALE_REJECTED
 }

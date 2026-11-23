@@ -42,7 +42,7 @@ import { getAllCustomers } from '@billbull/shared/api/customerledgerApi';
 import { getSalesInvoiceById } from '@billbull/shared/api/salesInvoiceApi';
 import { receiptVoucherApi, sendReceiptVoucherEmail } from '@billbull/shared/api/receiptVoucherApi';
 // QA-040: shared email modal
-import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
+import SendDocumentEmailModal from '@billbull/shared/components/SendDocumentEmailModal';
 import { buildReceiptVoucherPrintData } from '../../utils/purchasePrintUtils';
 import { generateDocFilename, generateReportFilename } from '@billbull/shared/utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';

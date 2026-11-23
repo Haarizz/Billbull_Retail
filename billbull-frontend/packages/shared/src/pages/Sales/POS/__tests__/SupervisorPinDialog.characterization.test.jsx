@@ -10,9 +10,19 @@ vi.mock('../../../../api/posApi', () => ({
   verifyPosSupervisorPin: vi.fn(),
   verifySupervisorAuth: vi.fn(),
   verifySessionClosurePermission: vi.fn(),
+  verifySupervisorPersonalPin: vi.fn(),
+  verifySessionClosurePermissionByPin: vi.fn(),
+  getPosPinApprovers: vi.fn(),
 }));
 
-import { verifyPosSupervisorPin, verifySessionClosurePermission, verifySupervisorAuth } from '../../../../api/posApi';
+import {
+  getPosPinApprovers,
+  verifyPosSupervisorPin,
+  verifySessionClosurePermission,
+  verifySessionClosurePermissionByPin,
+  verifySupervisorAuth,
+  verifySupervisorPersonalPin,
+} from '../../../../api/posApi';
 import { useSupervisorApproval } from '../features/approval/useSupervisorApproval';
 import SupervisorPinDialog from '../features/session/SupervisorPinDialog';
 
@@ -22,8 +32,11 @@ import SupervisorPinDialog from '../features/session/SupervisorPinDialog';
  *
  * OriginalSupervisorPinMarkup is the pre-extraction reference: its props are named exactly after the
  * POSSales identifiers the markup read, and the JSX between VERBATIM-START/END is the original
- * POSSales block. The "SupervisorPinDialog source" block enforces that the component body is that
- * same JSX, line for line, modulo the five handler renames.
+ * POSSales block. It is still the reference for every Branch PIN and Password state, with one
+ * deliberate change (2026-11-18): Force Close in Branch PIN mode used to dead-end (no username field,
+ * yet the pre-flight demanded one), and now renders the Password layout, which is exactly what the
+ * reference renders in PASSWORD mode. The Personal PIN mode (supervisor picker + own PIN) is new and
+ * has no reference; it is covered by its own tests in block 6.
  */
 function OriginalSupervisorPinMarkup({
   showSupervisorPin,
@@ -247,6 +260,8 @@ function ExtractedSupervisorPinWiring({
   setSupervisorPinValue,
   supervisorPinError,
   setSupervisorPinError,
+  supervisorApprover,
+  setSupervisorApprover,
   handleSupervisorPinSubmit,
   cancelApproval,
 }) {
@@ -270,6 +285,8 @@ function ExtractedSupervisorPinWiring({
           setSupervisorPinValue={setSupervisorPinValue}
           supervisorPinError={supervisorPinError}
           setSupervisorPinError={setSupervisorPinError}
+          supervisorApprover={supervisorApprover}
+          setSupervisorApprover={setSupervisorApprover}
           onSubmit={handleSupervisorPinSubmit}
           onCancel={cancelApproval}
         />
@@ -310,6 +327,8 @@ function propsFor(overrides = {}) {
     setSupervisorPinValue: noop,
     supervisorPinError: '',
     setSupervisorPinError: noop,
+    supervisorApprover: null,
+    setSupervisorApprover: noop,
     handleSupervisorPinSubmit: noop,
     cancelApproval: noop,
     ...overrides,
@@ -336,6 +355,12 @@ beforeEach(() => {
   verifyPosSupervisorPin.mockResolvedValue(true);
   verifySupervisorAuth.mockResolvedValue({ valid: true });
   verifySessionClosurePermission.mockResolvedValue({ authorized: true, authorizationToken: 'grant-1' });
+  verifySupervisorPersonalPin.mockResolvedValue({ valid: true });
+  verifySessionClosurePermissionByPin.mockResolvedValue({ authorized: true, authorizationToken: 'grant-pin' });
+  getPosPinApprovers.mockResolvedValue([
+    { employeeId: 5, name: 'Sam Lee', initials: 'SL', role: 'SUPERVISOR' },
+    { employeeId: 9, name: 'Mia Ray', initials: 'MR', role: 'MANAGER' },
+  ]);
 });
 
 afterEach(() => {
@@ -716,9 +741,11 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
     });
 
     it('switching the approval branch while open keeps the same input element (header text is not keyed)', () => {
+      // DAY_CLOSE rather than FORCE_CLOSE_SESSION: since 2026-11-18 Force Close in Branch PIN mode
+      // switches to the username + password layout on purpose, so it mounts different inputs.
       const { rerender } = renderMarkup();
       const input = pinInput();
-      rerender(<Subject {...propsFor({ pendingSupervisorAction: { type: 'FORCE_CLOSE_SESSION' }, sessionToClose: TARGET })} />);
+      rerender(<Subject {...propsFor({ pendingSupervisorAction: { type: 'DAY_CLOSE' } })} />);
       expect(pinInput()).toBe(input);
       expect(document.activeElement).toBe(input);
     });
@@ -812,7 +839,7 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
     });
 
     it('PIN mode has no Authorize button; ✓ is the only click submit', () => {
-      renderMarkup({ pendingSupervisorAction: { type: 'FORCE_CLOSE_SESSION' } });
+      renderMarkup({ pendingSupervisorAction: { type: 'DAY_CLOSE' } });
       expect(authorizeButton()).toBeNull();
     });
 
@@ -888,6 +915,7 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
       showSupervisorPin,
       supervisorPinValue, setSupervisorPinValue,
       supervisorPinEmail, setSupervisorPinEmail,
+      supervisorApprover, setSupervisorApprover,
       supervisorPinError, setSupervisorPinError,
       pendingPriceOverride,
       pendingLayawayAbortAction,
@@ -942,6 +970,8 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
         setSupervisorPinValue={setSupervisorPinValue}
         supervisorPinError={supervisorPinError}
         setSupervisorPinError={setSupervisorPinError}
+        supervisorApprover={supervisorApprover}
+        setSupervisorApprover={setSupervisorApprover}
         handleSupervisorPinSubmit={handleSupervisorPinSubmit}
         cancelApproval={cancelApproval}
       />
@@ -966,6 +996,13 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
     return { promise, resolve };
   };
   const tap = async (...keys) => { for (const k of keys) await act(async () => { fireEvent.click(keyButton(k)); }); };
+  // The reference markup is the pre-2026-11-18 dialog; only the extracted one has the fixes and Personal PIN.
+  const extracted = Subject === ExtractedSupervisorPinWiring;
+  const itExtracted = extracted ? it : it.skip;
+  const pickApprover = async (name) => {
+    const button = await screen.findByRole('button', { name: new RegExp(name) });
+    await act(async () => { fireEvent.click(button); });
+  };
 
   describe('6. approval queue semantics (real hook)', () => {
     it('the dialog only reads the queue: opening via requestApproval, keypad entry and ✓ drain the void slot', async () => {
@@ -1048,7 +1085,14 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
       expect(headerText()).toBe('Authorize force closure of this session.');
       expect(reasonSelect()).not.toBeNull();
       expect(overlay().textContent).toContain('Target Session');
-      await tap('1', '✓');
+      if (extracted) {
+        // The force-close body now asks for username + password even in Branch PIN mode.
+        expect(emailInput()).not.toBeNull();
+        fireEvent.change(pinInput(), { target: { value: '1' } });
+        await act(async () => { fireEvent.keyDown(pinInput(), { key: 'Enter' }); });
+      } else {
+        await tap('1', '✓');
+      }
       expect(errorLine().textContent).toBe('Enter supervisor email/username and password.');
       expect(verifyPosSupervisorPin).not.toHaveBeenCalled();
       expect(spies.applyVoid).not.toHaveBeenCalled();
@@ -1084,7 +1128,8 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
       expect(spies.unlockAdvancedRange).toHaveBeenCalledTimes(1);
     });
 
-    it('CHARACTERIZED: FORCE_CLOSE_SESSION in PIN mode can never succeed — no email field, the pre-flight demands one', async () => {
+    // The reference dialog is kept as it was: Force Close in PIN mode could never succeed there.
+    (extracted ? it.skip : it)('CHARACTERIZED (reference only): FORCE_CLOSE_SESSION in PIN mode could never succeed — no email field, the pre-flight demands one', async () => {
       const { hook } = renderHarness({ initialSessionToClose: TARGET });
       act(() => { hook().requestApproval({ supervisorAction: { type: 'FORCE_CLOSE_SESSION' }, resetEmail: true }); });
       expect(emailInput()).toBeNull();
@@ -1093,6 +1138,79 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
       await tap('1', '2', '✓');
       expect(errorLine().textContent).toBe('Enter supervisor email/username and password.');
       expect(verifySessionClosurePermission).not.toHaveBeenCalled();
+    });
+
+    itExtracted('FIXED: FORCE_CLOSE_SESSION in Branch PIN mode asks for the supervisor username + password and succeeds', async () => {
+      const { hook, spies, refs } = renderHarness({ initialSessionToClose: TARGET });
+      act(() => { hook().requestApproval({ supervisorAction: { type: 'FORCE_CLOSE_SESSION' }, resetEmail: true }); });
+      expect(emailInput()).not.toBeNull();
+      expect(keypad()).toBeNull();
+      expect(document.activeElement).toBe(emailInput());
+      fireEvent.change(emailInput(), { target: { value: 'm@shop.test' } });
+      fireEvent.change(pinInput(), { target: { value: 'pw' } });
+      fireEvent.change(reasonSelect(), { target: { value: 'Shift handover' } });
+      fireEvent.click(ackCheckbox());
+      expect(authorizeButton().textContent).toBe('Authorize Force Close');
+      await act(async () => { fireEvent.click(authorizeButton()); });
+      expect(verifySessionClosurePermission).toHaveBeenCalledWith(77, 'm@shop.test', 'pw');
+      expect(refs.forceCloseContextRef.current).toEqual({ sessionId: 77, reason: 'Shift handover', supervisor: 'm@shop.test' });
+      expect(spies.setCurrentView).toHaveBeenCalledWith('x-report');
+      expect(overlay()).toBeNull();
+    });
+
+    itExtracted('PERSONAL_PIN: pick the supervisor, enter their own PIN; the void is approved through supervisor-auth', async () => {
+      const { hook, spies } = renderHarness({ mode: 'PERSONAL_PIN' });
+      act(() => { hook().requestApproval({ voidItemId: 'line-9' }); });
+      expect(pinInput()).toBeNull(); // nothing to type until someone is chosen
+      await pickApprover('Sam Lee');
+      expect(overlay().textContent).toContain('Enter your POS PIN');
+      expect(keypad()).not.toBeNull();
+      await tap('2', '5', '8', '0', '✓');
+      expect(verifySupervisorPersonalPin).toHaveBeenCalledWith({ employeeId: 5, pin: '2580', terminalId: 'T-1', lockedBy: 'Aisha Khan' });
+      expect(verifyPosSupervisorPin).not.toHaveBeenCalled();
+      expect(spies.applyVoid).toHaveBeenCalledWith('line-9');
+      expect(hook().supervisorApprover).toBeNull();
+    });
+
+    itExtracted('PERSONAL_PIN: a wrong PIN shows the server reason and keeps the dialog open', async () => {
+      verifySupervisorPersonalPin.mockResolvedValueOnce({ valid: false, reason: 'Wrong PIN. Try again.' });
+      const { hook, spies } = renderHarness({ mode: 'PERSONAL_PIN' });
+      act(() => { hook().requestApproval({ voidItemId: 'line-9' }); });
+      await pickApprover('Mia Ray');
+      await tap('1', '3', '5', '7', '✓');
+      expect(errorLine().textContent).toBe('Wrong PIN. Try again.');
+      expect(spies.applyVoid).not.toHaveBeenCalled();
+      expect(overlay()).not.toBeNull();
+    });
+
+    itExtracted('PERSONAL_PIN: checkout continuation re-sends the PIN with the approver id for the server re-check', async () => {
+      const { hook, spies } = renderHarness({ mode: 'PERSONAL_PIN' });
+      act(() => { hook().requestApproval({ priceOverride: { type: 'CHECKOUT' }, resetEmail: true }); });
+      await pickApprover('Sam Lee');
+      await tap('2', '5', '8', '0', '✓');
+      expect(spies.processPayment).toHaveBeenCalledWith({ pin: '2580', employeeId: 5 });
+    });
+
+    itExtracted('PERSONAL_PIN: Force Close authorizes with the approver\'s own PIN and records their name', async () => {
+      const { hook, spies, refs } = renderHarness({ mode: 'PERSONAL_PIN', initialSessionToClose: TARGET });
+      act(() => { hook().requestApproval({ supervisorAction: { type: 'FORCE_CLOSE_SESSION' }, resetEmail: true }); });
+      expect(emailInput()).toBeNull();
+      fireEvent.change(reasonSelect(), { target: { value: 'Cashier unavailable' } });
+      fireEvent.click(ackCheckbox());
+      await pickApprover('Sam Lee');
+      await tap('2', '5', '8', '0', '✓');
+      expect(verifySessionClosurePermissionByPin).toHaveBeenCalledWith(77, 5, '2580');
+      expect(verifySessionClosurePermission).not.toHaveBeenCalled();
+      expect(refs.closureAuthGrantRef.current).toEqual({ sessionId: 77, token: 'grant-pin' });
+      expect(refs.forceCloseContextRef.current).toEqual({ sessionId: 77, reason: 'Cashier unavailable', supervisor: 'Sam Lee' });
+      expect(spies.setCurrentView).toHaveBeenCalledWith('x-report');
+    });
+
+    itExtracted('PERSONAL_PIN: no eligible supervisor explains where to set a PIN', async () => {
+      getPosPinApprovers.mockResolvedValueOnce([]);
+      const { hook } = renderHarness({ mode: 'PERSONAL_PIN' });
+      act(() => { hook().requestApproval({ voidItemId: 'line-9' }); });
+      expect(await screen.findByText(/No supervisor at this branch has a POS PIN/)).not.toBeNull();
     });
 
     it('PASSWORD force close: Authorize enables only after email, password, reason and acknowledgement; success writes the refs and closes', async () => {
@@ -1162,9 +1280,17 @@ describe('SupervisorPinDialog DOM parity', () => {
     ['force close with fallback target fields', { pendingSupervisorAction: FC, sessionToClose: { userId: 'u-1' } }],
   ];
 
+  // 2026-11-18: Force Close in Branch PIN mode now renders what the reference renders in PASSWORD
+  // mode (username + password + Authorize Force Close). Every other state is unchanged.
+  const referenceProps = (p) => (
+    p.pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION' && p.supervisorApprovalMode === 'PIN'
+      ? { ...p, supervisorApprovalMode: 'PASSWORD' }
+      : p
+  );
+
   it.each(STATES)('POSSales wiring renders document.body identical to the pre-extraction markup: %s', (_n, overrides) => {
     const props = propsFor(overrides);
-    expect(renderedBody(<ExtractedSupervisorPinWiring {...props} />)).toBe(renderedBody(<OriginalSupervisorPinMarkup {...props} />));
+    expect(renderedBody(<ExtractedSupervisorPinWiring {...props} />)).toBe(renderedBody(<OriginalSupervisorPinMarkup {...referenceProps(props)} />));
   });
 
   it.each(STATES.filter(([, o]) => o.showSupervisorPin !== false))('SupervisorPinDialog with its own prop names renders identically: %s', (_n, overrides) => {
@@ -1190,7 +1316,7 @@ describe('SupervisorPinDialog DOM parity', () => {
         onCancel={noop}
       />
     );
-    expect(renderedBody(direct)).toBe(renderedBody(<OriginalSupervisorPinMarkup {...p} />));
+    expect(renderedBody(direct)).toBe(renderedBody(<OriginalSupervisorPinMarkup {...referenceProps(p)} />));
   });
 });
 
@@ -1222,28 +1348,11 @@ const block = (src, startLine, endLine) => {
 const guardBlock = () => block(POS_SALES, '      {showSupervisorPin && (', '\n      )}');
 
 describe('SupervisorPinDialog source', () => {
-  it('the component body is the original JSX line for line, with only the five handler renames', () => {
-    const RENAMES = [
-      ['handleSupervisorPinSubmit()', 'onSubmit()'],
-      ['onClick={handleSupervisorPinSubmit}', 'onClick={onSubmit}'],
-      ['onClick={cancelApproval}', 'onClick={onCancel}'],
-    ];
-    const original = trimmedLines(between(SELF, '{/* VERBATIM-START */}\n', '      {/* VERBATIM-END */}'));
-    expect(original[0]).toBe('{showSupervisorPin && (');
-    expect(original[original.length - 1]).toBe(')}');
-    const counts = RENAMES.map(() => 0);
-    const expected = original.slice(1, -1).map((line) => RENAMES.reduce((acc, [from, to], i) => {
-      const n = acc.split(from).length - 1;
-      counts[i] += n;
-      return acc.split(from).join(to);
-    }, line));
-    expect(counts).toEqual([3, 1, 1]);
-    const live = between(COMPONENT, '  return (\n', '\n  );\n}');
-    expect(trimmedLines(live)).toEqual(expected);
-    expect(trimmedLines(live)).toHaveLength(164);
-  });
+  // The line-for-line source contract with the pre-extraction JSX was retired on 2026-11-18, when the
+  // dialog deliberately changed (Force Close in Branch PIN mode, Personal PIN picker). The rendered
+  // output is still pinned to the reference for every Branch PIN / Password state (DOM parity above).
 
-  it('has exactly the 17-prop surface and imports only React and the two existing icons', () => {
+  it('has exactly the 19-prop surface (two optional Personal PIN props) and only the expected imports', () => {
     expect(COMPONENT).toContain([
       'function SupervisorPinDialog({',
       '  pendingPriceOverride,',
@@ -1261,13 +1370,16 @@ describe('SupervisorPinDialog source', () => {
       '  setSupervisorPinValue,',
       '  supervisorPinError,',
       '  setSupervisorPinError,',
+      '  supervisorApprover = null,',
+      '  setSupervisorApprover = () => {},',
       '  onSubmit,',
       '  onCancel,',
       '}) {',
     ].join('\n'));
     expect(COMPONENT.match(/^import .*$/gm)).toEqual([
-      "import React from 'react';",
-      "import { AlertCircle, Shield } from 'lucide-react';",
+      "import React, { useEffect, useState } from 'react';",
+      "import { AlertCircle, Loader2, Shield } from 'lucide-react';",
+      "import { getPosPinApprovers } from '../../../../../api/posApi';",
     ]);
     expect(COMPONENT).toContain('export default SupervisorPinDialog;');
   });
@@ -1289,22 +1401,24 @@ describe('SupervisorPinDialog source', () => {
     expect(code).not.toMatch(/handleSupervisorPinSubmit|cancelApproval|showSupervisorPin/);
   });
 
-  it('has no hooks, memo, context, effects, refs, focus calls or queue writes; focus markers are unchanged', () => {
-    expect(COMPONENT).not.toMatch(/\buse[A-Z]\w*\(/);
-    expect(COMPONENT).not.toMatch(/\bmemo\b|createContext|useContext|useRef|useEffect|ref=\{|\.focus\(\)/);
+  it('its only hook is the Personal PIN approver list; no memo, context, refs, focus calls or queue writes', () => {
+    // useApprovers (useState + useEffect) loads the picker, and only in Personal PIN mode.
+    expect(COMPONENT.match(/\buse[A-Z]\w*\(/g)).toEqual(['useApprovers(', 'useState(', 'useEffect(', 'useApprovers(']);
+    expect(COMPONENT).toContain('const approvers = useApprovers(usesPersonalPin);');
+    expect(COMPONENT).not.toMatch(/\bmemo\b|createContext|useContext|useRef|ref=\{|\.focus\(\)/);
     expect(COMPONENT).not.toMatch(/setPending|requestApproval|requireLayawayApproval|submitSupervisorApproval|pendingVoidItemId|pendingUnlockAdvancedRange|setShowSupervisorPin/);
     expect(COMPONENT.match(/onMouseDown=\{e => e\.preventDefault\(\)\}/g)).toHaveLength(1);
     expect(COMPONENT.match(/autoFocus/g)).toHaveLength(2);
-    expect(COMPONENT).toContain('autoFocus={supervisorApprovalMode !== \'PASSWORD\'}');
+    expect(COMPONENT).toContain('autoFocus={!usesPassword}');
   });
 });
 
 describe('POSSales wiring (SupervisorPinDialog boundary)', () => {
-  it('the test copy of the guarded call site is line-for-line identical to POSSales, with all 17 props', () => {
+  it('the test copy of the guarded call site is line-for-line identical to POSSales, with all 19 props', () => {
     const copy = between(SELF, '{/* WIRING-START */}\n', '      {/* WIRING-END */}');
     expect(trimmedLines(guardBlock())).toEqual(trimmedLines(copy));
-    expect(trimmedLines(guardBlock())).toHaveLength(21);
-    expect(guardBlock().match(/^ {10}\w+=\{\w+\}$/gm)).toHaveLength(17);
+    expect(trimmedLines(guardBlock())).toHaveLength(23);
+    expect(guardBlock().match(/^ {10}\w+=\{\w+\}$/gm)).toHaveLength(19);
   });
 
   it('the test copy of handleSupervisorPinSubmit is identical to POSSales', () => {
@@ -1315,7 +1429,7 @@ describe('POSSales wiring (SupervisorPinDialog boundary)', () => {
 
   it('sits between the checkout-screen IIFE and CashDropDialog, behind its comment, with two blank lines after', () => {
     expect(POS_SALES).toMatch(
-      /\n {6}\}\)\(\)\}\n\n {6}\{\/\* Supervisor PIN Dialog \*\/\}\n {6}\{showSupervisorPin && \(\n {8}<SupervisorPinDialog\n(?: {10}\w+=\{\w+\}\n){17} {8}\/>\n {6}\)\}\n\n\n {6}\{\/\* Cash Drop\/Out Dialog \*\/\}\n {6}<CashDropDialog\n/,
+      /\n {6}\}\)\(\)\}\n\n {6}\{\/\* Supervisor PIN Dialog \*\/\}\n {6}\{showSupervisorPin && \(\n {8}<SupervisorPinDialog\n(?: {10}\w+=\{\w+\}\n){19} {8}\/>\n {6}\)\}\n\n\n {6}\{\/\* Cash Drop\/Out Dialog \*\/\}\n {6}<CashDropDialog\n/,
     );
     expect(POS_SALES.indexOf('{/* ─── CHECKOUT SCREEN — Full-screen two-column ─── */}')).toBeLessThan(POS_SALES.indexOf('{/* Supervisor PIN Dialog */}'));
   });
@@ -1341,12 +1455,13 @@ describe('POSSales wiring (SupervisorPinDialog boundary)', () => {
     expect(POS_SALES.match(/\bcancelApproval\b/g)).toHaveLength(2); // destructure + onCancel
   });
 
-  it('no approval state moved: the useSupervisorApproval destructure and the other owners are unchanged', () => {
+  it('no approval state moved: the useSupervisorApproval destructure (plus the Personal PIN approver) and the other owners are unchanged', () => {
     expect(POS_SALES).toContain([
       '  const {',
       '    showSupervisorPin,',
       '    supervisorPinValue, setSupervisorPinValue,',
       '    supervisorPinEmail, setSupervisorPinEmail,',
+      '    supervisorApprover, setSupervisorApprover,',
       '    supervisorPinError, setSupervisorPinError,',
       '    pendingVoidItemId,',
       '    pendingPriceOverride,',
@@ -1359,7 +1474,7 @@ describe('POSSales wiring (SupervisorPinDialog boundary)', () => {
       '  } = useSupervisorApproval();',
     ].join('\n'));
     expect(POS_SALES.match(/useSupervisorApproval\(\)/g)).toHaveLength(1);
-    expect(POS_SALES).toContain("  const supervisorApprovalMode = posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN';");
+    expect(POS_SALES).toContain('  const supervisorApprovalMode = normalizeApprovalMode(posSettings?.supervisorApprovalMode);');
     expect(POS_SALES).toContain('  const [sessionToClose, setSessionToClose] = useState(null);');
     expect(POS_SALES).toContain('    forceCloseReason, setForceCloseReason,\n    forceCloseAuditAcknowledged, setForceCloseAuditAcknowledged,\n');
   });

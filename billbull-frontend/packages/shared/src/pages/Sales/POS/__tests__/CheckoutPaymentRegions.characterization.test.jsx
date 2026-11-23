@@ -497,6 +497,8 @@ const PREVIEW_CALL = [
   '                checkoutA4Html={checkoutA4Html}',
   '                checkoutA4BlobUrl={checkoutA4BlobUrl}',
   '                checkoutPreviewBlobUrl={checkoutPreviewBlobUrl}',
+  '                thermalPaperSize={checkoutSheetPreview.thermalPaper}',
+  '                sheetPageSize={checkoutSheetPreview.pageSize}',
   '              />',
 ].join('\n');
 /** The live R3: the LEFT comment, the unchanged outer column opener, the call, the unchanged close. */
@@ -554,9 +556,9 @@ const PARENT_LOCALS = [
 const readsOf = (src) => PARENT_LOCALS.filter((id) => new RegExp(`\\b${id}\\b`).test(src));
 
 describe('source — verbatim copies are the live POSSales regions', () => {
-  it('R3 preview column: byte for byte (24 lines; 12 live now that the inner content is CheckoutPaymentPreview), immediately after the z-[60] root opens', () => {
+  it('R3 preview column: byte for byte (24 lines; 14 live now that the inner content is CheckoutPaymentPreview with its paper props), immediately after the z-[60] root opens', () => {
     expect(PREVIEW().split('\n')).toHaveLength(24);
-    expect(LIVE_PREVIEW().split('\n')).toHaveLength(12);
+    expect(LIVE_PREVIEW().split('\n')).toHaveLength(14);
     expect(count(POS_SALES, PREVIEW())).toBe(0);
     expect(count(POS_SALES, LIVE_PREVIEW())).toBe(1);
     expect(PAYMENT_PHASE).toContain(`          <div className="fixed inset-0 z-[60] flex flex-col lg:flex-row bg-[#1a1f2e]">\n\n${LIVE_PREVIEW()}\n\n            {/* ══ RIGHT: Payment & Settlement ═══════════════════════ */}\n`);
@@ -584,7 +586,7 @@ describe('source — verbatim copies are the live POSSales regions', () => {
     const idx = order.map((n) => right.indexOf(n));
     expect(idx.every((v) => v >= 0)).toBe(true);
     expect([...idx].sort((a, b) => a - b)).toEqual(idx);
-    expect(right.endsWith('                onSettle={() => processPayment()}\n              />\n\n            </div>')).toBe(true);
+    expect(right.endsWith('                onSettle={() => processPayment()}\n                onDismissError={() => setCheckoutError(null)}\n              />\n\n            </div>')).toBe(true);
   });
 });
 
@@ -644,8 +646,8 @@ describe('source — closures, ownership and lifecycle per region', () => {
       '\n        checkoutPreviewFreezeRef.current = html;\n',
       '\n      checkoutPreviewFreezeRef.current = html;\n',
       '  const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);\n',
-      '  const showA4CheckoutPreview = false;\n',
-      "    if (checkoutSettling) return checkoutPreviewFreezeRef.current || '';\n",
+      '  const showA4CheckoutPreview = checkoutSheetPreview.isSheet;\n',
+      '    settling: checkoutSettling,\n',
       '  const checkoutA4BlobUrl = useA4BlobUrl(checkoutA4Html);\n',
       '    previewFreeze: { checkoutSettling, setCheckoutSettling, checkoutPreviewFreezeRef },\n',
     ]) {
@@ -661,8 +663,8 @@ describe('source — closures, ownership and lifecycle per region', () => {
     const thermalDeps = between(POS_SALES, '\n      checkoutPreviewFreezeRef.current = html;\n', '  const checkoutPreviewBlobUrl');
     expect(thermalDeps).toContain('}, [checkoutSettling, currentInvoice,');
     expect(thermalDeps).not.toContain('checkoutRemarks');
-    const a4 = between(POS_SALES, '  const checkoutA4Html = useMemo(() => {', '  const checkoutA4BlobUrl');
-    expect(a4).not.toContain('checkoutRemarks');
+    const sheet = between(POS_SALES, '  const checkoutSheetPreview = useCheckoutSheetPreview({', '  const checkoutA4BlobUrl');
+    expect(sheet).not.toContain('checkoutRemarks');
   });
 
   it('the payment branch has no hooks, keys or refs of its own; the root and left column are raw unkeyed <div>s', () => {

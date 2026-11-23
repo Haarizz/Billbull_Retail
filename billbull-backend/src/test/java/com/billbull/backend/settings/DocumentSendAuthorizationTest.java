@@ -201,6 +201,7 @@ class DocumentSendAuthorizationTest {
         requests.put("/api/sales/quotations/1/send-whatsapp", whatsApp);
         requests.put("/api/sales/sales-orders/2/send-whatsapp", whatsApp);
         requests.put("/api/sales/invoices/3/send-whatsapp", whatsApp);
+        requests.put("/api/sales/invoices/3/send-whatsapp-receipt", whatsApp);
         for (Map.Entry<String, String> request : requests.entrySet()) {
             mvc.perform(post(request.getKey().replace("#pos", ""))
                             .contentType(MediaType.APPLICATION_JSON)
@@ -248,6 +249,7 @@ class DocumentSendAuthorizationTest {
         assertSame(hidden, assertThrows(ResponseStatusException.class, () -> salesOrders.sendEmail(2L, EMAIL_BODY)));
         assertSame(hidden, assertThrows(ResponseStatusException.class, () -> deliveryNotes.sendEmail(4L, EMAIL_BODY)));
         assertSame(hidden, assertThrows(ResponseStatusException.class, () -> invoices.sendWhatsApp(3L, WHATSAPP_BODY)));
+        assertSame(hidden, assertThrows(ResponseStatusException.class, () -> invoices.sendWhatsAppReceipt(3L, WHATSAPP_BODY)));
 
         verifyNoInteractions(emailConfigService, mailSender, pdfService, whatsAppConfigService, graphClient);
     }
@@ -302,8 +304,12 @@ class DocumentSendAuthorizationTest {
         assertOk(quotations.sendWhatsApp(1L, WHATSAPP_BODY));
         assertOk(salesOrders.sendWhatsApp(2L, WHATSAPP_BODY));
         assertOk(invoices.sendWhatsApp(3L, WHATSAPP_BODY));
+        assertOk(invoices.sendWhatsAppReceipt(3L, WHATSAPP_BODY));
 
-        verify(graphClient, times(3)).sendDocumentTemplate(any(), any(), any(), any(), any(), any());
+        verify(graphClient, times(4)).sendDocumentTemplate(any(), any(), any(), any(), any(), any());
+        // The till's receipt goes out with the POS Receipt template and a receipt file name.
+        verify(whatsAppConfigService).requireReady(com.billbull.backend.settings.whatsapp.WhatsAppDocumentType.POS_RECEIPT);
+        verify(graphClient).uploadMedia(any(), any(), org.mockito.ArgumentMatchers.startsWith("POS_Receipt_"), any());
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────────────
@@ -322,6 +328,7 @@ class DocumentSendAuthorizationTest {
         endpoints.put("quotation WhatsApp", () -> quotations.sendWhatsApp(1L, WHATSAPP_BODY));
         endpoints.put("sales order WhatsApp", () -> salesOrders.sendWhatsApp(2L, WHATSAPP_BODY));
         endpoints.put("sales invoice WhatsApp", () -> invoices.sendWhatsApp(3L, WHATSAPP_BODY));
+        endpoints.put("POS receipt WhatsApp", () -> invoices.sendWhatsAppReceipt(3L, WHATSAPP_BODY));
         return endpoints;
     }
 

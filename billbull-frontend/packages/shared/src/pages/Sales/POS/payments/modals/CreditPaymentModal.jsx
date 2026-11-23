@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Banknote, CheckCircle2, CreditCard, Info, Landmark, Loader2, Plus, Search, Users,
+  Banknote, CalendarClock, CheckCircle2, CreditCard, Info, Landmark, Loader2, Plus, Search, Users,
 } from 'lucide-react';
 
 import { AMOUNT_TOLERANCE, PAYMENT_TYPES, toAmount } from '../paymentModel';
 import { allocationTarget } from '../paymentSelectors';
+import { BNPL_PROVIDERS, generateBnplReference } from '../bnplProviders';
 import { DirhamSymbol } from '../../POSCurrency';
 import { PaymentModalFrame } from './PaymentModalShell';
 import { createCustomer } from '../../../../../api/customerledgerApi';
@@ -16,6 +17,7 @@ const MODES = [
   { type: PAYMENT_TYPES.CASH, label: 'Cash', icon: Banknote },
   { type: PAYMENT_TYPES.CARD, label: 'Card', icon: CreditCard },
   { type: PAYMENT_TYPES.ONLINE, label: 'Online Transfer', icon: Landmark },
+  { type: PAYMENT_TYPES.BNPL, label: 'BNPL', icon: CalendarClock },
 ];
 
 const CARD_BRANDS = ['Visa', 'Mastercard', 'Amex', 'JCB', 'Apple Pay', 'Google Pay', 'Samsung Pay', 'Other'];
@@ -340,6 +342,10 @@ function ConfirmStep({
   const [cardBankId, setCardBankId] = useState('');
   const [reference, setReference] = useState('');
   const [onlineBankId, setOnlineBankId] = useState('');
+  const [bnplProviderId, setBnplProviderId] = useState('');
+  // Pre-filled like the BNPL tender's own dialog; the cashier overwrites it with the approval
+  // reference from the provider's merchant app.
+  const [bnplReference, setBnplReference] = useState(() => generateBnplReference());
   const [remarks, setRemarks] = useState(editingLine?.metadata?.remarks || '');
 
   useEffect(() => { dialogRef.current?.focus(); }, []);
@@ -360,6 +366,8 @@ function ConfirmStep({
     if (!mode) return 'Select how the received amount was paid.';
     if (mode === PAYMENT_TYPES.CARD && !cardBrand) return 'Select a card type.';
     if (mode === PAYMENT_TYPES.ONLINE && !onlineBankId) return 'Select the receiving bank account.';
+    if (mode === PAYMENT_TYPES.BNPL && !bnplProviderId) return 'Select a BNPL provider.';
+    if (mode === PAYMENT_TYPES.BNPL && !bnplReference.trim()) return 'Enter the provider approval reference.';
     return null;
   })();
 
@@ -389,6 +397,23 @@ function ConfirmStep({
           reference: reference.trim() || null,
           bankAccountId: acc ? cardBankId : null,
           bankAccountName: bankLabel(acc),
+        });
+      } else if (mode === PAYMENT_TYPES.BNPL) {
+        const provider = BNPL_PROVIDERS.find((p) => p.id === bnplProviderId);
+        // Same shape the BNPL tender dialog commits, so the leg reports and settles as BNPL
+        // and never touches the customer's A/R.
+        drafts.push({
+          ...base,
+          paymentType: PAYMENT_TYPES.BNPL,
+          paymentSubtype: provider?.name || null,
+          reference: bnplReference.trim(),
+          customerCode: selected.code || selected.id,
+          customerName: selected.name,
+          metadata: {
+            ...base.metadata,
+            bnplProviderId: provider?.id || null,
+            bnplCustomerMobile: customerPhone(selected) || null,
+          },
         });
       } else {
         const acc = bankOption(onlineBankId);
@@ -521,7 +546,7 @@ function ConfirmStep({
           {receivedAmount > 0 && (
             <div className="mt-3 space-y-2.5">
               <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Payment Mode</p>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-4 gap-2">
                 {MODES.map(({ type, label, icon: Icon }) => (
                   <button key={type} type="button" onClick={() => setMode(type)}
                     className={`flex flex-col items-center gap-1 rounded-xl border-2 py-2.5 text-[11px] font-bold transition-all ${
@@ -557,6 +582,24 @@ function ConfirmStep({
                     accounts={bankAccounts} loading={bankAccountsLoading} placeholder="— Select receiving account —" />
                   <ReferenceInput value={reference} onChange={setReference} placeholder="e.g. WIRE-2024-001" />
                 </>
+              )}
+
+              {mode === PAYMENT_TYPES.BNPL && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-gray-400">BNPL Provider</label>
+                    <select value={bnplProviderId} onChange={(e) => setBnplProviderId(e.target.value)} className={SELECT_CLASS}>
+                      <option value="">— Select —</option>
+                      {BNPL_PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-gray-400">Approval Reference</label>
+                    <input type="text" autoComplete="off" value={bnplReference} placeholder="e.g. BNPL-12345678"
+                      onChange={(e) => setBnplReference(e.target.value)}
+                      className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm outline-none focus:border-[#9333ea]" />
+                  </div>
+                </div>
               )}
             </div>
           )}

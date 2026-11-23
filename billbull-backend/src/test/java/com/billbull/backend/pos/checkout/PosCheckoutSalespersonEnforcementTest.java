@@ -97,6 +97,8 @@ class PosCheckoutSalespersonEnforcementTest {
 
     // Till permission (sales.pos) check on every till endpoint; a bare mock grants it.
     @Mock private com.billbull.backend.security.ModulePermissionService modulePermissionService;
+    /** Phase 0 / M1: the session guard resolves the branch the invoice will be stamped with. */
+    @Mock private com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
     @InjectMocks private PosCheckoutController controller;
 
     private AutoCloseable mocks;
@@ -105,6 +107,7 @@ class PosCheckoutSalespersonEnforcementTest {
     @BeforeEach
     void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
+        PosCheckoutTillFixture.stubOpenTill(sessionService, branchAccessService);
         org.springframework.test.util.ReflectionTestUtils.setField(
                 salespersonService, "employeeRepository", employeeRepository);
         org.springframework.test.util.ReflectionTestUtils.setField(controller, "deliverySettlementService",
@@ -148,7 +151,7 @@ class PosCheckoutSalespersonEnforcementTest {
     }
 
     private static PosCheckoutRequest cashRequest() {
-        PosCheckoutRequest req = new PosCheckoutRequest();
+        PosCheckoutRequest req = PosCheckoutTillFixture.tillRequest();
         req.setPaymentMode("Cash");
         req.setAmountTendered(100.0);
         PosCheckoutRequest.PosCheckoutItem item = new PosCheckoutRequest.PosCheckoutItem();

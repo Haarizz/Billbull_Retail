@@ -244,6 +244,30 @@ public class EmployeeController {
         return ResponseEntity.ok(service.createEmployee(request, avatar));
     }
 
+    /**
+     * Live check for the HR form's POS PIN field. Says only whether the PIN is free — never
+     * which employee holds it — and is limited to people who may create or edit employees,
+     * the same people who could set that PIN anyway. Save enforces the same rule.
+     */
+    @PostMapping("/pos-pin/check")
+    public Map<String, Object> checkPosPin(@RequestBody Map<String, Object> body) {
+        if (!modulePermissionService.canCreate("hr.employee") && !modulePermissionService.canEdit("hr.employee")) {
+            throw new AccessDeniedException("Not allowed to manage employees.");
+        }
+        String pin = body.get("pin") != null ? body.get("pin").toString().trim() : "";
+        Long employeeId = null;
+        if (body.get("employeeId") != null && !body.get("employeeId").toString().isBlank()) {
+            employeeId = Long.valueOf(body.get("employeeId").toString());
+        }
+        if (!pin.matches("\\d{4,6}")) {
+            return Map.of("available", false, "message", "PIN must be 4–6 digits");
+        }
+        boolean inUse = service.isPosPinInUse(pin, employeeId);
+        return inUse
+                ? Map.of("available", false, "message", "PIN already in use — choose another")
+                : Map.of("available", true);
+    }
+
     // ── VERTICAL: canEdit('hr') ──────────────────────────────────────────────
 
     @PutMapping("/{id}")

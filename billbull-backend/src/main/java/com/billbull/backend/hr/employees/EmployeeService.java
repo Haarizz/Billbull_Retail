@@ -28,6 +28,12 @@ public interface EmployeeService {
     // ===== CREATE / UPDATE =====
     Employee createEmployee(EmployeeUpsertRequest request, MultipartFile avatar);
 
+    /**
+     * Whether another employee (not {@code excludeEmployeeId}) already has this till PIN.
+     * PINs are stored only as BCrypt hashes, so this compares against each stored hash.
+     */
+    boolean isPosPinInUse(String pin, Long excludeEmployeeId);
+
     Employee updateEmployee(Long id, EmployeeUpsertRequest request, MultipartFile avatar);
 
     // ===== STATUS =====

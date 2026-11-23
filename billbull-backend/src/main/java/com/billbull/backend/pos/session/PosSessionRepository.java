@@ -40,6 +40,18 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
     @org.springframework.data.jpa.repository.Query("SELECT s FROM PosSession s WHERE s.id = :id")
     Optional<PosSession> findByIdForUpdate(@org.springframework.data.repository.query.Param("id") Long id);
 
+    /**
+     * Phase 0 / M2.1: sets {@code lock_timeout} for the rest of the current transaction only
+     * ({@code set_config(..., is_local => true)} is {@code SET LOCAL}), so a bounded session-lock
+     * wait can never leak into a pooled connection. Returns the value now in force.
+     */
+    @Query(value = "select set_config('lock_timeout', :value, true)", nativeQuery = true)
+    String setLocalLockTimeout(@Param("value") String value);
+
+    /** The {@code lock_timeout} currently in force for this connection/transaction. */
+    @Query(value = "select current_setting('lock_timeout')", nativeQuery = true)
+    String currentLockTimeout();
+
     Optional<PosSession> findByTerminalPkAndStatus(Long terminalPk, PosSessionStatus status);
 
     // Most recent session regardless of status — used by the Terminal Auto-Archive lifecycle

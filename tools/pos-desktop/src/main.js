@@ -4,8 +4,9 @@ const path = require('node:path');
 const { app, BrowserWindow, Menu, dialog, ipcMain, net, session, shell } = require('electron');
 
 const { normalizeServerUrl, isInsecureRemote, posUrl, looksLikePosPage, describeNetError } = require('./serverUrl');
-const { classifyNavigation, classifyWindowOpen, isPermissionAllowed, isSignInRedirect } = require('./navigationPolicy');
+const { classifyNavigation, classifyWindowOpen, isOutsideTill, isPermissionAllowed, isSameOrigin, isSignInRedirect } = require('./navigationPolicy');
 const { createSettingsStore } = require('./settingsStore');
+const { createPrintPreview } = require('./printPreview');
 
 // BillBull POS desktop shell. It loads the tenant's own https://<server>/pos/ page, so the till
 // UI updates with every server deploy and keeps the same origin the print agent and backend
@@ -19,6 +20,7 @@ const ZOOM_STEPS = [0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 
 let settings;
 let mainWindow = null;
+let printPreview = null;
 
 app.enableSandbox();
 
@@ -54,6 +56,12 @@ function secureWebPreferences(extra = {}) {
 function start() {
   app.setAppUserModelId('com.billbull.pos');
   settings = createSettingsStore(app.getPath('userData'));
+  printPreview = createPrintPreview({
+    BrowserWindow,
+    tempRoot: app.getPath('temp'),
+    webPreferences: secureWebPreferences,
+    icon: path.join(__dirname, 'assets', 'icon.png'),
+  });
 
   lockDownSession(session.defaultSession);
   registerIpc();
@@ -157,7 +165,14 @@ function createMainWindow() {
   });
   // The server answered, but with an error (e.g. 502 while it restarts).
   wc.on('did-navigate', (_e, url, httpResponseCode) => {
-    if (httpResponseCode >= 500 && isTillPage(url)) showOffline(`The server returned HTTP ${httpResponseCode}`);
+    if (httpResponseCode >= 500 && isTillPage(url)) {
+      showOffline(`The server returned HTTP ${httpResponseCode}`);
+      return;
+    }
+    // A reload landed outside /pos/ (e.g. "/pos" without its slash) and the server answered with
+    // its "did you mean to visit /pos/?" notice or a 404. Go back to the till instead of leaving
+    // the cashier on that page. /pos/ itself is never "outside", so this cannot loop.
+    if (httpResponseCode >= 400 && isOutsideTill(url, currentOrigin())) openTill();
   });
 
   // The till may block closing/reloading while a sale is open (beforeunload). Electron would
@@ -273,6 +288,23 @@ function registerIpc() {
 
   handle('pos:retry', () => openTill());
   handle('pos:open-setup', () => showSetup());
+
+  // The till's only call into the app: show a print preview (Electron has none of its own).
+  ipcMain.handle('pos:print-preview', (event, html) => {
+    if (!fromTillPage(event)) throw new Error('Not allowed');
+    return printPreview.open(html, { baseUrl: event.senderFrame.url, parent: mainWindow });
+  });
+}
+
+function fromTillPage(event) {
+  const frame = event.senderFrame;
+  return Boolean(
+    mainWindow
+      && event.sender === mainWindow.webContents
+      && frame
+      && frame === event.sender.mainFrame
+      && isSameOrigin(frame.url, currentOrigin()),
+  );
 }
 
 async function checkServer(input) {
