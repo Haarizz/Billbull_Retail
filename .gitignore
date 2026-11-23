@@ -2,6 +2,7 @@
 # Spring Boot / Maven Backend
 # ===========================
 billbull-backend/target/
+billbull-platform/target/
 billbull-backend/*.log
 billbull-backend/client*.log
 billbull-backend/uploads/

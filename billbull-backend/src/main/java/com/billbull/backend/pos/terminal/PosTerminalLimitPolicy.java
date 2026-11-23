@@ -43,8 +43,25 @@ public class PosTerminalLimitPolicy {
         return override;
     }
 
-    /** Effective terminal cap for a branch, given its (possibly null/absent) stored settings. */
+    /** Plan limit from the control plane (setter-injected; the constructor stays as-is). */
+    private com.billbull.backend.platform.PlatformStateService platformState;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setPlatformStateService(com.billbull.backend.platform.PlatformStateService platformState) {
+        this.platformState = platformState;
+    }
+
+    /**
+     * Effective terminal cap for a branch, given its (possibly null/absent) stored settings. The
+     * control plane's {@code maxTerminalsPerBranch} plan limit, when set, is the entitlement and
+     * wins over both the property override and the stored row.
+     */
     public int resolveLimit(PosSettings settings) {
+        if (platformState != null) {
+            Integer planLimit = platformState.current()
+                    .limit(com.billbull.backend.platform.PlatformState.LIMIT_TERMINALS_PER_BRANCH);
+            if (planLimit != null) return Math.min(MAX_SUPPORTED, planLimit);
+        }
         if (override != null) return override;
         if (settings != null && settings.getMaxTerminalsPerBranch() != null) {
             return settings.getMaxTerminalsPerBranch();

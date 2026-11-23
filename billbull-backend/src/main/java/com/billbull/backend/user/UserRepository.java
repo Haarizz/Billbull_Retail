@@ -24,6 +24,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
      */
     boolean existsByUsernameAndIsActiveTrue(String username);
 
+    /** Active (unfrozen) accounts — what the control plane's maxUsers limit counts. */
+    long countByIsActiveTrue();
+
     Optional<User> findByEmailAndIsActiveTrue(String email);
 
     Optional<User> findByEmail(String email);

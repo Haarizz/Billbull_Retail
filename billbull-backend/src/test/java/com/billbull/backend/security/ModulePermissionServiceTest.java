@@ -214,6 +214,29 @@ class ModulePermissionServiceTest {
                 () -> service.requireCanApprove("purchases.payment"));
     }
 
+    @Test
+    void planEntitlementOverridesEveryRoleGrant() {
+        authenticateAs("ADMIN");
+        when(rolePermissionRepository.findByRole_NameIn(anyCollection()))
+                .thenReturn(List.of(permission("ADMIN", "pos", true, true),
+                        permission("ADMIN", "sales", true, true),
+                        permission("ADMIN", "finance", true, true)));
+        com.billbull.backend.platform.PlatformStateService platform =
+                org.mockito.Mockito.mock(com.billbull.backend.platform.PlatformStateService.class);
+        when(platform.current()).thenReturn(new com.billbull.backend.platform.PlatformState(true,
+                com.billbull.backend.platform.TenantLifecycleStatus.ACTIVE, null, "STARTER",
+                java.util.Map.of("pos", false), java.util.Map.of(), 1L, null, null));
+        service.setPlatformStateService(platform);
+
+        assertFalse(service.canView("pos"));
+        assertFalse(service.canView("pos.terminals"));
+        assertFalse(service.canView("sales.pos"), "the till key belongs to the POS module");
+        assertThrows(AccessDeniedException.class, () -> service.requireCanView("pos.sessions"));
+        assertTrue(service.canView("sales"));
+        assertTrue(service.canView("sales.invoice"));
+        assertTrue(service.canView("finance"));
+    }
+
     // ── Fixtures ────────────────────────────────────────────────────────────
 
     private void authenticateAs(String... roles) {

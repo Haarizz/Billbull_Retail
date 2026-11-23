@@ -1,5 +1,5 @@
 // Workspace boundary + export-map tooling for the Retail app (src/), the standalone POS app
-// (apps/pos/) and the shared package (packages/shared/).
+// (apps/pos/), the platform control-plane app (apps/admin/) and the shared package (packages/shared/).
 //
 // Rules (see docs/standalone-pos/ARCHITECTURE.md):
 //   - A relative import never crosses a zone: Retail, POS and shared each import their own
@@ -8,6 +8,8 @@
 //     be listed in packages/shared/package.json "exports".
 //   - Shared never imports `@billbull/shared` (itself) or `@billbull/pos`, and nothing imports
 //     `@billbull/pos`.
+//   - The control-plane app (apps/admin, admin.billbull.app) is independent of tenant code: it
+//     never imports `@billbull/shared`, and nothing imports `@billbull/admin`.
 //
 // CLI:  node scripts/workspaceBoundaries.mjs            → report violations, exit 1 if any
 //       node scripts/workspaceBoundaries.mjs --write    → regenerate the shared export map
@@ -18,10 +20,12 @@ import { fileURLToPath } from 'node:url';
 export const FRONTEND_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const SHARED_PACKAGE = '@billbull/shared';
 const POS_PACKAGE = '@billbull/pos';
+const ADMIN_PACKAGE = '@billbull/admin';
 
 const ZONES = [
   { name: 'shared', dir: 'packages/shared/src' },
   { name: 'pos', dir: 'apps/pos' }, // the app's own vite.config.js belongs to it too (dist/ is skipped)
+  { name: 'admin', dir: 'apps/admin' },
   { name: 'retail', dir: 'src' },
 ];
 const CODE = /\.(js|jsx|ts|tsx|mjs|cjs)$/;
@@ -127,6 +131,13 @@ export function checkSpecifier({ file, where, zone, spec, exportsMap, root = FRO
   }
   if (spec === POS_PACKAGE || spec.startsWith(POS_PACKAGE + '/')) {
     v.push(`${where}: nothing may import the POS app ("${spec}")`);
+  }
+  if (spec === ADMIN_PACKAGE || spec.startsWith(ADMIN_PACKAGE + '/')) {
+    v.push(`${where}: nothing may import the control-plane app ("${spec}")`);
+  }
+  if (zone === 'admin' && (spec === SHARED_PACKAGE || spec.startsWith(SHARED_PACKAGE + '/'))) {
+    v.push(`${where}: the control-plane app must not depend on tenant code ("${spec}")`);
+    return v;
   }
   if (spec === SHARED_PACKAGE || spec.startsWith(SHARED_PACKAGE + '/')) {
     if (zone === 'shared') v.push(`${where}: shared must import itself relatively, not via "${spec}"`);

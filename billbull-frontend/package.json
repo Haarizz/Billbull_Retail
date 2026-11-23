@@ -17,7 +17,10 @@
     "check:boundaries": "node scripts/workspaceBoundaries.mjs",
     "dev:pos": "vite --config apps/pos/vite.config.js",
     "build:pos": "vite build --config apps/pos/vite.config.js",
-    "preview:pos": "vite preview --config apps/pos/vite.config.js"
+    "preview:pos": "vite preview --config apps/pos/vite.config.js",
+    "dev:admin": "vite --config apps/admin/vite.config.js",
+    "build:admin": "vite build --config apps/admin/vite.config.js",
+    "preview:admin": "vite preview --config apps/admin/vite.config.js"
   },
   "dependencies": {
     "@billbull/shared": "0.0.0",

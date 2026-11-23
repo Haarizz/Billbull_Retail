@@ -28,6 +28,22 @@ public class ModulePermissionService {
         this.rolePermissionRepository = rolePermissionRepository;
     }
 
+    /** Plan entitlements from the control plane; setter-injected so constructor call sites stay. */
+    private com.billbull.backend.platform.PlatformStateService platformState;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setPlatformStateService(com.billbull.backend.platform.PlatformStateService platformState) {
+        this.platformState = platformState;
+    }
+
+    /** False when the tenant's plan excludes the optional module that owns {@code module}. */
+    private boolean entitled(String module) {
+        if (platformState == null) return true;
+        return com.billbull.backend.platform.PlatformModules.owningOptionalModule(module)
+                .map(m -> platformState.current().isModuleEnabled(m))
+                .orElse(true);
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Public check methods — throw AccessDeniedException on failure
     // ─────────────────────────────────────────────────────────────────────────
@@ -131,6 +147,8 @@ public class ModulePermissionService {
      *        #approvalIsInheritable(String)}.
      */
     private boolean hasPermission(String module, Function<RolePermission, Boolean> flag, boolean inheritable) {
+        // Plan entitlement comes before any role grant: no role can open a module the plan excludes.
+        if (!entitled(module)) return false;
         List<String> roleNames = getCurrentUserRoleNames();
         if (roleNames.isEmpty()) return false;
 

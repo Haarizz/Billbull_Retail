@@ -42,6 +42,23 @@ public class JwtFilter extends OncePerRequestFilter {
         this.ownershipAccessService = ownershipAccessService;
     }
 
+    /** Support sign-ins from the control plane; setter-injected so constructor call sites stay. */
+    private com.billbull.backend.platform.PlatformSupportService supportService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setSupportService(com.billbull.backend.platform.PlatformSupportService supportService) {
+        this.supportService = supportService;
+    }
+
+    /**
+     * The platform agent's API authenticates with its own HMAC signature
+     * ({@code PlatformAgentAuthFilter}); a tenant JWT must never authenticate there.
+     */
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return com.billbull.backend.platform.PlatformAgentAuthFilter.isPlatformPath(request);
+    }
+
     @Override
     protected void doFilterInternal(
             HttpServletRequest request,
@@ -66,6 +83,14 @@ public class JwtFilter extends OncePerRequestFilter {
                 // the filter never reads (roles/branches come from the JWT claims below).
                 boolean isActive = userRepository.existsByUsernameAndIsActiveTrue(username);
                 if (!isActive) {
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    return;
+                }
+
+                // A support sign-in ends the moment either side revokes its session, not at expiry.
+                Long supportSessionId = jwtUtil.extractSupportSessionId(token);
+                if (supportSessionId != null
+                        && (supportService == null || !supportService.isLive(supportSessionId))) {
                     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                     return;
                 }

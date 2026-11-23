@@ -1,0 +1,7 @@
+{
+  "name": "@billbull/admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "BillBull Platform Control Center, served at admin.billbull.app. Talks only to billbull-platform (/api/**), never to a tenant backend. Build and run it from billbull-frontend: npm run dev:admin / build:admin / preview:admin."
+}

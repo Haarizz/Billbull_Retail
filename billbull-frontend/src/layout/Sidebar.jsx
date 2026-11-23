@@ -289,6 +289,7 @@ const Sidebar = ({ children }) => {
         { path: "/settings/email",              label: "Email Settings",      module: "userManagement.setup", icon: <Mail size={14} /> },
         { path: "/settings/whatsapp",           label: "WhatsApp Settings",   module: "userManagement.setup", icon: <MessageCircle size={14} /> },
         { path: "/settings/document-numbering", label: "Document Numbering",  module: "userManagement.setup", icon: <Hash size={14} /> },
+        { path: "/settings/billbull-account",   label: "BillBull Account",    module: "userManagement.setup", icon: <ShieldCheck size={14} /> },
       ],
     },
     {

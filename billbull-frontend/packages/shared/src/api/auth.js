@@ -25,6 +25,10 @@ export const persistLoginSession = (data) => {
 // limit: surface the advised wait (Retry-After header or retryAfterSeconds in the body). The text
 // stays generic otherwise — the backend never reveals whether the username exists.
 export const describeLoginError = (err) => {
+  // 423: the account is suspended by BillBull (admin.billbull.app). Show its message as-is.
+  if (err?.response?.status === 423) {
+    return err.response.data?.message || "This BillBull account is suspended. Please contact BillBull support.";
+  }
   if (err?.response?.status === 429) {
     const waitSeconds =
       Number(err.response.headers?.["retry-after"]) ||

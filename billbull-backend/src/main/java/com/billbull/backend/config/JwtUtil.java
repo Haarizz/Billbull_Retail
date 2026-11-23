@@ -6,9 +6,11 @@ import java.util.Date;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import com.billbull.backend.platform.TenantIdentity;
 import com.billbull.backend.user.User;
 
 import io.jsonwebtoken.Claims;
@@ -27,6 +29,21 @@ public class JwtUtil {
     @Value("${jwt.expiration}")
     private long expiration;
 
+    /** Client code stamped into every token; see {@link #tenantMatches}. */
+    public static final String TENANT_CLAIM = "tid";
+    /** Support session id on control-plane support sign-ins; absent on ordinary tokens. */
+    public static final String SUPPORT_SESSION_CLAIM = "sst";
+
+    @Value("${billbull.jwt.require-tenant-claim:false}")
+    private boolean requireTenantClaim;
+
+    private TenantIdentity tenantIdentity;
+
+    @Autowired(required = false)
+    public void setTenantIdentity(TenantIdentity tenantIdentity) {
+        this.tenantIdentity = tenantIdentity;
+    }
+
     private Key getSigningKey() {
         return Keys.hmacShaKeyFor(secret.getBytes());
     }
@@ -41,6 +58,10 @@ public class JwtUtil {
      * Falls back to the user's primary branch if {@code activeBranchId} is null.
      */
     public String generateToken(User user, Long activeBranchId) {
+        return buildToken(user, activeBranchId, expiration, null);
+    }
+
+    private String buildToken(User user, Long activeBranchId, long ttlMillis, Long supportSessionId) {
 
         List<String> roles = user.getRoles()
                 .stream()
@@ -98,10 +119,43 @@ public class JwtUtil {
                 .claim("isAllBranches", isAllBranches)
                 .claim("defaultWarehouseId", defaultWarehouseId)
                 .claim("defaultWarehouseName", defaultWarehouseName)
+                .claim(TENANT_CLAIM, tenantCode())
+                .claim(SUPPORT_SESSION_CLAIM, supportSessionId)
                 .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + expiration))
+                .setExpiration(new Date(System.currentTimeMillis() + ttlMillis))
                 .signWith(getSigningKey(), SignatureAlgorithm.HS256)
                 .compact();
+    }
+
+    /**
+     * A support sign-in token for the control plane ({@code platform.PlatformSupportService}):
+     * the user's normal claims plus the support session id, valid for {@code ttl} only.
+     */
+    public String generateSupportToken(User user, long supportSessionId, java.time.Duration ttl) {
+        return buildToken(user, null, ttl.toMillis(), supportSessionId);
+    }
+
+    /** The support session this token was issued for, or {@code null} for an ordinary sign-in. */
+    public Long extractSupportSessionId(String token) {
+        Object raw = extractClaims(token).get(SUPPORT_SESSION_CLAIM);
+        return raw instanceof Number n ? n.longValue() : null;
+    }
+
+    private String tenantCode() {
+        return tenantIdentity != null ? tenantIdentity.code() : null;
+    }
+
+    /**
+     * A token issued by another client's backend is refused here, even when the two clients share a
+     * signing key: its {@code tid} names the other client. Tokens with no {@code tid} (issued before
+     * this check existed) are accepted until {@code billbull.jwt.require-tenant-claim=true}.
+     */
+    boolean tenantMatches(Claims claims) {
+        String expected = tenantCode();
+        if (expected == null) return true;
+        Object tid = claims.get(TENANT_CLAIM);
+        if (tid == null) return !requireTenantClaim;
+        return expected.equals(tid.toString());
     }
 
     public Claims extractClaims(String token) {
@@ -156,8 +210,7 @@ public class JwtUtil {
 
     public boolean isTokenValid(String token) {
         try {
-            extractClaims(token);
-            return true;
+            return tenantMatches(extractClaims(token));
         } catch (Exception e) {
             return false;
         }

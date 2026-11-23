@@ -27,6 +27,14 @@ public class BranchService {
     @Autowired(required = false)
     private AuditLogService auditLogService;
 
+    /** Plan limits from the control plane (setter-injected; constructor call sites unchanged). */
+    private com.billbull.backend.platform.PlatformStateService platformState;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setPlatformStateService(com.billbull.backend.platform.PlatformStateService platformState) {
+        this.platformState = platformState;
+    }
+
     public BranchService(BranchRepository repo, WarehouseRepository warehouseRepo) {
         this.repo = repo;
         this.warehouseRepo = warehouseRepo;
@@ -81,6 +89,10 @@ public class BranchService {
     public BranchResponse create(BranchRequest req) {
         validateName(req.getName());
         validateCode(req.getCode(), null);
+        if (platformState != null) {
+            platformState.assertWithinLimit(com.billbull.backend.platform.PlatformState.LIMIT_BRANCHES,
+                    repo.count(), "branches");
+        }
 
         Branch branch = new Branch();
         applyRequest(branch, req, true);

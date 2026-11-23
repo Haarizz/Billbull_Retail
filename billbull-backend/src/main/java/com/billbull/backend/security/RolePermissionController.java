@@ -24,6 +24,13 @@ public class RolePermissionController {
     private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
     private final com.billbull.backend.security.accessaudit.AccessAuditService accessAuditService;
 
+    private com.billbull.backend.platform.PlatformStateService platformStateService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setPlatformStateService(com.billbull.backend.platform.PlatformStateService platformStateService) {
+        this.platformStateService = platformStateService;
+    }
+
     public RolePermissionController(RolePermissionService rolePermissionService,
                                     AuditLogService auditLogService,
                                     com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
@@ -79,6 +86,10 @@ public class RolePermissionController {
         merged.put("_ownership", Map.of(
                 "filteringEnabled", ownershipAccessService.filteringEnabled(),
                 "restricted", ownershipAccessService.restrictionApplies()));
+        // Plan entitlements from the control plane: modules the plan excludes read as all-false.
+        if (platformStateService != null) {
+            com.billbull.backend.platform.PlatformEntitlementOverlay.apply(merged, platformStateService.current());
+        }
         return ResponseEntity.ok(merged);
     }
 
