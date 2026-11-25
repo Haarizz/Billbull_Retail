@@ -31,7 +31,18 @@ export const closeOfflineLease = async (leaseId, { summary, sig }) => {
   return res.data;
 };
 
-export const syncOfflineSales = async (records, { branchId } = {}) => {
+// Administrator-only (ADMIN / SUPER_ADMIN / BRANCH_ADMIN, enforced server-side). Ends an ACTIVE
+// lease without a till settlement so its session can be closed. Records that reach the server
+// later under this lease are HELD for review, never posted. The server checks the lease against
+// the request's branch, so the lease's branch is sent explicitly (an admin may be on "All").
+export const abandonOfflineLease = async (leaseId, reason, { branchId } = {}) => {
+  const headers = {};
+  if (branchId != null) headers["X-Branch-Id"] = String(branchId);
+  const res = await api.post(`${BASE}/leases/${encodeURIComponent(leaseId)}/abandon`, { reason }, { ...LIVE, headers });
+  return res.data;
+};
+
+export const syncOfflineSales =async (records, { branchId } = {}) => {
   const headers = {};
   if (branchId != null) headers["X-Branch-Id"] = String(branchId);
   const res = await api.post(`${BASE}/sales`, { records }, { ...LIVE, headers, timeout: 60000 });

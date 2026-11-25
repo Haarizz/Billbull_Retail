@@ -176,6 +176,8 @@ import { formatUserDisplayName } from '../../utils/displayName';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import { usePermissions } from '../../context/PermissionContext';
+import AbandonOfflineLeasePanel from './POS/features/session/AbandonOfflineLeasePanel';
+import { LEASE_ABANDON_ROLES } from './POS/features/session/offlineLeaseRefusal';
 import CustomerView from './POS/CustomerView';
 import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
@@ -8626,6 +8628,12 @@ export default function POSSales() {
               <span>{closeSessionError}</span>
             </div>
           )}
+          <AbandonOfflineLeasePanel
+            closeError={closeSessionError}
+            canAbandon={hasAnyRole(...LEASE_ABANDON_ROLES)}
+            branchId={(sessionToClose || currentSession)?.branchId}
+            onAbandoned={() => setCloseSessionError('')}
+          />
 
           {/* ─── Variance approval — an exception, not an error ───────────────────────────
               Every figure below is read from the server's refusal. The page computes none of
