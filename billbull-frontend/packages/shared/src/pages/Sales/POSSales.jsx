@@ -8114,6 +8114,17 @@ export default function POSSales() {
                 }
                 try {
                   const session = await getPosSessionById(sessionId);
+                  // Someone else's session: verify its owner (or a supervisor) first, through the
+                  // same Session Owner Verification → begin-closure path the terminal cards use.
+                  // Same ownership rule as the backend: login username equals session.openedBy.
+                  const me = (sessionStorage.getItem('user') || '').trim().toLowerCase();
+                  const owner = String(session?.openedBy || '').trim().toLowerCase();
+                  if (owner !== me && ['OPEN', 'active', 'SUSPENDED'].includes(session?.status)) {
+                    setSessionToClose(session);
+                    setClosureAction('NORMAL_CLOSE');
+                    handleDayCloseNormalClose(session);
+                    return;
+                  }
                   setCurrentSession(session);
                   setXReportData(null);
                   setZReportData(null);
@@ -8368,7 +8379,7 @@ export default function POSSales() {
               </button>
               <button
                 type="button"
-                onClick={() => { setShowCashierAuthDialog(false); cashierAuthTargetRef.current = null; setCashierAuthUsername(''); setCashierAuthPassword(''); setCashierAuthError(''); }}
+                onClick={() => { setShowCashierAuthDialog(false); cashierAuthTargetRef.current = null; setCashierAuthUsername(''); setCashierAuthPassword(''); setCashierAuthError(''); if (currentView !== 'x-report' && currentView !== 'z-report') setSessionToClose(null); }}
                 className="w-full py-2.5 rounded-lg border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
               >
                 Cancel
