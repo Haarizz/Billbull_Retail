@@ -21,7 +21,7 @@ ${SHARE_TECH_MONO_FONT_FACE}
 .bbt3 *{box-sizing:border-box;font-weight:400}
 .bbt3 .c{text-align:center;overflow-wrap:anywhere}
 .bbt3 .logo{text-align:center;margin-bottom:3px}
-.bbt3 .logo img{max-width:60%;max-height:24mm;object-fit:contain}
+.bbt3 .logo img{display:block;margin:0 auto;max-width:60%;max-height:24mm;object-fit:contain}
 .bbt3 .brand{text-align:center;font-size:15px;font-weight:400;letter-spacing:.5px;overflow-wrap:anywhere}
 .bbt3 .rule{margin:6px 0;border-top:1px dashed #000}
 .bbt3 .row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
@@ -41,7 +41,7 @@ ${SHARE_TECH_MONO_FONT_FACE}
 .bbt3 .tax{display:grid;grid-template-columns:.7fr .6fr 1fr 1fr .9fr;column-gap:4px;text-align:right}
 .bbt3 .tax>span:nth-child(5n+1){text-align:left}
 .bbt3 .qr{text-align:center;margin:4px 0}
-.bbt3 .qr img{width:28mm;height:28mm;object-fit:contain}
+.bbt3 .qr img{display:block;margin:0 auto;width:28mm;height:28mm;object-fit:contain}
 .bbt3 .qr .ph{display:inline-flex;align-items:center;justify-content:center;width:26mm;height:26mm;border:1px dashed #000;font-size:10px}
 .bbt3 .bc{margin:8px 0 2px}
 .bbt3 .bc svg{width:100%!important}
