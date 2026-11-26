@@ -790,6 +790,7 @@ const ListView = ({
     activeTab,
     setActiveTab,
     allSessions,
+    sessionsLoading = false,
     searchTerm,
     setSearchTerm,
     setIsCreateModalOpen,
@@ -907,8 +908,43 @@ const ListView = ({
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
+                            {sessionsLoading && allSessions.length === 0 && Array.from({ length: 5 }, (_, i) => (
+                                <tr key={`skeleton-${i}`} aria-hidden="true" className="animate-pulse">
+                                    <td className="px-4 py-3"><div className="h-3 w-5 mx-auto rounded bg-slate-200" /></td>
+                                    <td className="px-4 py-3">
+                                        <div className="h-3.5 w-24 rounded bg-slate-200" />
+                                        <div className="mt-2 h-2.5 w-32 rounded bg-slate-100" />
+                                    </td>
+                                    <td className="px-4 py-3"><div className="h-3 w-20 rounded bg-slate-200" /></td>
+                                    <td className="px-4 py-3">
+                                        <div className="flex items-center gap-2">
+                                            <div className="h-6 w-6 rounded-full bg-amber-100" />
+                                            <div className="h-3 w-28 rounded bg-slate-200" />
+                                        </div>
+                                    </td>
+                                    <td className="px-4 py-3"><div className="h-3 w-20 rounded bg-slate-200" /></td>
+                                    <td className="px-4 py-3"><div className="h-2 w-36 rounded-full bg-slate-200" /></td>
+                                    <td className="px-4 py-3"><div className="h-4 w-24 rounded-full bg-slate-200" /></td>
+                                    <td className="px-4 py-3"><div className="h-3 w-14 ml-auto rounded bg-slate-200" /></td>
+                                    <td className="px-4 py-3"><div className="h-5 w-16 ml-auto rounded-md bg-slate-200" /></td>
+                                </tr>
+                            ))}
+                            {!sessionsLoading && filteredSessions.length === 0 && (
+                                <tr>
+                                    <td colSpan={9} className="px-4 py-12 text-center animate-in fade-in duration-500">
+                                        <ClipboardList className="h-8 w-8 mx-auto text-slate-300" />
+                                        <p className="mt-2 text-sm font-medium text-slate-500">
+                                            {allSessions.length === 0 ? 'No stock takes yet' : 'No stock takes match this filter'}
+                                        </p>
+                                    </td>
+                                </tr>
+                            )}
                             {pagedSessions.map((session, index) => (
-                                <tr key={session.id} className="hover:bg-slate-50/80 transition-colors group">
+                                <tr
+                                    key={session.id}
+                                    className="hover:bg-slate-50/80 transition-colors group animate-in fade-in slide-in-from-bottom-1 duration-300"
+                                    style={{ animationDelay: `${Math.min(index, 10) * 40}ms`, animationFillMode: 'backwards' }}
+                                >
                                     <td className="px-4 py-2 text-center text-slate-400 font-mono font-medium">
                                         {getListSerialNumber(index, {
                                             documentNumber: session.id,
@@ -2024,6 +2060,9 @@ const StockTaking = () => {
     const addingSkusRef = React.useRef(new Set());
 
     const [allSessions, setAllSessions] = useState([]);
+    // Own flag (not the shared isLoading) so the list skeleton only follows the sessions fetch.
+    const [sessionsLoading, setSessionsLoading] = useState(true);
+    const [isApproving, setIsApproving] = useState(false);
     const [warehouseBins, setWarehouseBins] = useState([]);
     const [stockTakeCoverage, setStockTakeCoverage] = useState(null);
     const [selectedScanBinId, setSelectedScanBinId] = useState('');
@@ -2101,6 +2140,7 @@ const StockTaking = () => {
 
     const fetchSessions = async () => {
         setIsLoading(true);
+        setSessionsLoading(true);
         try {
             const data = await getStockTakeSessions();
 
@@ -2155,6 +2195,7 @@ const StockTaking = () => {
             console.error("Error fetching sessions:", error);
         } finally {
             setIsLoading(false);
+            setSessionsLoading(false);
         }
     };
 
@@ -2801,8 +2842,11 @@ const StockTaking = () => {
     };
 
     const handleApproveSession = async () => {
-        if (!selectedSession) return;
+        if (!selectedSession || isApproving) return;
 
+        // A large opening stock (thousands of units) takes a minute or more to post; keep the
+        // button busy so it is not clicked again or the dialog closed mid-approval.
+        setIsApproving(true);
         try {
             await approveStockTakeSession(selectedSession.sessionId, 'Admin User');
             fetchSessions();
@@ -2811,6 +2855,8 @@ const StockTaking = () => {
         } catch (error) {
             console.error("Error approving session:", error);
             showNotif('error', 'Error', 'Failed to approve session.');
+        } finally {
+            setIsApproving(false);
         }
     };
 
@@ -3111,6 +3157,7 @@ const StockTaking = () => {
                     activeTab={activeTab}
                     setActiveTab={setActiveTab}
                     allSessions={allSessions}
+                    sessionsLoading={sessionsLoading}
                     searchTerm={searchTerm}
                     setSearchTerm={setSearchTerm}
                     setIsCreateModalOpen={setIsCreateModalOpen}
@@ -3710,24 +3757,33 @@ const StockTaking = () => {
 
                         {/* Modal Footer */}
                         <div className="flex items-center justify-end gap-3 px-6 py-4 bg-slate-50/50 border-t border-slate-100 shrink-0">
+                            {isApproving && (
+                                <span className="mr-auto text-[11px] text-slate-500 animate-in fade-in duration-300">
+                                    Posting stock - large counts can take a minute or two. Please keep this open.
+                                </span>
+                            )}
                             <button
                                 onClick={() => setIsReviewModalOpen(false)}
-                                className="px-5 py-2 text-xs font-bold text-slate-500 hover:bg-slate-200 rounded-lg transition-all"
+                                disabled={isApproving}
+                                className="px-5 py-2 text-xs font-bold text-slate-500 hover:bg-slate-200 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                                 Cancel
                             </button>
                             <button
                                 onClick={handleRejectSession}
-                                className="flex items-center gap-2 px-5 py-2 text-xs font-bold text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-all"
+                                disabled={isApproving}
+                                className="flex items-center gap-2 px-5 py-2 text-xs font-bold text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                                 <XCircle className="h-4 w-4" /> Reject Session
                             </button>
                             <button
                                 onClick={handleApproveSession}
-                                disabled={!selectedSession?.items?.some(i => i.countedQty != null) || binCapacityViolations.length > 0}
+                                disabled={isApproving || !selectedSession?.items?.some(i => i.countedQty != null) || binCapacityViolations.length > 0}
                                 className="flex items-center gap-2 px-6 py-2 text-xs font-bold text-white bg-[#10B981] rounded-lg hover:bg-emerald-600 transition-all shadow-md shadow-emerald-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
                             >
-                                <Check className="h-4 w-4" /> Approve & Update Stock
+                                {isApproving
+                                    ? <><RefreshCw className="h-4 w-4 animate-spin" /> Approving...</>
+                                    : <><Check className="h-4 w-4" /> Approve & Update Stock</>}
                             </button>
                         </div>
                     </div>
