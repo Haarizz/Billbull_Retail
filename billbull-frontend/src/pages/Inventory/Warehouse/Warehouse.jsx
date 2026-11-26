@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Warehouse as WarehouseIcon, ChevronRight, Plus, Search, SquarePen, Trash2,
   MapPin, X, Package, Layers, Box, Clock, Activity, TrendingUp, Users, FileText,
@@ -12,6 +12,29 @@ import { hasRole } from '@billbull/shared/api/auth';
 import { useBranch } from '@billbull/shared/context/BranchContext';
 import { getZones, createZone, updateZone, deleteZone, getLocators, createLocator, updateLocator, deleteLocator, getBins, createBin, updateBin, deleteBin, getBinStock, addBinStock, deleteBinStock } from '../../../api/warehouseLocationApi';
 import { getListSerialNumber } from '../../../utils/serialNumbering';
+import PaginationFooter from '../../../components/common/PaginationFooter';
+
+// Batch-tracked stock is one row per unit, so an opening-stock bin holds thousands of rows.
+const BIN_STOCK_PAGE_SIZE = 50;
+
+// Natural comparison: splits strings into text/number chunks for proper numeric ordering
+const naturalCompare = (strA, strB) => {
+  const a = (strA || '').toLowerCase();
+  const b = (strB || '').toLowerCase();
+  const re = /(\d+|\D+)/g;
+  const partsA = a.match(re) || [];
+  const partsB = b.match(re) || [];
+  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+    if (i >= partsA.length) return -1;
+    if (i >= partsB.length) return 1;
+    const pA = partsA[i], pB = partsB[i];
+    const nA = Number(pA), nB = Number(pB);
+    const bothNum = !isNaN(nA) && !isNaN(nB);
+    const cmp = bothNum ? nA - nB : pA.localeCompare(pB);
+    if (cmp !== 0) return cmp;
+  }
+  return 0;
+};
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const TYPE_CONFIG = {
@@ -1043,58 +1066,49 @@ const BinDetail = ({ bin, onEdit }) => {
   const [binStock, setBinStock] = useState([]);
   const [stockLoading, setStockLoading] = useState(false);
   const [stockSearch, setStockSearch] = useState('');
+  const [stockPage, setStockPage] = useState(0);
 
   useEffect(() => {
     if (bin?.id) {
       setStockLoading(true);
+      setStockPage(0);
       getBinStock(bin.id).then(d => setBinStock(d || [])).catch(() => setBinStock([])).finally(() => setStockLoading(false));
     }
   }, [bin?.id]);
 
-  const currentQty  = binStock.reduce((s, r) => s + (r.quantity || 0), 0);
-  const reserved    = binStock.reduce((s, r) => s + (r.reservedQuantity || 0), 0);
+  const { currentQty, reserved, skuCount } = useMemo(() => ({
+    currentQty: binStock.reduce((s, r) => s + (r.quantity || 0), 0),
+    reserved: binStock.reduce((s, r) => s + (r.reservedQuantity || 0), 0),
+    skuCount: new Set(binStock.map(r => r.productCode)).size,
+  }), [binStock]);
   const available   = currentQty - reserved;
-  const skuCount    = new Set(binStock.map(r => r.productCode)).size;
   const capacityPct = bin.capacity ? Math.min(100, Math.round((currentQty / bin.capacity) * 100)) : 0;
   const capColor    = capacityPct > 85 ? 'bg-red-500' : capacityPct > 60 ? 'bg-[#F5C742]' : 'bg-emerald-500';
 
-  // Natural comparison: splits strings into text/number chunks for proper numeric ordering
-  const naturalCompare = (strA, strB) => {
-    const a = (strA || '').toLowerCase();
-    const b = (strB || '').toLowerCase();
-    const re = /(\d+|\D+)/g;
-    const partsA = a.match(re) || [];
-    const partsB = b.match(re) || [];
-    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
-      if (i >= partsA.length) return -1;
-      if (i >= partsB.length) return 1;
-      const pA = partsA[i], pB = partsB[i];
-      const nA = Number(pA), nB = Number(pB);
-      const bothNum = !isNaN(nA) && !isNaN(nB);
-      const cmp = bothNum ? nA - nB : pA.localeCompare(pB);
-      if (cmp !== 0) return cmp;
-    }
-    return 0;
-  };
+  // Sort stock by product name, then product code, then batch number (all with natural ordering).
+  // Sorted once per load, not on every render or keystroke.
+  const sortedStock = useMemo(() => [...binStock].sort((a, b) => (
+    naturalCompare(a.productName, b.productName)
+      || naturalCompare(a.productCode, b.productCode)
+      || naturalCompare(a.serialNumber, b.serialNumber)
+      || naturalCompare(a.batchNumber, b.batchNumber)
+  )), [binStock]);
 
-  // Sort stock by product name, then product code, then batch number (all with natural ordering)
-  const sortedAndFilteredStock = [...binStock]
-    .sort((a, b) => {
-      return naturalCompare(a.productName, b.productName)
-          || naturalCompare(a.productCode, b.productCode)
-          || naturalCompare(a.serialNumber, b.serialNumber)
-          || naturalCompare(a.batchNumber, b.batchNumber);
-    })
-    .filter(s => {
-      if (!stockSearch.trim()) return true;
-      const term = stockSearch.toLowerCase().trim();
-      return (
-        (s.productCode || '').toLowerCase().includes(term) ||
-        (s.productName || '').toLowerCase().includes(term) ||
-        (s.batchNumber || '').toLowerCase().includes(term) ||
-        (s.serialNumber || '').toLowerCase().includes(term)
-      );
-    });
+  const sortedAndFilteredStock = useMemo(() => {
+    const term = stockSearch.toLowerCase().trim();
+    if (!term) return sortedStock;
+    return sortedStock.filter(s => (
+      (s.productCode || '').toLowerCase().includes(term) ||
+      (s.productName || '').toLowerCase().includes(term) ||
+      (s.batchNumber || '').toLowerCase().includes(term) ||
+      (s.serialNumber || '').toLowerCase().includes(term)
+    ));
+  }, [sortedStock, stockSearch]);
+
+  const changeStockSearch = (value) => { setStockSearch(value); setStockPage(0); };
+  const stockPageCount = Math.ceil(sortedAndFilteredStock.length / BIN_STOCK_PAGE_SIZE);
+  const stockPageStart = stockPage * BIN_STOCK_PAGE_SIZE;
+  const pagedStock = sortedAndFilteredStock.slice(stockPageStart, stockPageStart + BIN_STOCK_PAGE_SIZE);
 
   return (
     <div className="space-y-5">
@@ -1160,12 +1174,12 @@ const BinDetail = ({ bin, onEdit }) => {
               type="text"
               placeholder="Search by SKU, name, batch, or serial…"
               value={stockSearch}
-              onChange={e => setStockSearch(e.target.value)}
+              onChange={e => changeStockSearch(e.target.value)}
               className="w-64 pl-9 pr-8 py-1.5 text-xs bg-[#F7F7FA] border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40 focus:border-[#F5C742] transition-all"
             />
             {stockSearch && (
               <button
-                onClick={() => setStockSearch('')}
+                onClick={() => changeStockSearch('')}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600 rounded transition-colors"
               >
                 <X className="h-3 w-3" />
@@ -1193,7 +1207,8 @@ const BinDetail = ({ bin, onEdit }) => {
               { key: 'available', label: 'Available' },
               { key: 'status', label: 'Status' },
             ]}
-            rows={sortedAndFilteredStock.map((s, idx) => {
+            rows={pagedStock.map((s, pageIdx) => {
+              const idx      = stockPageStart + pageIdx;
               const onHand   = s.quantity || 0;
               const res      = s.reservedQuantity || 0;
               const avail    = onHand - res;
@@ -1241,6 +1256,15 @@ const BinDetail = ({ bin, onEdit }) => {
               );
             })}
             empty={stockSearch ? `No items matching "${stockSearch}"` : "No stock in this bin"}
+          />
+        )}
+        {!stockLoading && (
+          <PaginationFooter
+            page={stockPage}
+            size={BIN_STOCK_PAGE_SIZE}
+            totalElements={sortedAndFilteredStock.length}
+            totalPages={stockPageCount}
+            onPageChange={setStockPage}
           />
         )}
       </SectionCard>
