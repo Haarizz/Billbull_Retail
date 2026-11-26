@@ -161,6 +161,79 @@ class StockTakeServiceTest {
     }
 
     @Test
+    void approveOpeningStockWritesOneBatchMasterRowPerUnitAcrossSupplierLots() {
+        StockTakeSession session = session();
+        session.setType(StockTakeSession.StockTakeType.OPENING_INVENTORY);
+        StockTakeItem item = stockTakeItem(13L, session, 10L, 7L, 0, 5);
+        LocalDate lotAExpiry = LocalDate.parse("2028-02-29");
+        LocalDate lotBExpiry = LocalDate.parse("2027-09-30");
+        // Supplier batch numbers typed as lot prefixes: neither parses as a generated batch number,
+        // and the unit suffix restarts at 1 in the second lot.
+        item.getBatches().add(batch(item, 501L, "2102025-1", lotAExpiry, 1));
+        item.getBatches().add(batch(item, 502L, "2102025-2", lotAExpiry, 1));
+        item.getBatches().add(batch(item, 503L, "2102025-3", lotAExpiry, 1));
+        item.getBatches().add(batch(item, 504L, "A25249-1", lotBExpiry, 1));
+        item.getBatches().add(batch(item, 505L, "A25249-2", lotBExpiry, 1));
+        session.setItems(List.of(item));
+
+        when(sessionRepo.findBySessionId("STK-1")).thenReturn(Optional.of(session));
+        when(productRepo.findById(10L)).thenReturn(Optional.of(product(10L)));
+        when(sessionRepo.save(any(StockTakeSession.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(stockMovementService.resolveBranchIdForWarehouse(2L)).thenReturn(8L);
+
+        service.approveSession("STK-1", "Admin");
+
+        ArgumentCaptor<StockMovement> movements = ArgumentCaptor.forClass(StockMovement.class);
+        verify(stockMovementRepo, times(5)).save(movements.capture());
+        movements.getAllValues().forEach(m -> assertEquals(8L, m.getBranchId()));
+        // No query per unit: each one auto-flushes the whole approval, which made a
+        // 9,000-unit opening stock take run for more than 15 minutes.
+        verify(stockMovementService, times(1)).resolveBranchIdForWarehouse(2L);
+        verify(batchMasterRepo, times(1))
+                .findBySourceDocumentTypeAndSourceDocumentIdAndSourceLineIdOrderByUnitIndexAsc("STOCK_TAKE", 1L, 13L);
+        verify(batchMasterRepo, org.mockito.Mockito.never())
+                .existsBySourceDocumentTypeAndSourceDocumentIdAndSourceLineIdAndUnitIndex(any(), any(), any(), any());
+        ArgumentCaptor<com.billbull.backend.inventory.batch.BatchMaster> captor =
+                ArgumentCaptor.forClass(com.billbull.backend.inventory.batch.BatchMaster.class);
+        verify(batchMasterRepo, times(5)).save(captor.capture());
+        List<com.billbull.backend.inventory.batch.BatchMaster> masters = captor.getAllValues();
+
+        // unit_index is unique on the line and equals the counted row id, the key the
+        // boot-time backfill seeder checks, so a restart adds no second copy.
+        assertEquals(List.of(501, 502, 503, 504, 505),
+                masters.stream().map(com.billbull.backend.inventory.batch.BatchMaster::getUnitIndex).sorted().toList());
+        assertEquals(List.of("2102025-1", "2102025-2", "2102025-3", "A25249-1", "A25249-2"),
+                masters.stream().map(com.billbull.backend.inventory.batch.BatchMaster::getBatchNumber).sorted().toList());
+        masters.forEach(m -> {
+            assertEquals(1, m.getQuantity());
+            assertEquals("OS", m.getSourceType());
+            assertEquals(m.getBatchNumber().startsWith("2102025") ? lotAExpiry : lotBExpiry, m.getExpiryDate());
+        });
+    }
+
+    @Test
+    void approveUntrackedCountCarriesProductCostOnAddedStock() {
+        StockTakeSession session = session();
+        session.setType(StockTakeSession.StockTakeType.OPENING_INVENTORY);
+        StockTakeItem item = stockTakeItem(14L, session, 10L, 7L, 0, 60);
+        item.setBatchEnabled(false);
+        item.setExpiryEnabled(false);
+        item.setVariance(60);
+        session.setItems(List.of(item));
+
+        when(sessionRepo.findBySessionId("STK-1")).thenReturn(Optional.of(session));
+        when(productRepo.findById(10L)).thenReturn(Optional.of(product(10L)));
+        when(sessionRepo.save(any(StockTakeSession.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.approveSession("STK-1", "Admin");
+
+        ArgumentCaptor<StockMovement> captor = ArgumentCaptor.forClass(StockMovement.class);
+        verify(stockMovementRepo).save(captor.capture());
+        assertQty(60, captor.getValue().getQuantity());
+        assertEquals(new BigDecimal("12.50"), captor.getValue().getUnitCost());
+    }
+
+    @Test
     void approveBatchedCountMovesOldExpiryToCountedExpiry() {
         StockTakeSession session = session();
         StockTakeItem item = stockTakeItem(12L, session, 10L, 7L, 50, 70);

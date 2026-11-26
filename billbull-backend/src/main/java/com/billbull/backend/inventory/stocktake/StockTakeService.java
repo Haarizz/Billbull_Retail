@@ -689,6 +689,11 @@ public class StockTakeService {
                 sm.setBinId(resolvedBinId);
                 sm.setZoneId(resolvedZoneId);
                 sm.setLocatorId(resolvedLocatorId);
+                // Same as the batched path: stock added by a count carries the product cost,
+                // otherwise opening stock of untracked items is valued at zero.
+                if (variance > 0) {
+                    sm.setUnitCost(resolveAdjustmentUnitCost(item));
+                }
 
                 stockMovementService.stampBranch(sm); // Phase 2: branch from session's warehouse
                 stockMovementRepo.save(sm);
@@ -1610,6 +1615,17 @@ public class StockTakeService {
         identities.addAll(countedQty.keySet());
 
         BigDecimal adjustmentUnitCost = resolveAdjustmentUnitCost(item);
+        // Looked up once per line, not per unit. A per-unit query makes Hibernate auto-flush,
+        // dirty-checking every entity the approval has loaded so far, which grows with each unit
+        // posted: a 9,000-unit opening stock take ran for more than 15 minutes in one transaction.
+        Long branchId = stockMovementService.resolveBranchIdForWarehouse(session.getWarehouseId());
+        Set<Integer> postedUnitIndexes = batchMasterRepo
+                .findBySourceDocumentTypeAndSourceDocumentIdAndSourceLineIdOrderByUnitIndexAsc(
+                        "STOCK_TAKE", session.getId(), item.getId())
+                .stream()
+                .map(com.billbull.backend.inventory.batch.BatchMaster::getUnitIndex)
+                .filter(Objects::nonNull)
+                .collect(java.util.stream.Collectors.toCollection(java.util.HashSet::new));
         int sequence = 1;
         for (BatchIdentity identity : identities.stream()
                 .sorted(Comparator
@@ -1636,6 +1652,7 @@ public class StockTakeService {
                 movement.setUnitCost(adjustmentUnitCost);
             }
 
+            movement.setBranchId(branchId);
             stockMovementService.stampBranch(movement); // Phase 2: branch from session's warehouse
             stockMovementRepo.save(movement);
 
@@ -1653,7 +1670,7 @@ public class StockTakeService {
                 }
             }
 
-            syncBatchMasterForIdentity(session, item, binId, zoneId, locatorId, identity, delta);
+            syncBatchMasterForIdentity(session, item, binId, zoneId, locatorId, identity, delta, postedUnitIndexes);
         }
     }
 
@@ -1664,16 +1681,28 @@ public class StockTakeService {
             Long zoneId,
             Long locatorId,
             BatchIdentity identity,
-            int delta) {
+            int delta,
+            Set<Integer> postedUnitIndexes) {
 
         if (delta > 0) {
             LocalDate generatedDate = LocalDate.now();
+            List<Integer> unitRowIds = countedUnitRowIds(item, identity);
             for (int i = 0; i < delta; i++) {
                 String batchNumber = identity.batchNumber;
                 if (batchNumber == null) continue;
-                int unitIndex = BatchNumberGenerator.parseUnitIndex(batchNumber).orElse(i + 1);
-                if (batchMasterRepo.existsBySourceDocumentTypeAndSourceDocumentIdAndSourceLineIdAndUnitIndex(
-                        "STOCK_TAKE", session.getId(), item.getId(), unitIndex)) {
+                // unit_index is part of batch_master's unique key (doc, session, line, unit_index),
+                // so it must be unique across every lot of the line. The batch-number suffix is not:
+                // it restarts at 1 for each lot, and a lot prefix the user typed (a supplier batch
+                // number) does not parse at all, which made every unit fall back to index 1 and all
+                // but the first unit of the line were skipped. A per-unit counted row's id is unique
+                // and is the key StockTakeBatchMasterBackfillSeeder uses, so the boot-time sync sees
+                // these rows as present instead of adding a second copy of each unit. Legacy rows
+                // carrying quantity > 1 keep the old numbering.
+                int unitIndex = i < unitRowIds.size()
+                        ? unitRowIds.get(i)
+                        : BatchNumberGenerator.parseUnitIndex(batchNumber).orElse(i + 1);
+                // Same check as the (doc, session, line, unit_index) unique key, held in memory.
+                if (!postedUnitIndexes.add(unitIndex)) {
                     continue;
                 }
 
@@ -1710,6 +1739,19 @@ public class StockTakeService {
                 toConsume--;
             }
         }
+    }
+
+    /** Ids of the quantity-1 counted rows behind one batch identity, oldest first. */
+    private List<Integer> countedUnitRowIds(StockTakeItem item, BatchIdentity identity) {
+        if (item.getBatches() == null) return List.of();
+        return item.getBatches().stream()
+                .filter(b -> b.getId() != null)
+                .filter(b -> b.getQuantity() != null && b.getQuantity() == 1)
+                .filter(b -> Objects.equals(b.getBatchNumber(), identity.batchNumber)
+                        && Objects.equals(b.getExpiryDate(), identity.expiryDate))
+                .map(b -> b.getId().intValue())
+                .sorted()
+                .toList();
     }
 
     private String stockTakeSourceType(StockTakeSession session) {
