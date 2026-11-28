@@ -28,6 +28,7 @@ import { BranchProvider } from "@billbull/shared/context/BranchContext";
 import ResourceGuard from "./components/auth/ResourceGuard";// import CustomerInquiries from "./pages/Customer/CustomerInquiries";
 import AedSymbolRenderer from "@billbull/shared/components/AedSymbolRenderer";
 import GlobalSearchModal from "./components/search/GlobalSearchModal";
+import PlatformAnnouncements from "@billbull/shared/components/PlatformAnnouncements";
 import AppAlertBridge from "@billbull/shared/components/AppAlertBridge";
 import AppConfirmBridge from "@billbull/shared/components/AppConfirmBridge";
 import { logClientError, logClientEvent } from "@billbull/shared/utils/clientLogger";
@@ -214,6 +215,8 @@ function App() {
                 {/* Mounted once, above the page routes: Ctrl/Cmd+X opens it from
                     anywhere, and opening/closing it never remounts the page. */}
                 <GlobalSearchModal />
+                {/* BillBull announcements from admin.billbull.app: pop up once per user. */}
+                <PlatformAnnouncements />
                 <Sidebar>
                   <Routes>
                     {/* Default redirect */}

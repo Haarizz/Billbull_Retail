@@ -26,11 +26,14 @@ import com.billbull.backend.security.AuditLogService;
  *
  * <pre>
  *   GET  /api/platform/health                       health, build, migration and usage snapshot
+ *   GET  /api/platform/presence                     who is signed in now (Live Clients)
  *   GET  /api/platform/state                        current status, plan, modules, limits
  *   PUT  /api/platform/state                        replace them (idempotent; carries configVersion)
  *   GET  /api/platform/support-sessions             support sign-ins issued on this tenant
  *   POST /api/platform/support-sessions             issue a time-boxed support sign-in
  *   POST /api/platform/support-sessions/{id}/revoke end one early
+ *   PUT  /api/platform/announcements                replace the live announcements; returns seen counts
+ *   GET  /api/platform/announcements/stats          seen counts only
  * </pre>
  */
 @RestController
@@ -41,16 +44,27 @@ public class PlatformAgentController {
     private final PlatformHealthService healthService;
     private final PlatformStateService stateService;
     private final PlatformSupportService supportService;
+    private final PlatformAnnouncementService announcementService;
     private final AuditLogService auditLogService;
     private final TenantIdentity tenant;
     private final PlatformAgentProperties properties;
 
+    /** Setter-injected so the constructor (and its call sites) stay as they are. */
+    private com.billbull.backend.presence.UserPresenceService presenceService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setPresenceService(com.billbull.backend.presence.UserPresenceService presenceService) {
+        this.presenceService = presenceService;
+    }
+
     public PlatformAgentController(PlatformHealthService healthService, PlatformStateService stateService,
-                                   PlatformSupportService supportService, AuditLogService auditLogService,
-                                   TenantIdentity tenant, PlatformAgentProperties properties) {
+                                   PlatformSupportService supportService, PlatformAnnouncementService announcementService,
+                                   AuditLogService auditLogService, TenantIdentity tenant,
+                                   PlatformAgentProperties properties) {
         this.healthService = healthService;
         this.stateService = stateService;
         this.supportService = supportService;
+        this.announcementService = announcementService;
         this.auditLogService = auditLogService;
         this.tenant = tenant;
         this.properties = properties;
@@ -61,6 +75,16 @@ public class PlatformAgentController {
         Map<String, Object> h = healthService.snapshot();
         h.put("supportAccessEnabled", properties.isSupportAccessEnabled());
         return h;
+    }
+
+    /**
+     * Live presence for the control plane's Live Clients page: devices seen in the last 24 hours
+     * (online = active within {@code onlineWindowSeconds}), open tills and today's invoice count.
+     */
+    @GetMapping("/presence")
+    public Map<String, Object> presence(@RequestParam(defaultValue = "180") int onlineWindowSeconds,
+                                        @RequestParam(defaultValue = "200") int limit) {
+        return presenceService.snapshot(onlineWindowSeconds, limit);
     }
 
     @GetMapping("/state")
@@ -96,6 +120,18 @@ public class PlatformAgentController {
     public ResponseEntity<Map<String, Object>> revokeSupport(@PathVariable long id, HttpServletRequest request) {
         boolean revoked = supportService.revoke(id, "platform:" + actor(request));
         return ResponseEntity.ok(Map.of("revoked", revoked));
+    }
+
+    @PutMapping("/announcements")
+    public Map<String, Object> putAnnouncements(@RequestBody PlatformAnnouncementService.Push body) {
+        // Not written to audit_logs: the control plane re-pushes the same set every few minutes to
+        // collect seen counts, and keeps its own audit of every announcement change.
+        return announcementService.replace(body);
+    }
+
+    @GetMapping("/announcements/stats")
+    public List<Map<String, Object>> announcementStats() {
+        return announcementService.stats();
     }
 
     static Map<String, Object> view(PlatformState s) {

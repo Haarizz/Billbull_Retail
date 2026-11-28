@@ -162,12 +162,48 @@ public class AuthService {
         audit.record(who, "PASSWORD_CHANGED", "PlatformUser", String.valueOf(user.id), null, null, ip);
     }
 
+    /** How long a fresh authenticator code unlocks sensitive actions (database writes, dump downloads). */
+    public static final Duration STEP_UP_WINDOW = Duration.ofMinutes(5);
+    private final Cache<Long, Instant> elevatedUntil = Caffeine.newBuilder()
+            .expireAfterWrite(STEP_UP_WINDOW).maximumSize(10_000).build();
+
+    /**
+     * Re-authentication for a sensitive action. Passes when the user confirmed an authenticator
+     * code in the last {@link #STEP_UP_WINDOW}; otherwise {@code code} must be a fresh one. Without
+     * a code (or with MFA not set up) it answers 403 {@code STEP_UP_REQUIRED}, which the admin app
+     * turns into a code prompt — not 401, which would sign the user out.
+     *
+     * @return when the elevation ends
+     */
+    public Instant requireStepUp(PlatformPrincipal who, String code, String action, String ip) {
+        Instant until = elevatedUntil.getIfPresent(who.id());
+        if (until != null && until.isAfter(Instant.now())) return until;
+        PlatformUser user = users.findById(who.id()).orElseThrow(this::invalid);
+        if (!user.mfaEnabled || user.mfaSecretEnc == null) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "STEP_UP_UNAVAILABLE: Set up an authenticator app (Account) before using this.");
+        }
+        if (code == null || code.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "STEP_UP_REQUIRED: Enter a code from your authenticator app to " + action + ".");
+        }
+        try {
+            acceptCode(user, cipher.decrypt(user.mfaSecretEnc), code, ip);
+        } catch (ResponseStatusException e) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "STEP_UP_INVALID: That code is not valid. Try the next one.");
+        }
+        Instant end = Instant.now().plus(STEP_UP_WINDOW);
+        elevatedUntil.put(who.id(), end);
+        audit.record(who, "STEP_UP", "PlatformUser", String.valueOf(user.id), null, "Authenticator code confirmed to " + action, ip);
+        return end;
+    }
+
     /** Ends every session the user holds, on every device. */
     @Transactional
     public void signOutEverywhere(PlatformPrincipal who, String ip) {
         PlatformUser user = users.findById(who.id()).orElseThrow(this::invalid);
         user.tokenVersion++;
         users.save(user);
+        elevatedUntil.invalidate(user.id);
         audit.record(who, "SIGNED_OUT_EVERYWHERE", "PlatformUser", String.valueOf(user.id), null, null, ip);
     }
 

@@ -125,6 +125,8 @@ public class HealthService {
         s.branches = num(u, "branches");
         s.terminals = num(u, "terminals");
         s.openSessions = num(u, "openPosSessions");
+        s.onlineDevices = num(u, "onlineDevices");
+        s.onlineUsers = num(u, "onlineUsers");
         s.invoices30d = num(u, "salesInvoices30d");
         s.lastInvoiceAt = text(u, "lastSalesInvoiceAt");
         JsonNode jvm = b.path("jvm");

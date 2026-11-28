@@ -85,6 +85,11 @@ public class PlatformHealthService {
         usage.put("salesInvoices30d", count("SELECT count(*) FROM sales_invoices WHERE created_at >= now() - interval '30 days'",
                 "salesInvoices30d", errors));
         usage.put("lastSalesInvoiceAt", scalar("SELECT max(created_at)::text FROM sales_invoices", "lastSalesInvoiceAt", errors));
+        // Live presence (V156 user_presence); online = active in the last 3 minutes.
+        usage.put("onlineDevices", count("SELECT count(*) FROM user_presence WHERE last_seen_at >= now() - interval '3 minutes'",
+                "onlineDevices", errors));
+        usage.put("onlineUsers", count("SELECT count(DISTINCT coalesce(user_id::text, username)) FROM user_presence"
+                + " WHERE last_seen_at >= now() - interval '3 minutes'", "onlineUsers", errors));
         usage.put("lastAuditAt", scalar("SELECT max(created_at)::text FROM audit_logs", "lastAuditAt", errors));
         out.put("usage", usage);
 

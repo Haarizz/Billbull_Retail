@@ -61,6 +61,7 @@ export const platformApi = {
   signOutEverywhere: () => data(api.post('/api/auth/sign-out-everywhere')),
 
   dashboard: () => data(api.get('/api/dashboard')),
+  liveClients: (fresh = false) => data(api.get('/api/live-clients', { params: { fresh } })),
 
   modules: () => data(api.get('/api/tenants/modules')),
   tenants: (includeArchived = false) => data(api.get('/api/tenants', { params: { includeArchived } })),
@@ -96,4 +97,37 @@ export const platformApi = {
 
   backups: () => data(api.get('/api/backups')),
   tenantBackups: (tenantId) => data(api.get(`/api/backups/tenant/${tenantId}`)),
+
+  // Database console: every call goes through the client's own signed agent.
+  dbOverview: (id) => data(api.get(`/api/tenants/${id}/db/overview`)),
+  dbTables: (id) => data(api.get(`/api/tenants/${id}/db/tables`)),
+  dbTable: (id, schema, name) => data(api.post(`/api/tenants/${id}/db/table`, { schema, name })),
+  dbInsights: (id) => data(api.get(`/api/tenants/${id}/db/insights`)),
+  dbJobs: (id) => data(api.get(`/api/tenants/${id}/db/jobs`)),
+  dbActivity: (id) => data(api.get(`/api/tenants/${id}/db/activity`)),
+  dbCancel: (id, pid, body) => data(api.post(`/api/tenants/${id}/db/activity/${pid}/cancel`, body)),
+  dbQuery: (id, body) => data(api.post(`/api/tenants/${id}/db/query`, body)),
+  dbExplain: (id, body) => data(api.post(`/api/tenants/${id}/db/explain`, body)),
+  dbMaintenance: (id, body) => data(api.post(`/api/tenants/${id}/db/maintenance`, body)),
+  dbBackups: (id) => data(api.get(`/api/tenants/${id}/db/backups`)),
+  dbStartBackup: (id, note) => data(api.post(`/api/tenants/${id}/db/backups`, { note })),
+  dbDownloadBackup: (id, name, code) => data(api.post(`/api/tenants/${id}/db/backups/${encodeURIComponent(name)}/download`, { code })),
+  dbDeleteBackup: (id, name) => data(api.post(`/api/tenants/${id}/db/backups/${encodeURIComponent(name)}/delete`)),
+
+  errors: (params) => data(api.get('/api/errors', { params })),
+  error: (id) => data(api.get(`/api/errors/${id}`)),
+  setErrorStatus: (id, status, note) => data(api.post(`/api/errors/${id}/status`, { status, note })),
+  syncErrors: (tenantId) => data(api.post('/api/errors/sync', null, { params: tenantId ? { tenantId } : {} })),
+  errorSyncState: () => data(api.get('/api/errors/sync-state')),
+  errorCatalog: () => data(api.get('/api/errors/catalog')),
+
+
+  announcements: () => data(api.get('/api/announcements')),
+  announcement: (id) => data(api.get(`/api/announcements/${id}`)),
+  createAnnouncement: (body) => data(api.post('/api/announcements', body)),
+  updateAnnouncement: (id, body) => data(api.put(`/api/announcements/${id}`, body)),
+  archiveAnnouncement: (id) => data(api.post(`/api/announcements/${id}/archive`)),
+  republishAnnouncement: (id) => data(api.post(`/api/announcements/${id}/republish`)),
+  deleteAnnouncement: (id) => data(api.delete(`/api/announcements/${id}`)),
+  syncAnnouncements: () => data(api.post('/api/announcements/sync')),
 };

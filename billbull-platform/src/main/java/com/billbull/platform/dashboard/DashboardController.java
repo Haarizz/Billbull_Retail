@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.billbull.platform.audit.AuditController;
 import com.billbull.platform.audit.AuditEventRepository;
 import com.billbull.platform.backup.BackupController;
+import com.billbull.platform.errors.ErrorLogController;
 import com.billbull.platform.health.HealthSnapshot;
 import com.billbull.platform.health.HealthSnapshotRepository;
 import com.billbull.platform.tenant.Tenant;
@@ -38,12 +39,15 @@ public class DashboardController {
     private final BackupController backups;
     private final AuditEventRepository audit;
 
+    private final ErrorLogController errors;
+
     public DashboardController(TenantRepository tenants, HealthSnapshotRepository snapshots,
-                               BackupController backups, AuditEventRepository audit) {
+                               BackupController backups, AuditEventRepository audit, ErrorLogController errors) {
         this.tenants = tenants;
         this.snapshots = snapshots;
         this.backups = backups;
         this.audit = audit;
+        this.errors = errors;
     }
 
     @GetMapping
@@ -91,6 +95,16 @@ public class DashboardController {
                     && s.diskFreeBytes < 0.1 * s.diskTotalBytes) {
                 attention.add(issue(t, "DISK", "Less than 10% disk free on the server"));
             }
+        }
+        Map<Long, long[]> openErrors = errors.attentionByTenant();
+        for (Tenant t : all) {
+            long[] e = openErrors.get(t.id);
+            if (e == null) continue;
+            List<String> parts = new ArrayList<>();
+            if (e[0] > 0) parts.add(e[0] + " critical");
+            if (e[1] > 0) parts.add(e[1] + " high-severity");
+            attention.add(issue(t, "ERRORS", String.join(" and ", parts)
+                    + " open error" + (e[0] + e[1] == 1 ? "" : "s") + " in the last 24 hours — see Error logs"));
         }
         for (Map<String, Object> b : backups.perTenant()) {
             String state = (String) b.get("state");

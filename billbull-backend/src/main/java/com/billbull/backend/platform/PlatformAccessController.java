@@ -20,6 +20,8 @@ import org.springframework.web.bind.annotation.RestController;
  *   GET  /api/platform-access/status                      any user: status, plan, modules (for banners)
  *   GET  /api/platform-access/support-sessions            ADMIN: every BillBull support sign-in
  *   POST /api/platform-access/support-sessions/{id}/revoke ADMIN: end one now
+ *   GET  /api/platform-access/announcements/pending       any user: BillBull announcements not yet dismissed
+ *   POST /api/platform-access/announcements/{id}/seen     any user: dismiss one (it won't pop up again)
  * </pre>
  */
 @RestController
@@ -29,12 +31,32 @@ public class PlatformAccessController {
     private final PlatformStateService stateService;
     private final PlatformSupportService supportService;
     private final PlatformAgentProperties properties;
+    private final PlatformAnnouncementService announcementService;
 
     public PlatformAccessController(PlatformStateService stateService, PlatformSupportService supportService,
-                                    PlatformAgentProperties properties) {
+                                    PlatformAgentProperties properties, PlatformAnnouncementService announcementService) {
         this.stateService = stateService;
         this.supportService = supportService;
         this.properties = properties;
+        this.announcementService = announcementService;
+    }
+
+    @GetMapping("/announcements/pending")
+    @PreAuthorize("isAuthenticated()")
+    public List<Map<String, Object>> pendingAnnouncements(Authentication authentication) {
+        return announcementService.pendingFor(authentication.getName(), isAdmin(authentication));
+    }
+
+    @PostMapping("/announcements/{id}/seen")
+    @PreAuthorize("isAuthenticated()")
+    public Map<String, Object> announcementSeen(@PathVariable long id, Authentication authentication) {
+        return Map.of("recorded", announcementService.markSeen(id, authentication.getName()));
+    }
+
+    /** "Owners & admins" audience: tenant admins and branch admins. */
+    static boolean isAdmin(Authentication authentication) {
+        return authentication.getAuthorities().stream().map(a -> a.getAuthority())
+                .anyMatch(a -> "ROLE_ADMIN".equals(a) || "ROLE_BRANCH_ADMIN".equals(a));
     }
 
     @GetMapping("/status")

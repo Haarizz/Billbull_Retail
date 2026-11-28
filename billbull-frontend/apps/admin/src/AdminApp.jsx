@@ -10,15 +10,25 @@ import PlansPage from './pages/PlansPage';
 import UsersPage from './pages/UsersPage';
 import AuditPage from './pages/AuditPage';
 import BackupsPage from './pages/BackupsPage';
+import DatabasePage from './pages/DatabasePage';
+import LiveClientsPage from './pages/LiveClientsPage';
+import ErrorLogsPage from './pages/ErrorLogsPage';
+import ErrorDetailPage from './pages/ErrorDetailPage';
+import ErrorGuidePage from './pages/ErrorGuidePage';
 import SupportPage from './pages/SupportPage';
+import AnnouncementsPage from './pages/AnnouncementsPage';
 import AccountPage from './pages/AccountPage';
 import { Spinner } from './ui/kit';
 
 const NAV = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/tenants', label: 'Clients' },
+  { to: '/live', label: 'Live clients' },
+  { to: '/errors', label: 'Error logs' },
+  { to: '/database', label: 'Database console', role: 'OPERATOR' },
   { to: '/backups', label: 'Backups' },
   { to: '/support', label: 'Support access' },
+  { to: '/announcements', label: 'Announcements' },
   { to: '/plans', label: 'Plans' },
   { to: '/audit', label: 'Audit log' },
   { to: '/users', label: 'Platform users', role: 'OWNER' },
@@ -87,8 +97,14 @@ export default function AdminApp() {
         <Route path="/tenants" element={<TenantsPage />} />
         <Route path="/tenants/new" element={hasRole(user, 'OPERATOR') ? <NewTenantPage /> : <Navigate to="/tenants" replace />} />
         <Route path="/tenants/:id/*" element={<TenantDetailPage />} />
+        <Route path="/live" element={<LiveClientsPage />} />
+        <Route path="/errors" element={<ErrorLogsPage />} />
+        <Route path="/errors/guide" element={<ErrorGuidePage />} />
+        <Route path="/errors/:id" element={<ErrorDetailPage />} />
+        <Route path="/database" element={<DatabasePage />} />
         <Route path="/backups" element={<BackupsPage />} />
         <Route path="/support" element={<SupportPage />} />
+        <Route path="/announcements" element={<AnnouncementsPage />} />
         <Route path="/plans" element={<PlansPage />} />
         <Route path="/audit" element={<AuditPage />} />
         <Route path="/users" element={hasRole(user, 'OWNER') ? <UsersPage /> : <Navigate to="/" replace />} />

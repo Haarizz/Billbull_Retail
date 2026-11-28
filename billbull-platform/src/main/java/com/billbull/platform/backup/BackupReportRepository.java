@@ -12,6 +12,9 @@ public interface BackupReportRepository extends JpaRepository<BackupReport, Long
 
     List<BackupReport> findAllByOrderByReportedAtDesc(Pageable pageable);
 
+    /** Backups taken from the database console are recorded once, keyed by {@code agent:<file>}. */
+    boolean existsByTenantIdAndLocation(Long tenantId, String location);
+
     /** Latest successful DATABASE backup per tenant. */
     @Query(value = "SELECT DISTINCT ON (tenant_id) * FROM backup_reports"
             + " WHERE tenant_id IS NOT NULL AND kind = 'DATABASE' AND status = 'SUCCESS'"

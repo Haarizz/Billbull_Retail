@@ -61,31 +61,18 @@ public class TenantAgentClient {
     }
 
     AgentResponse call(Tenant t, String method, String path, Object body, String actor) {
+        return call(t, method, path, body, actor, requestTimeout);
+    }
+
+    /** As {@link #call}, with its own timeout — for console statements that may run for minutes. */
+    public AgentResponse call(Tenant t, String method, String path, Object body, String actor, Duration timeout) {
         if (!configured(t)) {
             return new AgentResponse(0, null, 0, "agent URL or secret not set");
         }
         long started = System.nanoTime();
         try {
-            URI uri = URI.create(stripTrailingSlash(t.agentUrl.trim()) + path);
-            String signedPath = uri.getRawPath();
-            byte[] bytes = body == null ? new byte[0] : mapper.writeValueAsBytes(body);
-            String ts = String.valueOf(Instant.now().getEpochSecond());
-            String nonce = UUID.randomUUID().toString();
-            String secret = cipher.decrypt(t.agentSecretEnc);
-
-            HttpRequest.Builder rb = HttpRequest.newBuilder(uri)
-                    .timeout(requestTimeout)
-                    .header("Accept", "application/json")
-                    .header(AgentSignature.HEADER_TIMESTAMP, ts)
-                    .header(AgentSignature.HEADER_NONCE, nonce)
-                    .header(AgentSignature.HEADER_SIGNATURE, AgentSignature.sign(secret, method, signedPath, ts, nonce, bytes))
-                    .header(AgentSignature.HEADER_ACTOR, actor == null ? "platform" : actor);
-            if (body != null) {
-                rb.header("Content-Type", "application/json").method(method, HttpRequest.BodyPublishers.ofByteArray(bytes));
-            } else {
-                rb.method(method, HttpRequest.BodyPublishers.noBody());
-            }
-            HttpResponse<byte[]> res = http.send(rb.build(), HttpResponse.BodyHandlers.ofByteArray());
+            HttpRequest request = signed(t, method, path, body, actor, timeout, "application/json");
+            HttpResponse<byte[]> res = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
             long ms = (System.nanoTime() - started) / 1_000_000;
             JsonNode json = parse(res.body());
             return new AgentResponse(res.statusCode(), json, ms, null);
@@ -96,6 +83,42 @@ public class TenantAgentClient {
             String msg = e.getClass().getSimpleName() + (e.getMessage() != null ? ": " + e.getMessage() : "");
             return new AgentResponse(0, null, elapsed(started), msg.length() > 300 ? msg.substring(0, 300) : msg);
         }
+    }
+
+    /**
+     * A signed GET whose body is streamed rather than buffered (database dumps can be gigabytes).
+     * The caller must close the returned stream. {@code timeout} only covers the wait for the
+     * response headers.
+     */
+    public HttpResponse<java.io.InputStream> stream(Tenant t, String path, String actor, Duration timeout)
+            throws java.io.IOException, InterruptedException {
+        if (!configured(t)) throw new java.io.IOException("agent URL or secret not set");
+        HttpRequest request = signed(t, "GET", path, null, actor, timeout, "application/octet-stream, application/json");
+        return http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+    }
+
+    private HttpRequest signed(Tenant t, String method, String path, Object body, String actor, Duration timeout,
+                               String accept) throws java.io.IOException {
+        URI uri = URI.create(stripTrailingSlash(t.agentUrl.trim()) + path);
+        String signedPath = uri.getRawPath();
+        byte[] bytes = body == null ? new byte[0] : mapper.writeValueAsBytes(body);
+        String ts = String.valueOf(Instant.now().getEpochSecond());
+        String nonce = UUID.randomUUID().toString();
+        String secret = cipher.decrypt(t.agentSecretEnc);
+
+        HttpRequest.Builder rb = HttpRequest.newBuilder(uri)
+                .timeout(timeout)
+                .header("Accept", accept)
+                .header(AgentSignature.HEADER_TIMESTAMP, ts)
+                .header(AgentSignature.HEADER_NONCE, nonce)
+                .header(AgentSignature.HEADER_SIGNATURE, AgentSignature.sign(secret, method, signedPath, ts, nonce, bytes))
+                .header(AgentSignature.HEADER_ACTOR, actor == null ? "platform" : actor);
+        if (body != null) {
+            rb.header("Content-Type", "application/json").method(method, HttpRequest.BodyPublishers.ofByteArray(bytes));
+        } else {
+            rb.method(method, HttpRequest.BodyPublishers.noBody());
+        }
+        return rb.build();
     }
 
     private JsonNode parse(byte[] body) {

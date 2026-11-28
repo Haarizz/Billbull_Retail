@@ -69,6 +69,15 @@ class PlatformPolicyFilterTest {
     }
 
     @Test
+    void readOnlyTenantCanStillDismissAnnouncementsButNothingElseUnderPlatformAccess() throws Exception {
+        PlatformState s = state(TenantLifecycleStatus.READ_ONLY, Map.of());
+        assertTrue(run(s, "POST", "/api/platform-access/announcements/7/seen").passed());
+        assertFalse(run(s, "POST", "/api/platform-access/support-sessions/3/revoke").passed());
+        assertFalse(run(state(TenantLifecycleStatus.SUSPENDED, Map.of()), "POST",
+                "/api/platform-access/announcements/7/seen").passed(), "suspended still blocks everything");
+    }
+
+    @Test
     void disabledModuleIsForbiddenOnItsPathsOnly() throws Exception {
         PlatformState s = state(TenantLifecycleStatus.ACTIVE, Map.of("pos", false, "finance", true));
         Outcome pos = run(s, "GET", "/api/pos/sessions/active");

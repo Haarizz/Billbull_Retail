@@ -66,7 +66,7 @@ public class PlatformPolicyFilter extends OncePerRequestFilter {
             return;
         }
         if (state.status() == TenantLifecycleStatus.READ_ONLY && isWrite(request)
-                && !READ_ONLY_WRITE_ALLOWED.contains(path)) {
+                && !READ_ONLY_WRITE_ALLOWED.contains(path) && !isAnnouncementDismissal(path)) {
             write(response, SC_LOCKED, "TENANT_READ_ONLY", message(state,
                     "This BillBull account is read-only. You can view and export data, but not make changes."), null);
             return;
@@ -78,6 +78,11 @@ public class PlatformPolicyFilter extends OncePerRequestFilter {
             return;
         }
         chain.doFilter(request, response);
+    }
+
+    /** Dismissing a BillBull announcement isn't business data, and a read-only notice must be dismissable. */
+    static boolean isAnnouncementDismissal(String path) {
+        return path.startsWith("/api/platform-access/announcements/") && path.endsWith("/seen");
     }
 
     private static boolean isWrite(HttpServletRequest request) {
