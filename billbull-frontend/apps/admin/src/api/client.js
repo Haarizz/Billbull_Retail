@@ -98,6 +98,22 @@ export const platformApi = {
   backups: () => data(api.get('/api/backups')),
   tenantBackups: (tenantId) => data(api.get(`/api/backups/tenant/${tenantId}`)),
 
+  // Database console: every call goes through the client's own signed agent.
+  dbOverview: (id) => data(api.get(`/api/tenants/${id}/db/overview`)),
+  dbTables: (id) => data(api.get(`/api/tenants/${id}/db/tables`)),
+  dbTable: (id, schema, name) => data(api.post(`/api/tenants/${id}/db/table`, { schema, name })),
+  dbInsights: (id) => data(api.get(`/api/tenants/${id}/db/insights`)),
+  dbJobs: (id) => data(api.get(`/api/tenants/${id}/db/jobs`)),
+  dbActivity: (id) => data(api.get(`/api/tenants/${id}/db/activity`)),
+  dbCancel: (id, pid, body) => data(api.post(`/api/tenants/${id}/db/activity/${pid}/cancel`, body)),
+  dbQuery: (id, body) => data(api.post(`/api/tenants/${id}/db/query`, body)),
+  dbExplain: (id, body) => data(api.post(`/api/tenants/${id}/db/explain`, body)),
+  dbMaintenance: (id, body) => data(api.post(`/api/tenants/${id}/db/maintenance`, body)),
+  dbBackups: (id) => data(api.get(`/api/tenants/${id}/db/backups`)),
+  dbStartBackup: (id, note) => data(api.post(`/api/tenants/${id}/db/backups`, { note })),
+  dbDownloadBackup: (id, name, code) => data(api.post(`/api/tenants/${id}/db/backups/${encodeURIComponent(name)}/download`, { code })),
+  dbDeleteBackup: (id, name) => data(api.post(`/api/tenants/${id}/db/backups/${encodeURIComponent(name)}/delete`)),
+
   errors: (params) => data(api.get('/api/errors', { params })),
   error: (id) => data(api.get(`/api/errors/${id}`)),
   setErrorStatus: (id, status, note) => data(api.post(`/api/errors/${id}/status`, { status, note })),

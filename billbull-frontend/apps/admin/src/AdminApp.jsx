@@ -10,6 +10,7 @@ import PlansPage from './pages/PlansPage';
 import UsersPage from './pages/UsersPage';
 import AuditPage from './pages/AuditPage';
 import BackupsPage from './pages/BackupsPage';
+import DatabasePage from './pages/DatabasePage';
 import LiveClientsPage from './pages/LiveClientsPage';
 import ErrorLogsPage from './pages/ErrorLogsPage';
 import ErrorDetailPage from './pages/ErrorDetailPage';
@@ -24,6 +25,7 @@ const NAV = [
   { to: '/tenants', label: 'Clients' },
   { to: '/live', label: 'Live clients' },
   { to: '/errors', label: 'Error logs' },
+  { to: '/database', label: 'Database console', role: 'OPERATOR' },
   { to: '/backups', label: 'Backups' },
   { to: '/support', label: 'Support access' },
   { to: '/announcements', label: 'Announcements' },
@@ -99,6 +101,7 @@ export default function AdminApp() {
         <Route path="/errors" element={<ErrorLogsPage />} />
         <Route path="/errors/guide" element={<ErrorGuidePage />} />
         <Route path="/errors/:id" element={<ErrorDetailPage />} />
+        <Route path="/database" element={<DatabasePage />} />
         <Route path="/backups" element={<BackupsPage />} />
         <Route path="/support" element={<SupportPage />} />
         <Route path="/announcements" element={<AnnouncementsPage />} />

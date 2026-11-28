@@ -65,6 +65,7 @@ override if set, else the plan (`Entitlements.resolve`).
 | `GET /api/platform/health` | Build (version, jar time, jar SHA-256), JVM, DB latency and size, Flyway version/pending/failed, usage counts, current state. No business records. |
 | `GET/PUT /api/platform/state` | Read / replace status, plan, modules, limits (idempotent, versioned). |
 | `GET/POST /api/platform/support-sessions`, `POST …/{id}/revoke` | Time-boxed support sign-in. |
+| `/api/platform/db/**` | Database console: overview, tables, insights, sessions, guarded SQL, EXPLAIN, maintenance jobs, `pg_dump` backups. Data access needs the client's own switches — see `DATABASE_CONSOLE.md`. |
 | `PUT /api/platform/announcements`, `GET …/stats` | Replace the client's live announcements; the reply carries per-announcement seen counts. |
 | `GET /api/platform/errors?afterGroupSeq=&afterEventId=&limit=` | Error log page: error groups changed and occurrences recorded after the cursors, plus `maxGroupSeq`/`maxEventId` so a restored database is noticed. Redacted text, no request bodies. |
 | `GET /api/platform/presence` | Live Clients: devices seen in the last 24 h (user, roles, branch, app, user agent, IP, since, last seen, online), open till sessions, terminals online/total, invoices created today. Names and counts only. |
