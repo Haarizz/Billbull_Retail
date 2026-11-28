@@ -65,6 +65,7 @@ override if set, else the plan (`Entitlements.resolve`).
 | `GET /api/platform/health` | Build (version, jar time, jar SHA-256), JVM, DB latency and size, Flyway version/pending/failed, usage counts, current state. No business records. |
 | `GET/PUT /api/platform/state` | Read / replace status, plan, modules, limits (idempotent, versioned). |
 | `GET/POST /api/platform/support-sessions`, `POST …/{id}/revoke` | Time-boxed support sign-in. |
+| `GET /api/platform/presence` | Live Clients: devices seen in the last 24 h (user, roles, branch, app, user agent, IP, since, last seen, online), open till sessions, terminals online/total, invoices created today. Names and counts only. |
 
 Signature (`PlatformSignature` / `AgentSignature`, pinned to the same test vectors):
 `hex(HMAC-SHA256(secret, METHOD\nPATH\nTIMESTAMP\nNONCE\nhex(SHA-256(body))))` in
@@ -79,6 +80,24 @@ can do; freezing it ends all support access). The platform asks the agent for a 
 `sst` session claim), records the session on both sides and opens
 `https://<client>/support-login#token=…` — the fragment never reaches a server log. `JwtFilter`
 checks the session on every request, so revoking from either side cuts the token off immediately.
+
+## Live clients
+
+The **Live clients** page shows which clients have someone signed in now and on which devices.
+On the client, `JwtFilter` hands every authenticated request to `presence.UserPresenceService`,
+which upserts one row per device into `user_presence` (tenant V156) at most once a minute. A
+device is (user, browser install): Retail and the POS send `X-Client-App` (`retail`/`pos`) and a
+random per-browser `X-Client-Device` id from `localStorage`. Calls without that id are keyed on
+user agent + IP. An Electron user agent marks the POS desktop app. A device is online when it was
+active in the last 3 minutes, and a gap of over 30 minutes starts a new "since". Rows are pruned
+after 30 days. A recording error never fails the request; recording backs off for 10 minutes instead.
+
+The platform's `LiveClientsService` (`GET /api/live-clients`, VIEWER) asks every non-archived
+client's agent in parallel and caches the fleet view for 10 s (`platform.live.cache-ms`).
+`?fresh=true` skips the cache unless it is under 3 s old. The page polls every 30 s while
+visible. A client whose health is UP but whose agent returns 404 for `/presence` runs an older
+build and shows **Needs update**. The health report also carries `onlineDevices`/`onlineUsers`,
+stored in `health_snapshots` (platform V4), and they draw the 24-hour activity line.
 
 ## Security fixes shipped with this
 

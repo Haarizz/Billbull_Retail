@@ -69,6 +69,13 @@ public class HealthSnapshot {
     @Column(name = "open_sessions")
     public Long openSessions;
 
+    /** Devices / people active in the last 3 minutes when the snapshot was taken (V4). */
+    @Column(name = "online_devices")
+    public Long onlineDevices;
+
+    @Column(name = "online_users")
+    public Long onlineUsers;
+
     @Column(name = "invoices_30d")
     public Long invoices30d;
 

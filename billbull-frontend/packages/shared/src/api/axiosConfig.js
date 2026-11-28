@@ -56,6 +56,27 @@ const notifyRateLimited = (waitSeconds) => {
   );
 };
 
+// Live presence (admin.billbull.app → Live Clients): which app the request comes from and a random
+// id for this browser install, so two tabs count as one device and two browsers as two.
+const CLIENT_DEVICE_KEY = "billbull.clientDeviceId";
+let clientDeviceId = null;
+export const getClientDeviceId = () => {
+  if (clientDeviceId) return clientDeviceId;
+  try {
+    clientDeviceId = localStorage.getItem(CLIENT_DEVICE_KEY);
+    if (!clientDeviceId || !/^[A-Za-z0-9_-]{8,64}$/.test(clientDeviceId)) {
+      clientDeviceId = (globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`);
+      localStorage.setItem(CLIENT_DEVICE_KEY, clientDeviceId);
+    }
+  } catch {
+    // storage blocked: keep a per-page id; the server falls back to user agent + IP anyway
+    clientDeviceId = clientDeviceId || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  }
+  return clientDeviceId;
+};
+export const clientAppName = (pathname = globalThis.location?.pathname || "") =>
+  /^\/pos(\/|$)/.test(pathname) ? "pos" : "retail";
+
 // 🔐 Attach JWT + active branch on every request
 api.interceptors.request.use(
   (config) => {
@@ -71,6 +92,8 @@ api.interceptors.request.use(
     const token = sessionStorage.getItem("token");
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+      config.headers["X-Client-App"] = clientAppName();
+      config.headers["X-Client-Device"] = getClientDeviceId();
     }
 
     // The active branch is mirrored to sessionStorage by BranchContext so the

@@ -10,6 +10,7 @@ import PlansPage from './pages/PlansPage';
 import UsersPage from './pages/UsersPage';
 import AuditPage from './pages/AuditPage';
 import BackupsPage from './pages/BackupsPage';
+import LiveClientsPage from './pages/LiveClientsPage';
 import SupportPage from './pages/SupportPage';
 import AccountPage from './pages/AccountPage';
 import { Spinner } from './ui/kit';
@@ -17,6 +18,7 @@ import { Spinner } from './ui/kit';
 const NAV = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/tenants', label: 'Clients' },
+  { to: '/live', label: 'Live clients' },
   { to: '/backups', label: 'Backups' },
   { to: '/support', label: 'Support access' },
   { to: '/plans', label: 'Plans' },
@@ -87,6 +89,7 @@ export default function AdminApp() {
         <Route path="/tenants" element={<TenantsPage />} />
         <Route path="/tenants/new" element={hasRole(user, 'OPERATOR') ? <NewTenantPage /> : <Navigate to="/tenants" replace />} />
         <Route path="/tenants/:id/*" element={<TenantDetailPage />} />
+        <Route path="/live" element={<LiveClientsPage />} />
         <Route path="/backups" element={<BackupsPage />} />
         <Route path="/support" element={<SupportPage />} />
         <Route path="/plans" element={<PlansPage />} />

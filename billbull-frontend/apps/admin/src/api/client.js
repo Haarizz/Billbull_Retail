@@ -61,6 +61,7 @@ export const platformApi = {
   signOutEverywhere: () => data(api.post('/api/auth/sign-out-everywhere')),
 
   dashboard: () => data(api.get('/api/dashboard')),
+  liveClients: (fresh = false) => data(api.get('/api/live-clients', { params: { fresh } })),
 
   modules: () => data(api.get('/api/tenants/modules')),
   tenants: (includeArchived = false) => data(api.get('/api/tenants', { params: { includeArchived } })),

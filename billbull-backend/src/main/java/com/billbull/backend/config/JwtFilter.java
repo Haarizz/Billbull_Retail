@@ -50,6 +50,20 @@ public class JwtFilter extends OncePerRequestFilter {
         this.supportService = supportService;
     }
 
+    /** Live presence for the control plane's Live Clients page; optional, setter-injected. */
+    private com.billbull.backend.presence.UserPresenceService presenceService;
+    private com.billbull.backend.ratelimit.ClientIpResolver clientIpResolver;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setPresenceService(com.billbull.backend.presence.UserPresenceService presenceService) {
+        this.presenceService = presenceService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setClientIpResolver(com.billbull.backend.ratelimit.ClientIpResolver clientIpResolver) {
+        this.clientIpResolver = clientIpResolver;
+    }
+
     /**
      * The platform agent's API authenticates with its own HMAC signature
      * ({@code PlatformAgentAuthFilter}); a tenant JWT must never authenticate there.
@@ -146,6 +160,15 @@ public class JwtFilter extends OncePerRequestFilter {
                 boolean viewAll = !ownershipAccessService.filteringEnabled()
                         || ownershipAccessService.rolesGrantViewAll(roles);
                 OwnershipContextHolder.set(new OwnershipContextHolder.OwnershipContext(userId, viewAll));
+
+                if (presenceService != null) {
+                    // Throttled to one write per device per minute; never fails the request.
+                    String ip = clientIpResolver != null ? clientIpResolver.resolve(request) : request.getRemoteAddr();
+                    presenceService.touch(new com.billbull.backend.presence.UserPresenceService.Touch(
+                            userId, username, roles, activeBranchId,
+                            request.getHeader("X-Client-App"), request.getHeader("X-Client-Device"),
+                            request.getHeader("User-Agent"), ip, supportSessionId));
+                }
 
                 contextSet = true;
             }

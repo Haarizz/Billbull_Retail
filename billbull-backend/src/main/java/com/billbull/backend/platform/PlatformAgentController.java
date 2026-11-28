@@ -26,6 +26,7 @@ import com.billbull.backend.security.AuditLogService;
  *
  * <pre>
  *   GET  /api/platform/health                       health, build, migration and usage snapshot
+ *   GET  /api/platform/presence                     who is signed in now (Live Clients)
  *   GET  /api/platform/state                        current status, plan, modules, limits
  *   PUT  /api/platform/state                        replace them (idempotent; carries configVersion)
  *   GET  /api/platform/support-sessions             support sign-ins issued on this tenant
@@ -45,6 +46,14 @@ public class PlatformAgentController {
     private final TenantIdentity tenant;
     private final PlatformAgentProperties properties;
 
+    /** Setter-injected so the constructor (and its call sites) stay as they are. */
+    private com.billbull.backend.presence.UserPresenceService presenceService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setPresenceService(com.billbull.backend.presence.UserPresenceService presenceService) {
+        this.presenceService = presenceService;
+    }
+
     public PlatformAgentController(PlatformHealthService healthService, PlatformStateService stateService,
                                    PlatformSupportService supportService, AuditLogService auditLogService,
                                    TenantIdentity tenant, PlatformAgentProperties properties) {
@@ -61,6 +70,16 @@ public class PlatformAgentController {
         Map<String, Object> h = healthService.snapshot();
         h.put("supportAccessEnabled", properties.isSupportAccessEnabled());
         return h;
+    }
+
+    /**
+     * Live presence for the control plane's Live Clients page: devices seen in the last 24 hours
+     * (online = active within {@code onlineWindowSeconds}), open tills and today's invoice count.
+     */
+    @GetMapping("/presence")
+    public Map<String, Object> presence(@RequestParam(defaultValue = "180") int onlineWindowSeconds,
+                                        @RequestParam(defaultValue = "200") int limit) {
+        return presenceService.snapshot(onlineWindowSeconds, limit);
     }
 
     @GetMapping("/state")
