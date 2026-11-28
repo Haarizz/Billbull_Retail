@@ -44,6 +44,18 @@ Every statement is in both audit logs. Dump download links are single-use and li
 Details: `DATABASE_CONSOLE.md`. This makes item 3 below (one non-superuser role per client)
 more important, not less.
 
+## Error logs
+
+What leaves a client: exception class names, messages, stack traces, endpoint paths, the screen
+path, request IDs, usernames and branch IDs. Request bodies and query strings never leave.
+Before anything is stored on the client, messages and stacks are redacted: e-mail addresses,
+runs of nine or more digits (cards, phones, accounts), JWTs, Bearer tokens and
+`password=`/`secret=`/`token=`/`api_key=` values. Business messages such as "Insufficient stock
+for item 1001" are kept on purpose, because they are what support needs to read. The pull is
+signed like every agent call. The cursor parameters are in the query string, which the signature
+does not cover, so they are bounds on a read-only page and nothing else. Changing a group's
+status needs OPERATOR and is audited (`ERROR_STATUS`).
+
 ## What remains to do on the servers (from the architecture audit)
 
 These need server access and a maintenance window; the code no longer depends on them, but they

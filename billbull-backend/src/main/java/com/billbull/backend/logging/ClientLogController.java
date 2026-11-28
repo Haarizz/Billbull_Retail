@@ -31,9 +31,17 @@ public class ClientLogController {
     private final ObjectMapper objectMapper;
     private final AuditLogService auditLogService;
 
+    private com.billbull.backend.errorlog.ErrorLogService errorLogService;
+
     public ClientLogController(ObjectMapper objectMapper, AuditLogService auditLogService) {
         this.objectMapper = objectMapper;
         this.auditLogService = auditLogService;
+    }
+
+    /** Browser errors also go to the error log the control plane reads (optional, so tests needn't wire it). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setErrorLogService(com.billbull.backend.errorlog.ErrorLogService errorLogService) {
+        this.errorLogService = errorLogService;
     }
 
     @PostMapping
@@ -85,6 +93,15 @@ public class ClientLogController {
                     httpRequest);
         } catch (Exception ex) {
             clientLog.debug("Client issue DB audit insert failed", ex);
+        }
+
+        if ("error".equals(level) && errorLogService != null) {
+            try {
+                errorLogService.recordClient(username, safeRequest.message(), safeRequest.source(), safeRequest.url(),
+                        safeRequest.stack(), safeRequest.componentStack(), requestId, safeRequest.occurredAt());
+            } catch (RuntimeException ex) {
+                clientLog.debug("Client error log capture failed", ex);
+            }
         }
 
         String responseRequestId = requestId == null || requestId.isBlank() ? "" : requestId;

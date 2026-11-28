@@ -3,8 +3,8 @@
 ## Daily
 
 The **Dashboard** lists what needs attention: health not UP, failed sync, failed or pending Flyway
-migrations, heap above 90%, disk under 10% free, and backups that failed, are older than 26 h or were
-never reported. "Deployed builds" groups clients by jar SHA-256, so a client left on an old build stands out.
+migrations, heap above 90%, disk under 10% free, open critical/high errors seen in the last 24 h,
+and backups that failed, are older than 26 h or were never reported. "Deployed builds" groups clients by jar SHA-256, so a client left on an old build stands out.
 
 ## Health results
 
@@ -56,6 +56,21 @@ Sidebar → **Database console**, or a client → **Database**. Read-only SQL, o
 live sessions, VACUUM/ANALYZE/REINDEX and on-demand dumps. Turning parts on for a client, the
 safety rules and the nginx timeouts are in `DATABASE_CONSOLE.md`. Before a risky data fix: take a
 backup from the Backups sub-tab, run the statement as a preview, then commit.
+
+## Error logs
+
+Sidebar → **Error logs**, or a client → **Errors**. The list shows open and acknowledged faults
+from the last 7 days, most recent first. Business-rule refusals ("not enough stock", "period
+closed") are hidden until you tick the box, because they are users being told no, not faults.
+Open a group to see what happened, what it means for that client's sales, stock or books, the
+likely causes and what to do. **Same fault at other clients** tells a software defect (several
+clients) from one client's data or setup (one client). Request IDs match the `[req=…]` field in
+the client server's log lines.
+
+Triage: **Acknowledged** means someone is on it. **Resolved** means fixed: put the build or
+ticket in the note. It reopens as **Regressed** if the error happens again. **Ignored** means
+known and accepted. If **Pull now** reports `NOT_SUPPORTED` for a client, it runs a build without
+tenant V155 or its agent is off.
 
 ## Audit log
 

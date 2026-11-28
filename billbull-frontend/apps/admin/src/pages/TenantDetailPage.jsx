@@ -10,6 +10,7 @@ import OverviewTab from './tenant/OverviewTab';
 import EntitlementsTab from './tenant/EntitlementsTab';
 import StatusTab from './tenant/StatusTab';
 import HealthTab from './tenant/HealthTab';
+import TenantErrorsTab from './tenant/TenantErrorsTab';
 import SupportTab from './tenant/SupportTab';
 import ProvisioningTab from './tenant/ProvisioningTab';
 import TenantAuditTab from './tenant/TenantAuditTab';
@@ -21,6 +22,7 @@ const TABS = [
   ['plan', 'Plan & modules'],
   ['status', 'Status'],
   ['health', 'Health'],
+  ['errors', 'Errors'],
   ['support', 'Support access'],
   ['backups', 'Backups'],
   ['database', 'Database'],
@@ -108,6 +110,7 @@ export default function TenantDetailPage() {
         <Route path="plan" element={<EntitlementsTab tenant={tenant} onChange={onChange} onError={onError} />} />
         <Route path="status" element={<StatusTab tenant={tenant} onChange={onChange} onError={onError} />} />
         <Route path="health" element={<HealthTab tenant={tenant} onError={onError} />} />
+        <Route path="errors" element={<TenantErrorsTab tenant={tenant} />} />
         <Route path="support" element={<SupportTab tenant={tenant} onError={onError} />} />
         <Route path="backups" element={<TenantBackupsTab tenant={tenant} />} />
         <Route path="database/*" element={<DatabaseTab tenant={tenant} />} />

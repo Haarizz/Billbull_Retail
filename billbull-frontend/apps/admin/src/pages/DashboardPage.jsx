@@ -4,7 +4,7 @@ import { Alert, Badge, Button, Card, PageHeader, Spinner, Stat, Table } from '..
 import { fmtDate } from '../ui/format';
 import { useLoad } from '../ui/useLoad';
 
-const KIND_LABEL = { HEALTH: 'Health', SYNC: 'Sync', MIGRATION: 'Migrations', MEMORY: 'Memory', DISK: 'Disk', BACKUP: 'Backup' };
+const KIND_LABEL = { HEALTH: 'Health', SYNC: 'Sync', MIGRATION: 'Migrations', MEMORY: 'Memory', DISK: 'Disk', BACKUP: 'Backup', ERRORS: 'Errors' };
 
 export default function DashboardPage() {
   const { data, loading, error, reload } = useLoad(() => platformApi.dashboard(), []);
@@ -30,7 +30,13 @@ export default function DashboardPage() {
           empty="Nothing needs attention."
           columns={[
             { key: 'tenantCode', label: 'Client', render: (r) => <Link className="font-medium text-slate-900 hover:underline" to={`/tenants/${r.tenantId}`}>{r.tenantCode}</Link> },
-            { key: 'kind', label: 'Area', render: (r) => KIND_LABEL[r.kind] || r.kind },
+            {
+              key: 'kind',
+              label: 'Area',
+              render: (r) => (r.kind === 'ERRORS'
+                ? <Link className="hover:underline" to={`/tenants/${r.tenantId}/errors`}>{KIND_LABEL.ERRORS}</Link>
+                : KIND_LABEL[r.kind] || r.kind),
+            },
             { key: 'message', label: 'Issue', className: 'text-slate-600' },
           ]}
           rows={d.attention || []}

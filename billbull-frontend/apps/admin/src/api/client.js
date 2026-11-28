@@ -98,6 +98,13 @@ export const platformApi = {
   backups: () => data(api.get('/api/backups')),
   tenantBackups: (tenantId) => data(api.get(`/api/backups/tenant/${tenantId}`)),
 
+  errors: (params) => data(api.get('/api/errors', { params })),
+  error: (id) => data(api.get(`/api/errors/${id}`)),
+  setErrorStatus: (id, status, note) => data(api.post(`/api/errors/${id}/status`, { status, note })),
+  syncErrors: (tenantId) => data(api.post('/api/errors/sync', null, { params: tenantId ? { tenantId } : {} })),
+  errorSyncState: () => data(api.get('/api/errors/sync-state')),
+  errorCatalog: () => data(api.get('/api/errors/catalog')),
+
 
   announcements: () => data(api.get('/api/announcements')),
   announcement: (id) => data(api.get(`/api/announcements/${id}`)),

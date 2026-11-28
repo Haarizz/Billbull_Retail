@@ -66,6 +66,7 @@ override if set, else the plan (`Entitlements.resolve`).
 | `GET/PUT /api/platform/state` | Read / replace status, plan, modules, limits (idempotent, versioned). |
 | `GET/POST /api/platform/support-sessions`, `POST …/{id}/revoke` | Time-boxed support sign-in. |
 | `PUT /api/platform/announcements`, `GET …/stats` | Replace the client's live announcements; the reply carries per-announcement seen counts. |
+| `GET /api/platform/errors?afterGroupSeq=&afterEventId=&limit=` | Error log page: error groups changed and occurrences recorded after the cursors, plus `maxGroupSeq`/`maxEventId` so a restored database is noticed. Redacted text, no request bodies. |
 | `GET /api/platform/presence` | Live Clients: devices seen in the last 24 h (user, roles, branch, app, user agent, IP, since, last seen, online), open till sessions, terminals online/total, invoices created today. Names and counts only. |
 
 Signature (`PlatformSignature` / `AgentSignature`, pinned to the same test vectors):
@@ -123,6 +124,41 @@ client's agent in parallel and caches the fleet view for 10 s (`platform.live.ca
 visible. A client whose health is UP but whose agent returns 404 for `/presence` runs an older
 build and shows **Needs update**. The health report also carries `onlineDevices`/`onlineUsers`,
 stored in `health_snapshots` (platform V4), and they draw the 24-hour activity line.
+
+## Error logs
+
+**On each client** (`com.billbull.backend.errorlog`, tenant V155 `error_log_groups` /
+`error_log_events`), errors are captured at four points:
+
+| Source | Capture point | What |
+|---|---|---|
+| `SERVER` | `ErrorCaptureResolver` parks every controller exception; `ErrorCaptureFilter` records it with the final status (and anything that escapes the filter chain, as 500). | Unexpected faults and deliberate refusals. Expected answers (403, 404, approval prompts, rate limits, client disconnects) are skipped: `ErrorCaptureSupport.shouldRecord`. |
+| `CLIENT` | `ClientLogController`, level `error`. | Browser crashes from signed-in users only, capped at 120 per minute per client (the endpoint is public). |
+| `JOB` | `ErrorLogAppender` on the root logger. | ERROR lines off a request thread: scheduled jobs, async work, seeders. |
+| `LOG` | The same appender, held per request. | ERROR lines during a request that itself recorded nothing. A request that recorded its own exception drops them, because they describe the same fault. |
+
+Occurrences are grouped by a fingerprint: source, exception chain, the first BillBull stack frame
+that isn't a servlet filter, endpoint template (`/api/x/{id}`) and the message with its values
+removed. Each occurrence bumps the group's count; an event row is kept for at most 20 per group
+per minute, so a storm can't fill the disk. Writing happens on one background thread with a
+bounded queue and can't fail or slow a request. Retention: events 30 days, groups 180 days
+(`billbull.error-log.*`). Switch off with `billbull.error-log.enabled=false`.
+
+**On the platform** (`com.billbull.platform.errors`, `db/platform` V3 `error_groups`,
+`error_events`, `error_sync_state`), `ErrorSyncService` pulls each client every 5 minutes
+(`platform.errors.poll-interval-ms`; up to 10 pages of 200) and on **Pull now**. `ErrorExplainer`
+classifies each group against an ordered catalogue of rules. Each rule gives a plain-language
+title, what happened, the business impact for the client's ERP module, the usual causes, the
+recommended actions and who acts first. Specific rules come first (posting-engine codes, SQL
+states, schema mismatch, pool exhaustion, document-number collisions, network printers, PDF
+rendering), then broader ones (any NullPointerException, browser crashes, business-rule
+refusals), then `UNCLASSIFIED`. The ERP module comes from the API path, the screen URL or the
+logger's package. Classification is stored for filtering but recomputed on every pull and at
+startup, so improving a rule re-labels history. A defect on a trading-critical path (checkout,
+day close, sign-in) is always CRITICAL. A group marked RESOLVED that happens again reopens as
+OPEN with a **Regressed** flag. The full catalogue is on the **Error guide** page
+(`GET /api/errors/catalog`). Open critical or high-severity faults from the last 24 hours appear
+under **Needs attention** on the dashboard.
 
 ## Security fixes shipped with this
 
