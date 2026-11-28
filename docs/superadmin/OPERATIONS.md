@@ -50,6 +50,13 @@ psql -d restore_check -c "select max(version::int) from flyway_schema_history wh
 dropdb restore_check
 ```
 
+## Database console
+
+Sidebar → **Database console**, or a client → **Database**. Read-only SQL, optimisation findings,
+live sessions, VACUUM/ANALYZE/REINDEX and on-demand dumps. Turning parts on for a client, the
+safety rules and the nginx timeouts are in `DATABASE_CONSOLE.md`. Before a risky data fix: take a
+backup from the Backups sub-tab, run the statement as a preview, then commit.
+
 ## Audit log
 
 Every sign-in (and failed attempt), status/plan/module/limit change, support session, secret rotation

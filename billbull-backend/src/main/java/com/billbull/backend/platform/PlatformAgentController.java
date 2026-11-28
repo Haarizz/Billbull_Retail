@@ -32,6 +32,8 @@ import com.billbull.backend.security.AuditLogService;
  *   GET  /api/platform/support-sessions             support sign-ins issued on this tenant
  *   POST /api/platform/support-sessions             issue a time-boxed support sign-in
  *   POST /api/platform/support-sessions/{id}/revoke end one early
+ *   PUT  /api/platform/announcements                replace the live announcements; returns seen counts
+ *   GET  /api/platform/announcements/stats          seen counts only
  * </pre>
  */
 @RestController
@@ -42,6 +44,7 @@ public class PlatformAgentController {
     private final PlatformHealthService healthService;
     private final PlatformStateService stateService;
     private final PlatformSupportService supportService;
+    private final PlatformAnnouncementService announcementService;
     private final AuditLogService auditLogService;
     private final TenantIdentity tenant;
     private final PlatformAgentProperties properties;
@@ -55,11 +58,13 @@ public class PlatformAgentController {
     }
 
     public PlatformAgentController(PlatformHealthService healthService, PlatformStateService stateService,
-                                   PlatformSupportService supportService, AuditLogService auditLogService,
-                                   TenantIdentity tenant, PlatformAgentProperties properties) {
+                                   PlatformSupportService supportService, PlatformAnnouncementService announcementService,
+                                   AuditLogService auditLogService, TenantIdentity tenant,
+                                   PlatformAgentProperties properties) {
         this.healthService = healthService;
         this.stateService = stateService;
         this.supportService = supportService;
+        this.announcementService = announcementService;
         this.auditLogService = auditLogService;
         this.tenant = tenant;
         this.properties = properties;
@@ -115,6 +120,18 @@ public class PlatformAgentController {
     public ResponseEntity<Map<String, Object>> revokeSupport(@PathVariable long id, HttpServletRequest request) {
         boolean revoked = supportService.revoke(id, "platform:" + actor(request));
         return ResponseEntity.ok(Map.of("revoked", revoked));
+    }
+
+    @PutMapping("/announcements")
+    public Map<String, Object> putAnnouncements(@RequestBody PlatformAnnouncementService.Push body) {
+        // Not written to audit_logs: the control plane re-pushes the same set every few minutes to
+        // collect seen counts, and keeps its own audit of every announcement change.
+        return announcementService.replace(body);
+    }
+
+    @GetMapping("/announcements/stats")
+    public List<Map<String, Object>> announcementStats() {
+        return announcementService.stats();
     }
 
     static Map<String, Object> view(PlatformState s) {

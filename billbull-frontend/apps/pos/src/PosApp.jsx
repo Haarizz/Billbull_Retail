@@ -7,6 +7,7 @@ import { PermissionProvider } from '@billbull/shared/context/PermissionContext';
 import AedSymbolRenderer from '@billbull/shared/components/AedSymbolRenderer';
 import AppAlertBridge from '@billbull/shared/components/AppAlertBridge';
 import AppConfirmBridge from '@billbull/shared/components/AppConfirmBridge';
+import PlatformAnnouncements from '@billbull/shared/components/PlatformAnnouncements';
 import PosLogin from './shell/PosLogin';
 import RequireAuth from './shell/RequireAuth';
 import RequirePosAccess from './shell/RequirePosAccess';
@@ -37,6 +38,8 @@ export function TillRoutes() {
                   <RequirePosAccess>
                     <PosBootGate>
                       <TillWorkspace />
+                      {/* BillBull announcements: checked once at sign-in, scanner-safe. */}
+                      <PlatformAnnouncements variant="till" />
                     </PosBootGate>
                   </RequirePosAccess>
                 </PosErrorBoundary>

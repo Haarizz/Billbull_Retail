@@ -32,6 +32,18 @@ single-use. The agent refuses every call if its secret is missing or under 32 ch
 provisioning kit's nginx block also allow-lists the control plane's IPs on `/api/platform/`.
 Agent secrets and TOTP seeds are stored AES-256-GCM-encrypted under `PLATFORM_ENC_KEY`.
 
+## Database console
+
+Reading a client's data, changing it, and taking dumps each need a switch on the client's own
+server (consent stays with the client, like support access). Writes and dump downloads also need
+the OWNER role and a fresh authenticator code (a 5-minute step-up window, ended by "Sign out
+everywhere"). Statements run one at a time on a throwaway connection, reads inside a read-only
+transaction, behind a guard that refuses ways out of the database (`COPY`, file functions,
+`dblink`, `SET ROLE`, `session_replication_role`, `DISABLE TRIGGER`, roles, functions, `DO` …).
+Every statement is in both audit logs. Dump download links are single-use and live 2 minutes.
+Details: `DATABASE_CONSOLE.md`. This makes item 3 below (one non-superuser role per client)
+more important, not less.
+
 ## What remains to do on the servers (from the architecture audit)
 
 These need server access and a maintenance window; the code no longer depends on them, but they

@@ -65,6 +65,7 @@ override if set, else the plan (`Entitlements.resolve`).
 | `GET /api/platform/health` | Build (version, jar time, jar SHA-256), JVM, DB latency and size, Flyway version/pending/failed, usage counts, current state. No business records. |
 | `GET/PUT /api/platform/state` | Read / replace status, plan, modules, limits (idempotent, versioned). |
 | `GET/POST /api/platform/support-sessions`, `POST …/{id}/revoke` | Time-boxed support sign-in. |
+| `PUT /api/platform/announcements`, `GET …/stats` | Replace the client's live announcements; the reply carries per-announcement seen counts. |
 | `GET /api/platform/presence` | Live Clients: devices seen in the last 24 h (user, roles, branch, app, user agent, IP, since, last seen, online), open till sessions, terminals online/total, invoices created today. Names and counts only. |
 
 Signature (`PlatformSignature` / `AgentSignature`, pinned to the same test vectors):
@@ -80,6 +81,30 @@ can do; freezing it ends all support access). The platform asks the agent for a 
 `sst` session claim), records the session on both sides and opens
 `https://<client>/support-login#token=…` — the fragment never reaches a server log. `JwtFilter`
 checks the session on every request, so revoking from either side cuts the token off immediately.
+
+## Announcements
+
+Operators publish announcements (type, title, message, audience: whole team or owners & admins,
+every client or chosen ones, optional show window) on the **Announcements** page. Platform tables
+(`db/platform` V2): `announcements`, `announcement_targets`, `announcement_tenant_stats`,
+`announcement_sync`. `AnnouncementSyncService` sends each client its **complete** live set with
+`PUT /api/platform/announcements`. It sends right after a change, re-sends whenever the set's hash
+differs or the last attempt failed, and otherwise refreshes every
+`platform.announcements.refresh-ms` (5 min) to collect seen counts. Archiving, deleting,
+un-targeting or passing the end time all drop the announcement from the set, so the client
+deactivates it. Clients that were down catch up on the next cycle.
+
+On the client (tenant V153: `platform_announcements`, `platform_announcement_views`), the Retail
+app's `PlatformAnnouncements` popup asks `GET /api/platform-access/announcements/pending` after
+sign-in and every 5 minutes, then calls `POST …/{id}/seen` on "Got it". Each announcement pops up
+once per user, on any device. Editing one sends the new text but does not re-show it to people
+who already dismissed it. The `platform.support` user never sees them or counts toward them. A
+READ_ONLY client can still dismiss them.
+
+The same component (`@billbull/shared/components/PlatformAnnouncements`) runs on the standalone
+POS till with `variant="till"`. There it checks once, at sign-in, and never re-checks, so it can't
+appear mid-sale. Its button never takes focus and ignores keyboard activation, so a barcode
+scanner's trailing Enter can't dismiss it unread; only a click or tap closes it.
 
 ## Live clients
 

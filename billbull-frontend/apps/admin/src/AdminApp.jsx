@@ -12,6 +12,7 @@ import AuditPage from './pages/AuditPage';
 import BackupsPage from './pages/BackupsPage';
 import LiveClientsPage from './pages/LiveClientsPage';
 import SupportPage from './pages/SupportPage';
+import AnnouncementsPage from './pages/AnnouncementsPage';
 import AccountPage from './pages/AccountPage';
 import { Spinner } from './ui/kit';
 
@@ -21,6 +22,7 @@ const NAV = [
   { to: '/live', label: 'Live clients' },
   { to: '/backups', label: 'Backups' },
   { to: '/support', label: 'Support access' },
+  { to: '/announcements', label: 'Announcements' },
   { to: '/plans', label: 'Plans' },
   { to: '/audit', label: 'Audit log' },
   { to: '/users', label: 'Platform users', role: 'OWNER' },
@@ -92,6 +94,7 @@ export default function AdminApp() {
         <Route path="/live" element={<LiveClientsPage />} />
         <Route path="/backups" element={<BackupsPage />} />
         <Route path="/support" element={<SupportPage />} />
+        <Route path="/announcements" element={<AnnouncementsPage />} />
         <Route path="/plans" element={<PlansPage />} />
         <Route path="/audit" element={<AuditPage />} />
         <Route path="/users" element={hasRole(user, 'OWNER') ? <UsersPage /> : <Navigate to="/" replace />} />

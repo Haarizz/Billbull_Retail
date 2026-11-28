@@ -97,4 +97,14 @@ export const platformApi = {
 
   backups: () => data(api.get('/api/backups')),
   tenantBackups: (tenantId) => data(api.get(`/api/backups/tenant/${tenantId}`)),
+
+
+  announcements: () => data(api.get('/api/announcements')),
+  announcement: (id) => data(api.get(`/api/announcements/${id}`)),
+  createAnnouncement: (body) => data(api.post('/api/announcements', body)),
+  updateAnnouncement: (id, body) => data(api.put(`/api/announcements/${id}`, body)),
+  archiveAnnouncement: (id) => data(api.post(`/api/announcements/${id}/archive`)),
+  republishAnnouncement: (id) => data(api.post(`/api/announcements/${id}/republish`)),
+  deleteAnnouncement: (id) => data(api.delete(`/api/announcements/${id}`)),
+  syncAnnouncements: () => data(api.post('/api/announcements/sync')),
 };

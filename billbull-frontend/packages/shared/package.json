@@ -47,6 +47,7 @@
     "./components/AppConfirmBridge": "./src/components/AppConfirmBridge.jsx",
     "./components/ClassificationDropdown": "./src/components/ClassificationDropdown.jsx",
     "./components/CurrencyAmount": "./src/components/CurrencyAmount.jsx",
+    "./components/PlatformAnnouncements": "./src/components/PlatformAnnouncements.jsx",
     "./components/SendDocumentEmailModal": "./src/components/SendDocumentEmailModal.jsx",
     "./components/inventory/QuickAddProductModal": "./src/components/inventory/QuickAddProductModal.jsx",
     "./components/pos/ItemEntry/POSItemEntryContainer": "./src/components/pos/ItemEntry/POSItemEntryContainer.jsx",

@@ -43,6 +43,9 @@ public class SecurityConfig {
                         // Server-side backup script: authenticated by its own token in BackupController.
                         .requestMatchers("/api/backups/report").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
+                        // Dump downloads: a browser navigation can't send the bearer token, so the
+                        // URL carries a single-use, 2-minute ticket issued after a TOTP step-up.
+                        .requestMatchers("/api/db-downloads/*").permitAll()
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().denyAll())
                 .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
